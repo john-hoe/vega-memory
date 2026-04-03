@@ -30,9 +30,7 @@ test("loadConfig returns the documented defaults", () => {
     ollamaModel: "bge-m3",
     tokenBudget: 2000,
     similarityThreshold: 0.85,
-    backupRetentionDays: 7,
-    telegramBotToken: undefined,
-    telegramChatId: undefined
+    backupRetentionDays: 7
   });
 
   Object.assign(process.env, previous);
@@ -65,9 +63,7 @@ test("loadConfig reads overrides from process.env", () => {
     ollamaModel: "nomic-embed-text",
     tokenBudget: 4096,
     similarityThreshold: 0.91,
-    backupRetentionDays: 14,
-    telegramBotToken: "bot-token",
-    telegramChatId: "chat-id"
+    backupRetentionDays: 14
   });
 
   Object.assign(process.env, previous);
