@@ -1,0 +1,25 @@
+{
+  "name": "vega-memory",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "vega": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --test dist/tests/**/*.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "better-sqlite3": "^12.4.1",
+    "commander": "^14.0.1",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.6.1",
+    "@types/uuid": "^11.0.0",
+    "typescript": "^5.9.3"
+  }
+}
