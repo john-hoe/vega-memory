@@ -101,7 +101,7 @@ function timestamp(): string {
 }
 
 export class Repository {
-  private readonly db: BetterSqlite3.Database;
+  readonly db: BetterSqlite3.Database;
 
   constructor(dbPath: string) {
     if (dbPath !== ":memory:") {
