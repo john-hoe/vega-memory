@@ -1,0 +1,22 @@
+---
+globs: ["**/*"]
+alwaysApply: true
+---
+
+Memory System Rules for Cursor Agent
+### Normal Mode (MCP available)
+- Session start -> call vega.session_start(working_directory, task_hint)
+- Task completed -> call vega.memory_store(type: "task_state")
+- Decision made -> call vega.memory_store(type: "decision")
+- Bug fixed -> call vega.memory_store(type: "pitfall")
+- New preference -> call vega.memory_store(type: "preference")
+- User says "记住/remember" -> call vega.memory_store(source: "explicit")
+- Session ending -> call vega.session_end(summary)
+- Before storing -> verify content is NOT: emotional complaints, failed debug attempts, one-time queries, raw data, common knowledge, one-time commands, inconclusive exploration, meta-discussion, non-coding tasks
+
+### Fallback Mode (MCP unavailable)
+- Session start -> read data/snapshots/memory-snapshot.md
+- New memories -> append to data/snapshots/pending-memories.jsonl
+
+### Alert Check
+- Session start -> check data/alerts/active-alert.md -> if exists, read and inform user
