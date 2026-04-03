@@ -213,7 +213,7 @@ test("sessionEnd creates session record", async () => {
   }
 });
 
-test("sessionEnd decays completed task importance to 0.2", async () => {
+test("sessionEnd archives completed tasks and decays importance to 0.2", async () => {
   const { repository, sessionService } = createSessionService();
 
   try {
@@ -231,8 +231,72 @@ test("sessionEnd decays completed task importance to 0.2", async () => {
     const updated = repository.getMemory("task-1");
     assert.ok(updated);
     assert.equal(updated.importance, 0.2);
+    assert.equal(updated.status, "archived");
   } finally {
     repository.close();
+  }
+});
+
+test("sessionStart scopes recent unverified memories and conflicts to the project or global scope", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-scope-"));
+  const project = basename(tempDir);
+  const { repository, sessionService } = createSessionService();
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "project-unverified",
+        project,
+        verified: "unverified",
+        created_at: "2026-04-03T03:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "global-unverified",
+        type: "preference",
+        project: "shared",
+        scope: "global",
+        verified: "unverified",
+        created_at: "2026-04-03T02:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "other-unverified",
+        project: "other-project",
+        verified: "unverified",
+        created_at: "2026-04-03T04:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "project-conflict",
+        project,
+        verified: "conflict"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "other-conflict",
+        project: "other-project",
+        verified: "conflict"
+      })
+    );
+
+    const result = await sessionService.sessionStart(tempDir);
+
+    assert.deepEqual(
+      result.recent_unverified.map((memory) => memory.id),
+      ["project-unverified", "global-unverified"]
+    );
+    assert.deepEqual(
+      result.conflicts.map((memory) => memory.id).sort(),
+      ["project-conflict"]
+    );
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
   }
 });
 

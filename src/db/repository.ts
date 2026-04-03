@@ -100,6 +100,10 @@ function timestamp(): string {
   return new Date().toISOString();
 }
 
+function arraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 export class Repository {
   readonly db: BetterSqlite3.Database;
 
@@ -190,7 +194,7 @@ export class Repository {
     return row ? mapMemory(row) : null;
   }
 
-  updateMemory(id: string, updates: Partial<Memory>): void {
+  updateMemory(id: string, updates: Partial<Memory>, options?: { skipVersion?: boolean }): void {
     const existing = this.getMemory(id);
     if (!existing) {
       throw new Error(`Memory not found: ${id}`);
@@ -211,6 +215,12 @@ export class Repository {
     if (!rowid) {
       throw new Error(`Memory rowid not found: ${id}`);
     }
+
+    const shouldCreateVersion =
+      options?.skipVersion !== true &&
+      (nextMemory.content !== existing.content ||
+        nextMemory.importance !== existing.importance ||
+        !arraysEqual(nextMemory.tags, existing.tags));
 
     const updateStatement = this.db.prepare<
       [
@@ -246,7 +256,9 @@ export class Repository {
     );
 
     const transaction = this.db.transaction(() => {
-      this.createVersion(existing.id, existing.content, existing.embedding, existing.importance);
+      if (shouldCreateVersion) {
+        this.createVersion(existing.id, existing.content, existing.embedding, existing.importance);
+      }
 
       updateStatement.run(
         nextMemory.type,
@@ -369,7 +381,7 @@ export class Repository {
   }
 
   searchFTS(query: string, project?: string, type?: string): { memory: Memory; rank: number }[] {
-    const clauses = ["memories_fts MATCH ?"];
+    const clauses = ["memories_fts MATCH ?", "memories.status = 'active'"];
     const params: unknown[] = [query];
 
     if (project) {
@@ -403,7 +415,7 @@ export class Repository {
   }
 
   getAllEmbeddings(project?: string, type?: string): { id: string; embedding: Buffer; memory: Memory }[] {
-    const clauses = ["embedding IS NOT NULL"];
+    const clauses = ["embedding IS NOT NULL", "status = 'active'"];
     const params: unknown[] = [];
 
     if (project) {

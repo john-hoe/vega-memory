@@ -145,12 +145,51 @@ test("FTS5 search returns results with rank", () => {
         tags: ["metrics"]
       })
     );
+    repository.createMemory(
+      createMemory({
+        id: "mem-fts-archived",
+        title: "Archived SQLite FTS plan",
+        content: "FTS5 keyword should not recall archived memories.",
+        tags: ["search", "fts"],
+        status: "archived"
+      })
+    );
 
     const results = repository.searchFTS("FTS5 OR ranked", "vega", "decision");
 
     assert.equal(results.length, 1);
     assert.equal(results[0].memory.id, "mem-fts-1");
     assert.equal(typeof results[0].rank, "number");
+  } finally {
+    repository.close();
+  }
+});
+
+test("getAllEmbeddings excludes archived memories", () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "embedding-active",
+        embedding: Buffer.from([1, 2, 3]),
+        status: "active"
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "embedding-archived",
+        embedding: Buffer.from([4, 5, 6]),
+        status: "archived"
+      })
+    );
+
+    const embeddings = repository.getAllEmbeddings("vega", "decision");
+
+    assert.deepEqual(
+      embeddings.map(({ id }) => id),
+      ["embedding-active"]
+    );
   } finally {
     repository.close();
   }
@@ -300,7 +339,6 @@ test("backup create and restore", () => {
 
   try {
     repository.createMemory(memory);
-    repository.close();
 
     createBackup(dbPath, backupDir);
 
@@ -309,6 +347,19 @@ test("backup create and restore", () => {
     assert.match(backupFiles[0], /^memory-\d{4}-\d{2}-\d{2}\.db$/);
     assert.equal(shouldBackup(backupDir), false);
 
+    const backupDb = new Database(join(backupDir, backupFiles[0]), { readonly: true });
+    try {
+      const stored = backupDb.prepare("SELECT title FROM memories WHERE id = ?").get(memory.id) as
+        | { title: string }
+        | undefined;
+
+      assert.ok(stored);
+      assert.equal(stored.title, memory.title);
+    } finally {
+      backupDb.close();
+    }
+
+    repository.close();
     writeFileSync(dbPath, "corrupted");
     restoreFromBackup(backupDir, dbPath);
 
@@ -331,6 +382,7 @@ test("backup create and restore", () => {
 
     assert.equal(existsSync(oldBackupPath), false);
   } finally {
+    repository.close();
     rmSync(tempDir, { recursive: true, force: true });
   }
 });

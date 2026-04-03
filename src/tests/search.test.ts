@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { VegaConfig } from "../config.js";
 import type { Memory, SearchOptions } from "../core/types.js";
+import { Repository } from "../db/repository.js";
 import { BruteForceEngine } from "../search/brute-force.js";
+import { SearchEngine } from "../search/engine.js";
 import {
   computeFinalScore,
   computeRecency,
@@ -36,6 +39,15 @@ const createEmbeddingBuffer = (values: number[]): Buffer => Buffer.from(new Floa
 const defaultSearchOptions: SearchOptions = {
   limit: 10,
   minSimilarity: 0
+};
+
+const baseConfig: VegaConfig = {
+  dbPath: ":memory:",
+  ollamaBaseUrl: "http://localhost:11434",
+  ollamaModel: "bge-m3",
+  tokenBudget: 2000,
+  similarityThreshold: 0.85,
+  backupRetentionDays: 7
 };
 
 test("BruteForceEngine returns results sorted by similarity", () => {
@@ -158,7 +170,9 @@ test("hybridSearch merges vector and BM25 results with 70/30 weighting", () => {
     results.map((result) => result.memory.id),
     ["shared", "vector-only", "bm25-only"]
   );
-  assert.equal(results[0]?.similarity, 0.9);
+  assert.equal(results[0]?.similarity, 1);
+  assert.equal(results[1]?.similarity, 0.35);
+  assert.equal(results[2]?.similarity, 0.15);
   assert.ok((results[0]?.finalScore ?? 0) > (results[1]?.finalScore ?? 0));
 });
 
@@ -175,4 +189,109 @@ test("hybridSearch handles disjoint result sets", () => {
     results.map((result) => result.memory.id).sort(),
     ["bm25", "vector"]
   );
+});
+
+test("SearchEngine preserves BM25 boost inside hybrid search", () => {
+  const repository = new Repository(":memory:");
+  const engine = new SearchEngine(repository, baseConfig);
+  const sharedTimestamp = "2026-04-03T00:00:00.000Z";
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "vector-1",
+        title: "Vector One",
+        content: "Semantic match one",
+        embedding: createEmbeddingBuffer([1, 0]),
+        created_at: sharedTimestamp,
+        updated_at: sharedTimestamp,
+        accessed_at: sharedTimestamp
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "vector-2",
+        title: "Vector Two",
+        content: "Semantic match two",
+        embedding: createEmbeddingBuffer([0.8, 0.6]),
+        created_at: sharedTimestamp,
+        updated_at: sharedTimestamp,
+        accessed_at: sharedTimestamp
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "vector-3",
+        title: "Vector Three",
+        content: "Semantic match three",
+        embedding: createEmbeddingBuffer([0.6, 0.8]),
+        created_at: sharedTimestamp,
+        updated_at: sharedTimestamp,
+        accessed_at: sharedTimestamp
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "bm25-keyword",
+        title: "BM25 Keyword",
+        content: "keyword keyword keyword exact keyword match",
+        embedding: null,
+        created_at: sharedTimestamp,
+        updated_at: sharedTimestamp,
+        accessed_at: sharedTimestamp
+      })
+    );
+
+    const results = engine.search("keyword", new Float32Array([1, 0]), {
+      ...defaultSearchOptions,
+      minSimilarity: 0.1
+    });
+
+    assert.deepEqual(
+      results.map((result) => result.memory.id),
+      ["vector-1", "vector-2", "bm25-keyword", "vector-3"]
+    );
+    assert.ok((results[2]?.similarity ?? 0) > (results[3]?.similarity ?? 0));
+  } finally {
+    repository.close();
+  }
+});
+
+test("SearchEngine excludes archived memories from recall results", () => {
+  const repository = new Repository(":memory:");
+  const engine = new SearchEngine(repository, baseConfig);
+  const sharedEmbedding = createEmbeddingBuffer([1, 0]);
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "active-match",
+        title: "Active match",
+        content: "keyword stays searchable",
+        embedding: sharedEmbedding,
+        status: "active"
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "archived-match",
+        title: "Archived match",
+        content: "keyword should stay hidden",
+        embedding: sharedEmbedding,
+        status: "archived"
+      })
+    );
+
+    const results = engine.search("keyword", new Float32Array([1, 0]), {
+      ...defaultSearchOptions,
+      minSimilarity: 0.1
+    });
+
+    assert.deepEqual(
+      results.map((result) => result.memory.id),
+      ["active-match"]
+    );
+  } finally {
+    repository.close();
+  }
 });

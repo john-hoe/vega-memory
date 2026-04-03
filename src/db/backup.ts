@@ -1,6 +1,8 @@
 import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import BetterSqlite3 from "better-sqlite3";
+
 function listBackupPaths(backupDir: string): string[] {
   try {
     return readdirSync(backupDir)
@@ -23,6 +25,14 @@ function getLatestBackupPath(backupDir: string): string | null {
 export function createBackup(dbPath: string, backupDir: string): void {
   mkdirSync(backupDir, { recursive: true });
   const backupName = `memory-${new Date().toISOString().slice(0, 10)}.db`;
+  const sourceDb = new BetterSqlite3(dbPath);
+
+  try {
+    sourceDb.pragma("wal_checkpoint(TRUNCATE)");
+  } finally {
+    sourceDb.close();
+  }
+
   copyFileSync(dbPath, join(backupDir, backupName));
 }
 

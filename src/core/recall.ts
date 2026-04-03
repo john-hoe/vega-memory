@@ -21,14 +21,20 @@ export class RecallService {
     const accessedAt = now();
 
     for (const result of results) {
-      this.repository.updateMemory(result.memory.id, {
-        accessed_at: accessedAt,
-        access_count: result.memory.access_count + 1,
-        accessed_projects: unique([
-          ...result.memory.accessed_projects,
-          options.project ?? result.memory.project
-        ])
-      });
+      this.repository.updateMemory(
+        result.memory.id,
+        {
+          accessed_at: accessedAt,
+          access_count: result.memory.access_count + 1,
+          accessed_projects: unique([
+            ...result.memory.accessed_projects,
+            options.project ?? result.memory.project
+          ])
+        },
+        {
+          skipVersion: true
+        }
+      );
     }
 
     return results;

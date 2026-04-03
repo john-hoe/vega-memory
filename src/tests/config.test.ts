@@ -68,3 +68,23 @@ test("loadConfig reads overrides from process.env", () => {
 
   Object.assign(process.env, previous);
 });
+
+test("loadConfig clamps invalid numeric values", () => {
+  const previous = {
+    VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
+    VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
+    VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS
+  };
+
+  process.env.VEGA_TOKEN_BUDGET = "100";
+  process.env.VEGA_SIMILARITY_THRESHOLD = "1.5";
+  process.env.VEGA_BACKUP_RETENTION_DAYS = "999";
+
+  const config = loadConfig();
+
+  assert.equal(config.tokenBudget, 500);
+  assert.equal(config.similarityThreshold, 1);
+  assert.equal(config.backupRetentionDays, 365);
+
+  Object.assign(process.env, previous);
+});

@@ -50,35 +50,28 @@ export const hybridSearch = (
   vectorResults: SearchResult[],
   bm25Results: { memory: Memory; rank: number }[]
 ): SearchResult[] => {
-  const results = new Map<string, SearchResult>();
+  const fusedScores = new Map<string, number>();
+  const memoryById = new Map<string, Memory>();
   const rankedVectorResults = [...vectorResults].sort((left, right) => right.similarity - left.similarity);
   const rankedBm25Results = [...bm25Results].sort((left, right) => left.rank - right.rank);
 
   rankedVectorResults.forEach((result, index) => {
     const reciprocalRankScore = reciprocalRank(index + 1) * VECTOR_WEIGHT;
-
-    results.set(result.memory.id, {
-      memory: result.memory,
-      similarity: result.similarity,
-      finalScore: reciprocalRankScore
-    });
+    memoryById.set(result.memory.id, result.memory);
+    fusedScores.set(result.memory.id, (fusedScores.get(result.memory.id) ?? 0) + reciprocalRankScore);
   });
 
   rankedBm25Results.forEach((result, index) => {
     const reciprocalRankScore = reciprocalRank(index + 1) * BM25_WEIGHT;
-    const existing = results.get(result.memory.id);
-
-    if (existing) {
-      existing.finalScore += reciprocalRankScore;
-      return;
-    }
-
-    results.set(result.memory.id, {
-      memory: result.memory,
-      similarity: 0,
-      finalScore: reciprocalRankScore
-    });
+    memoryById.set(result.memory.id, result.memory);
+    fusedScores.set(result.memory.id, (fusedScores.get(result.memory.id) ?? 0) + reciprocalRankScore);
   });
 
-  return [...results.values()].sort((left, right) => right.finalScore - left.finalScore);
+  return [...fusedScores.entries()]
+    .map(([id, fusedScore]) => ({
+      memory: memoryById.get(id) as Memory,
+      similarity: fusedScore,
+      finalScore: fusedScore
+    }))
+    .sort((left, right) => right.finalScore - left.finalScore);
 };

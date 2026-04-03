@@ -26,15 +26,9 @@ export class SearchEngine {
     const bm25Results = this.repository.searchFTS(query, options.project, options.type);
 
     const mergedResults =
-      vectorResults.length > 0 && bm25Results.length > 0
+      bm25Results.length > 0
         ? hybridSearch(vectorResults, bm25Results)
-        : vectorResults.length > 0
-          ? vectorResults
-          : bm25Results.map(({ memory }) => ({
-              memory,
-              similarity: 0,
-              finalScore: 0
-            }));
+        : vectorResults;
 
     return mergedResults
       .map((result) => {

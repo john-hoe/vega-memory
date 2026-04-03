@@ -41,6 +41,9 @@ const splitSentences = (summary: string): string[] =>
     .map((sentence) => sentence.trim())
     .filter((sentence) => sentence.length > 0);
 
+const isInProjectScope = (memory: Memory, project: string): boolean =>
+  memory.project === project || memory.scope === "global";
+
 export class SessionService {
   private readonly sessionStartTimes = new Map<string, string>();
 
@@ -85,10 +88,14 @@ export class SessionService {
       sort: "created_at DESC"
     });
     const recent_unverified = allMemories
-      .filter((memory) => memory.verified === "unverified")
+      .filter(
+        (memory) => memory.verified === "unverified" && isInProjectScope(memory, project)
+      )
       .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
       .slice(0, 3);
-    const conflicts = allMemories.filter((memory) => memory.verified === "conflict");
+    const conflicts = allMemories.filter(
+      (memory) => memory.verified === "conflict" && isInProjectScope(memory, project)
+    );
     const proactive_warnings =
       taskHint && taskHint.trim().length > 0
         ? this.repository
@@ -162,6 +169,7 @@ export class SessionService {
     for (const taskId of completedTaskIds ?? []) {
       this.repository.updateMemory(taskId, {
         importance: 0.2,
+        status: "archived",
         updated_at: ended_at
       });
     }

@@ -142,7 +142,7 @@ export class MemoryService {
   ) {}
 
   private findMatch(
-    project: string,
+    project: string | undefined,
     type: MemoryType,
     embedding: Float32Array
   ): { memory: Memory; similarity: number } | null {
@@ -208,7 +208,14 @@ export class MemoryService {
     );
     const importance = defaultImportanceFor(params.type, source, params.importance);
     const scope = params.type === "preference" ? "global" : "project";
-    const matched = embedding === null ? null : this.findMatch(params.project, params.type, embedding);
+    const matched =
+      embedding === null
+        ? null
+        : this.findMatch(
+            params.type === "preference" ? undefined : params.project,
+            params.type,
+            embedding
+          );
     const timestamp = now();
 
     if (

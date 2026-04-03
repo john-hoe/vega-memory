@@ -66,6 +66,10 @@ export class CompactService {
           continue;
         }
 
+        if (left.memory.type !== right.memory.type) {
+          continue;
+        }
+
         const similarity = cosineSimilarity(
           toFloat32Array(left.embedding),
           toFloat32Array(right.embedding)
@@ -83,6 +87,7 @@ export class CompactService {
 
         this.repository.updateMemory(newer.id, {
           content: mergeContent(newer.content, older.content),
+          embedding: null,
           importance: Math.max(newer.importance, older.importance),
           tags: unique([...newer.tags, ...older.tags]),
           updated_at: timestamp,

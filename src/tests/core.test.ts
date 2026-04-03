@@ -205,12 +205,14 @@ test("recall returns results and updates access metadata", async () => {
 
     const results = await service.recall("SQLite", defaultSearchOptions);
     const stored = repository.getMemory("memory-recall");
+    const versions = repository.getVersions("memory-recall");
 
     assert.equal(results.length, 1);
     assert.equal(results[0]?.memory.id, "memory-recall");
     assert.ok(stored);
     assert.equal(stored.access_count, 1);
     assert.deepEqual(stored.accessed_projects, ["vega"]);
+    assert.equal(versions.length, 0);
   } finally {
     restoreFetch();
     repository.close();
@@ -256,6 +258,129 @@ test("compact archives low importance memories", () => {
     assert.ok(stored);
     assert.equal(stored.status, "archived");
   } finally {
+    repository.close();
+  }
+});
+
+test("compact does not merge memories across different types", () => {
+  const repository = new Repository(":memory:");
+  const service = new CompactService(repository, baseConfig);
+  const sharedEmbedding = createEmbeddingBuffer([1, 0]);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "decision-merge-candidate",
+        type: "decision",
+        title: "Decision candidate",
+        content: "Choose SQLite for storage.",
+        embedding: sharedEmbedding
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "pitfall-merge-candidate",
+        type: "pitfall",
+        title: "Pitfall candidate",
+        content: "SQLite WAL backups need checkpointing.",
+        embedding: sharedEmbedding
+      })
+    );
+
+    const result = service.compact("vega");
+    const activeMemories = repository.listMemories({
+      project: "vega",
+      status: "active",
+      limit: 10
+    });
+
+    assert.equal(result.merged, 0);
+    assert.equal(result.archived, 0);
+    assert.deepEqual(
+      activeMemories.map((memory) => memory.id).sort(),
+      ["decision-merge-candidate", "pitfall-merge-candidate"]
+    );
+  } finally {
+    repository.close();
+  }
+});
+
+test("compact clears the surviving embedding after a merge", () => {
+  const repository = new Repository(":memory:");
+  const service = new CompactService(repository, baseConfig);
+  const olderTimestamp = "2026-04-01T00:00:00.000Z";
+  const newerTimestamp = "2026-04-02T00:00:00.000Z";
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "duplicate-older",
+        type: "decision",
+        title: "Older duplicate",
+        content: "Use SQLite.",
+        embedding: createEmbeddingBuffer([1, 0]),
+        updated_at: olderTimestamp
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "duplicate-newer",
+        type: "decision",
+        title: "Newer duplicate",
+        content: "Use SQLite with FTS5.",
+        embedding: createEmbeddingBuffer([1, 0]),
+        updated_at: newerTimestamp
+      })
+    );
+
+    const result = service.compact("vega");
+    const survivor = repository.getMemory("duplicate-newer");
+    const archived = repository.getMemory("duplicate-older");
+
+    assert.equal(result.merged, 1);
+    assert.ok(survivor);
+    assert.equal(survivor.embedding, null);
+    assert.match(survivor.content, /Use SQLite\./);
+    assert.match(survivor.content, /FTS5/);
+    assert.ok(archived);
+    assert.equal(archived.status, "archived");
+  } finally {
+    repository.close();
+  }
+});
+
+test("store deduplicates global preferences across projects", async () => {
+  const restoreFetch = installEmbeddingMock([0.7, 0.3]);
+  const repository = new Repository(":memory:");
+  const service = new MemoryService(repository, baseConfig);
+
+  try {
+    const first = await service.store({
+      content: "Always keep responses concise.",
+      type: "preference",
+      project: "project-a"
+    });
+    const second = await service.store({
+      content: "Always keep responses concise.",
+      type: "preference",
+      project: "project-b"
+    });
+
+    const preferences = repository.listMemories({
+      type: "preference",
+      scope: "global",
+      limit: 10
+    });
+    const stored = repository.getMemory(first.id);
+
+    assert.equal(first.action, "created");
+    assert.equal(second.action, "updated");
+    assert.equal(second.id, first.id);
+    assert.equal(preferences.length, 1);
+    assert.ok(stored);
+    assert.deepEqual(stored.accessed_projects.sort(), ["project-a", "project-b"]);
+  } finally {
+    restoreFetch();
     repository.close();
   }
 });
