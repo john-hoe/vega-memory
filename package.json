@@ -14,7 +14,8 @@
     "@modelcontextprotocol/sdk": "^1.17.5",
     "better-sqlite3": "^12.4.1",
     "commander": "^14.0.1",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
