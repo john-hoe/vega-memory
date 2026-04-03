@@ -109,7 +109,7 @@ export async function dailyMaintenance(
   if (config.dbPath === ":memory:") {
     log("Backup skipped because the database is in-memory");
   } else if (shouldBackup(backupDir)) {
-    createBackup(config.dbPath, backupDir);
+    await createBackup(config.dbPath, backupDir);
     log(`Backup created in ${backupDir}`);
   } else {
     log("Backup skipped because a recent backup already exists");

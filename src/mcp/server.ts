@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, appendFileSync } from "node:fs";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -93,20 +93,26 @@ const resultCountForSessionStart = (result: SessionStartResult): number =>
   result.recent_unverified.length +
   result.conflicts.length;
 
+const dbg = (msg: string) => {
+  appendFileSync("/tmp/vega-mcp-debug.log", `${new Date().toISOString()} [server] ${msg}\n`);
+};
+
 const runTool = async <T>(
   repository: Repository,
   operation: string,
   execute: () => Promise<{ result: T; resultCount: number }>
 ): Promise<CallToolResult> => {
+  dbg(`runTool called: ${operation}`);
   const startedAt = Date.now();
   let resultCount = 0;
 
   try {
     const executed = await execute();
     resultCount = executed.resultCount;
-
+    dbg(`runTool ${operation} OK in ${Date.now() - startedAt}ms`);
     return toTextResult(executed.result);
   } catch (error) {
+    dbg(`runTool ${operation} ERROR: ${error}`);
     return toTextResult(
       {
         error: error instanceof Error ? error.message : String(error)

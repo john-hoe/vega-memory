@@ -60,6 +60,7 @@ export class SessionService {
 
     const preferences = this.repository.listMemories({
       type: "preference",
+      status: "active",
       scope: "global",
       limit: 10_000,
       sort: "importance DESC"
@@ -72,6 +73,7 @@ export class SessionService {
     });
     const context = this.repository.listMemories({
       type: "project_context",
+      status: "active",
       project,
       limit: 10_000
     });

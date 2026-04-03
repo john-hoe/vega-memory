@@ -144,6 +144,77 @@ test("sessionStart loads preferences as global", async () => {
   }
 });
 
+test("sessionStart excludes archived preferences", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-start-archived-preferences-"));
+  const { repository, sessionService } = createSessionService();
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "preference-active",
+        type: "preference",
+        project: "shared",
+        scope: "global",
+        content: "Prefer concise summaries."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "preference-archived",
+        type: "preference",
+        project: "shared",
+        scope: "global",
+        content: "Archived preference should not load.",
+        status: "archived"
+      })
+    );
+
+    const result = await sessionService.sessionStart(tempDir);
+
+    assert.deepEqual(
+      result.preferences.map((memory) => memory.id),
+      ["preference-active"]
+    );
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("sessionStart excludes archived project context", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-start-archived-context-"));
+  const project = basename(tempDir);
+  const { repository, sessionService } = createSessionService();
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "context-active",
+        type: "project_context",
+        project
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "context-archived",
+        type: "project_context",
+        project,
+        status: "archived"
+      })
+    );
+
+    const result = await sessionService.sessionStart(tempDir);
+
+    assert.deepEqual(
+      result.context.map((memory) => memory.id),
+      ["context-active"]
+    );
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("sessionStart loads active task_states for project", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-session-start-tasks-"));
   const project = basename(tempDir);

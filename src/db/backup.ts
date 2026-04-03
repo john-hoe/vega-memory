@@ -3,6 +3,10 @@ import { join } from "node:path";
 
 import BetterSqlite3 from "better-sqlite3";
 
+interface BackupOptions {
+  progress?: (info: { totalPages: number; remainingPages: number }) => number;
+}
+
 function listBackupPaths(backupDir: string): string[] {
   try {
     return readdirSync(backupDir)
@@ -22,18 +26,22 @@ function getLatestBackupPath(backupDir: string): string | null {
   return backups.sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)[0];
 }
 
-export function createBackup(dbPath: string, backupDir: string): void {
+export async function createBackup(
+  dbPath: string,
+  backupDir: string,
+  options?: BackupOptions
+): Promise<string> {
   mkdirSync(backupDir, { recursive: true });
-  const backupName = `memory-${new Date().toISOString().slice(0, 10)}.db`;
-  const sourceDb = new BetterSqlite3(dbPath);
+  const backupPath = join(backupDir, `memory-${new Date().toISOString().slice(0, 10)}.db`);
+  const sourceDb = new BetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
 
   try {
-    sourceDb.pragma("wal_checkpoint(TRUNCATE)");
+    await sourceDb.backup(backupPath, options);
   } finally {
     sourceDb.close();
   }
 
-  copyFileSync(dbPath, join(backupDir, backupName));
+  return backupPath;
 }
 
 export function restoreFromBackup(backupDir: string, dbPath: string): void {

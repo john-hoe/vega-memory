@@ -330,7 +330,60 @@ test("listMemories with filters", () => {
   }
 });
 
-test("backup create and restore", () => {
+test("backup produces a readable independent snapshot via SQLite backup API", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-backup-consistent-"));
+  const backupDir = join(tempDir, "backups");
+  const dbPath = join(tempDir, "memory.db");
+  const repository = new Repository(dbPath);
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "mem-1",
+        title: "First memory",
+        content: "Stored before backup."
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "mem-2",
+        title: "Second memory",
+        content: "Also stored before backup."
+      })
+    );
+
+    const backupPath = await createBackup(dbPath, backupDir);
+
+    repository.createMemory(
+      createMemory({
+        id: "mem-3",
+        title: "After backup",
+        content: "Stored after backup completed."
+      })
+    );
+
+    const backupDb = new Database(backupPath, { readonly: true });
+    try {
+      const rows = backupDb
+        .prepare("SELECT id FROM memories ORDER BY id")
+        .all() as Array<{ id: string }>;
+
+      assert.deepEqual(
+        rows.map((r) => r.id),
+        ["mem-1", "mem-2"]
+      );
+
+      assert.ok(repository.getMemory("mem-3"));
+    } finally {
+      backupDb.close();
+    }
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("backup create and restore", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-backup-"));
   const backupDir = join(tempDir, "backups");
   const dbPath = join(tempDir, "memory.db");
@@ -340,14 +393,15 @@ test("backup create and restore", () => {
   try {
     repository.createMemory(memory);
 
-    createBackup(dbPath, backupDir);
+    const backupPath = await createBackup(dbPath, backupDir);
 
     const backupFiles = readdirSync(backupDir);
     assert.equal(backupFiles.length, 1);
     assert.match(backupFiles[0], /^memory-\d{4}-\d{2}-\d{2}\.db$/);
+    assert.equal(backupPath, join(backupDir, backupFiles[0]));
     assert.equal(shouldBackup(backupDir), false);
 
-    const backupDb = new Database(join(backupDir, backupFiles[0]), { readonly: true });
+    const backupDb = new Database(backupPath, { readonly: true });
     try {
       const stored = backupDb.prepare("SELECT title FROM memories WHERE id = ?").get(memory.id) as
         | { title: string }

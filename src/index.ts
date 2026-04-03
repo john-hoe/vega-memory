@@ -20,7 +20,14 @@ const ensureDataDirectory = (dbPath: string): void => {
   mkdirSync(dirname(resolve(dbPath)), { recursive: true });
 };
 
+import { appendFileSync } from "node:fs";
+
+const debugLog = (msg: string) => {
+  appendFileSync("/tmp/vega-mcp-debug.log", `${new Date().toISOString()} ${msg}\n`);
+};
+
 async function main(): Promise<void> {
+  debugLog("main() starting");
   const config = loadConfig();
   ensureDataDirectory(config.dbPath);
 
@@ -78,9 +85,12 @@ async function main(): Promise<void> {
     console.error(error);
   };
 
+  debugLog("connecting transport...");
   try {
     await server.connect(transport);
+    debugLog("transport connected OK");
   } catch (error) {
+    debugLog(`connect error: ${error}`);
     await shutdown();
     throw error;
   }
