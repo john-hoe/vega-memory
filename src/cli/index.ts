@@ -10,6 +10,7 @@ import { registerHealthCommand } from "./commands/health.js";
 import { registerImportExportCommands } from "./commands/import-export.js";
 import { registerListCommand } from "./commands/list.js";
 import { registerMaintenanceCommands } from "./commands/maintenance.js";
+import { registerMigrateCommand } from "./commands/migrate.js";
 import { registerRecallCommand } from "./commands/recall.js";
 import { registerSessionCommands } from "./commands/session.js";
 import { registerStoreCommand } from "./commands/store.js";
@@ -56,6 +57,7 @@ async function main(): Promise<void> {
   registerHealthCommand(program, repository, config);
   registerMaintenanceCommands(program, repository, compactService, config);
   registerImportExportCommands(program, repository, memoryService);
+  registerMigrateCommand(program, memoryService);
   registerAuditCommand(program, repository);
 
   try {
