@@ -27,6 +27,7 @@ import {
   VEGA_ENCRYPTION_ACCOUNT,
   VEGA_KEYCHAIN_SERVICE,
   deleteKey,
+  getKey,
   setKey
 } from "../security/keychain.js";
 
@@ -223,6 +224,59 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test(
+  "dailyMaintenance encrypts backups with the keychain key when env config is unset",
+  {
+    skip: process.platform !== "darwin"
+  },
+  async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "vega-scheduler-daily-encrypted-"));
+    const dataDir = join(tempDir, "data");
+    const dbPath = join(dataDir, "memory.db");
+    const backupDir = join(dataDir, "backups");
+    const restoreFetch = installEmbeddingMock([0.25, 0.75]);
+    const config: VegaConfig = {
+      dbPath,
+      ollamaBaseUrl: "http://localhost:11434",
+      ollamaModel: "bge-m3",
+      tokenBudget: 2000,
+      similarityThreshold: 0.85,
+      backupRetentionDays: 7,
+      apiPort: 3271,
+      apiKey: undefined,
+      mode: "server",
+      serverUrl: undefined,
+      cacheDbPath: "./data/cache.db",
+      telegramBotToken: undefined,
+      telegramChatId: undefined
+    };
+    const repository = new Repository(dbPath);
+    const compactService = new CompactService(repository, config);
+    const encryptionKey =
+      "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    const originalKey = await getKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT);
+
+    try {
+      await setKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT, encryptionKey);
+      repository.createMemory(createMemory());
+      mkdirSync(backupDir, { recursive: true });
+
+      await dailyMaintenance(repository, compactService, config);
+
+      assert.ok(readdirSync(backupDir).some((entry) => entry.endsWith(".db.enc")));
+    } finally {
+      restoreFetch();
+      if (originalKey === null) {
+        await deleteKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT);
+      } else {
+        await setKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT, originalKey);
+      }
+      repository.close();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+);
 
 test("weeklyHealthReport writes integrity and memory count details", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-scheduler-weekly-"));

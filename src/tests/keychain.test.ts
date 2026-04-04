@@ -49,3 +49,10 @@ test("resolveConfiguredEncryptionKey prefers config key and validates format", a
     /64-character hex string/
   );
 });
+
+test("setKey rejects invalid encryption keys before touching the keychain", async () => {
+  await assert.rejects(
+    () => setKey(`dev.vega-memory.test.${randomUUID()}`, `account-${randomUUID()}`, "invalid-key"),
+    /64-character hex string/
+  );
+});
