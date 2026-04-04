@@ -23,6 +23,12 @@ import { Repository } from "../db/repository.js";
 import { SearchEngine } from "../search/engine.js";
 import { shouldRunDaily, shouldRunWeekly, startSchedulerApiServer } from "../scheduler/index.js";
 import { dailyMaintenance, weeklyHealthReport } from "../scheduler/tasks.js";
+import {
+  VEGA_ENCRYPTION_ACCOUNT,
+  VEGA_KEYCHAIN_SERVICE,
+  deleteKey,
+  setKey
+} from "../security/keychain.js";
 
 const createMemory = (overrides: Partial<Memory> = {}): Memory => ({
   id: "memory-1",

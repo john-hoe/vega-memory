@@ -89,6 +89,47 @@ const installEmbeddingMock = (vector: number[]): (() => void) => {
   };
 };
 
+const installDynamicEmbeddingMock = (resolver: (input: string) => number[]): (() => void) => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (_input, init) => {
+    const method = init?.method ?? "GET";
+    if (method === "POST") {
+      const body =
+        typeof init?.body === "string"
+          ? (JSON.parse(init.body) as { input?: string })
+          : { input: "" };
+
+      return new Response(
+        JSON.stringify({
+          embeddings: [resolver(body.input ?? "")]
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }
+
+    return new Response(JSON.stringify({ version: "mock" }), { status: 200 });
+  };
+
+  return () => {
+    globalThis.fetch = originalFetch;
+  };
+};
+
+const embeddingToNumbers = (embedding: Buffer | null): number[] =>
+  embedding === null
+    ? []
+    : Array.from(
+        new Float32Array(
+          embedding.buffer.slice(embedding.byteOffset, embedding.byteOffset + embedding.byteLength)
+        )
+      ).map((value) => Number(value.toFixed(6)));
+
 test("store creates memory with correct defaults", async () => {
   const restoreFetch = installEmbeddingMock([0.2, 0.8]);
   const repository = new Repository(":memory:");
@@ -133,6 +174,30 @@ test("store with explicit source sets verified and applies importance bonus", as
     assert.ok(stored);
     assert.equal(stored.verified, "verified");
     assert.equal(stored.importance, 0.85);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("store bypasses exclusion rules for explicit memories", async () => {
+  const restoreFetch = installEmbeddingMock([0.6, 0.4]);
+  const repository = new Repository(":memory:");
+  const service = new MemoryService(repository, baseConfig);
+
+  try {
+    const result = await service.store({
+      content: "Run npm install and restart the server",
+      type: "task_state",
+      project: "vega",
+      source: "explicit"
+    });
+
+    const stored = repository.getMemory(result.id);
+
+    assert.equal(result.action, "created");
+    assert.ok(stored);
+    assert.equal(stored.source, "explicit");
   } finally {
     restoreFetch();
     repository.close();
@@ -194,6 +259,91 @@ test("store dedup updates existing memory when embeddings match", async () => {
   }
 });
 
+test("store preserves explicit source and recomputes embedding from merged content", async () => {
+  const restoreFetch = installDynamicEmbeddingMock((input) => {
+    if (
+      input.includes("Remember the deployment checklist before release") &&
+      input.includes("Deployment checklist includes smoke tests before release")
+    ) {
+      return [0.2, 0.8];
+    }
+
+    if (input.includes("Remember the deployment checklist before release")) {
+      return [1, 0];
+    }
+
+    if (input.includes("Deployment checklist includes smoke tests before release")) {
+      return [1, 0];
+    }
+
+    return [0.5, 0.5];
+  });
+  const repository = new Repository(":memory:");
+  const service = new MemoryService(repository, baseConfig);
+
+  try {
+    const first = await service.store({
+      content: "Remember the deployment checklist before release",
+      type: "project_context",
+      project: "vega",
+      source: "explicit"
+    });
+    const second = await service.store({
+      content: "Deployment checklist includes smoke tests before release",
+      type: "project_context",
+      project: "vega"
+    });
+
+    const stored = repository.getMemory(first.id);
+
+    assert.equal(second.action, "updated");
+    assert.ok(stored);
+    assert.equal(stored.source, "explicit");
+    assert.deepEqual(embeddingToNumbers(stored.embedding), [0.2, 0.8]);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("store keeps unrelated task_state memories active", async () => {
+  const restoreFetch = installDynamicEmbeddingMock((input) =>
+    input.includes("authentication") ? [1, 0] : [0, 1]
+  );
+  const repository = new Repository(":memory:");
+  const service = new MemoryService(repository, baseConfig);
+
+  try {
+    await service.store({
+      content: "Implement authentication flow",
+      type: "task_state",
+      project: "vega"
+    });
+    await service.store({
+      content: "Write deployment documentation",
+      type: "task_state",
+      project: "vega"
+    });
+
+    const activeTasks = repository.listMemories({
+      project: "vega",
+      type: "task_state",
+      status: "active",
+      limit: 10,
+      sort: "created_at ASC"
+    });
+
+    assert.equal(activeTasks.length, 2);
+    assert.deepEqual(
+      activeTasks.map((memory) => memory.title),
+      ["Implement authentication flow", "Write deployment documentation"]
+    );
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
 test("recall returns results and updates access metadata", async () => {
   const restoreFetch = installEmbeddingMock([0.9, 0.1]);
   const repository = new Repository(":memory:");
@@ -220,6 +370,58 @@ test("recall returns results and updates access metadata", async () => {
     assert.equal(stored.access_count, 1);
     assert.deepEqual(stored.accessed_projects, ["vega"]);
     assert.equal(versions.length, 0);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("recall includes global memories from other projects and excludes rejected memories", async () => {
+  const restoreFetch = installEmbeddingMock([0.9, 0.1]);
+  const repository = new Repository(":memory:");
+  const searchEngine = new SearchEngine(repository, baseConfig);
+  const service = new RecallService(repository, searchEngine, baseConfig);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "global-shared",
+        project: "project-a",
+        scope: "global",
+        verified: "verified",
+        accessed_projects: ["project-a"],
+        embedding: createEmbeddingBuffer([0.9, 0.1]),
+        title: "Shared deployment pitfall",
+        content: "Remember the shared rollout checklist."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "rejected-shared",
+        project: "project-a",
+        scope: "global",
+        verified: "rejected",
+        accessed_projects: ["project-a"],
+        embedding: createEmbeddingBuffer([0.9, 0.1]),
+        title: "Rejected memory",
+        content: "This should not be recalled."
+      })
+    );
+
+    const results = await service.recall("shared rollout", {
+      project: "project-b",
+      limit: 10,
+      minSimilarity: 0
+    });
+
+    assert.deepEqual(
+      results.map((result) => result.memory.id),
+      ["global-shared"]
+    );
+    assert.deepEqual(repository.getMemory("global-shared")?.accessed_projects.sort(), [
+      "project-a",
+      "project-b"
+    ]);
   } finally {
     restoreFetch();
     repository.close();

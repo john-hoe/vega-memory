@@ -2,15 +2,19 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
 const AUTH_TAG_BYTES = 16;
 const IV_BYTES = 12;
-const KEY_HEX_PATTERN = /^[0-9a-f]{64}$/i;
+export const KEY_HEX_PATTERN = /^[0-9a-f]{64}$/i;
 
-const parseKey = (key: string): Buffer => {
-  if (!KEY_HEX_PATTERN.test(key)) {
+export function normalizeEncryptionKey(key: string): string {
+  const normalized = key.trim();
+
+  if (!KEY_HEX_PATTERN.test(normalized)) {
     throw new Error("Encryption key must be a 64-character hex string");
   }
 
-  return Buffer.from(key, "hex");
-};
+  return normalized.toLowerCase();
+}
+
+const parseKey = (key: string): Buffer => Buffer.from(normalizeEncryptionKey(key), "hex");
 
 export function encryptBuffer(data: Buffer, key: string): Buffer {
   const iv = randomBytes(IV_BYTES);

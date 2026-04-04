@@ -1,10 +1,25 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import type { VegaConfig } from "../config.js";
+import { normalizeEncryptionKey } from "./encryption.js";
+
 const execFileAsync = promisify(execFile);
 
 export const VEGA_KEYCHAIN_SERVICE = "dev.vega-memory";
 export const VEGA_ENCRYPTION_ACCOUNT = "encryption-key";
+
+interface ExecFileError extends Error {
+  code?: number | string;
+  stderr?: string;
+}
+
+const isMissingKeychainItemError = (error: unknown): boolean => {
+  const candidate = error as ExecFileError;
+  const stderr = candidate.stderr ?? "";
+
+  return candidate.code === 44 || /could not be found in the keychain/i.test(stderr);
+};
 
 export async function getKey(service: string, account: string): Promise<string | null> {
   try {
@@ -16,12 +31,50 @@ export async function getKey(service: string, account: string): Promise<string |
       account,
       "-w"
     ]);
-    const key = stdout.trim();
+    const rawKey = stdout.trim();
+
+    if (rawKey.length === 0) {
+      return null;
+    }
+
+    const key = normalizeEncryptionKey(rawKey);
 
     return key.length > 0 ? key : null;
-  } catch {
-    return null;
+  } catch (error) {
+    if (isMissingKeychainItemError(error)) {
+      return null;
+    }
+
+    throw error;
   }
+}
+
+export async function resolveConfiguredEncryptionKey(
+  config: Pick<VegaConfig, "encryptionKey">
+): Promise<string | undefined> {
+  if (config.encryptionKey !== undefined) {
+    return normalizeEncryptionKey(config.encryptionKey);
+  }
+
+  if (process.platform !== "darwin") {
+    return undefined;
+  }
+
+  return (await getKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT)) ?? undefined;
+}
+
+export async function requireConfiguredEncryptionKey(
+  config: Pick<VegaConfig, "encryptionKey">
+): Promise<string> {
+  const key = await resolveConfiguredEncryptionKey(config);
+
+  if (key === undefined) {
+    throw new Error(
+      "Encryption key not configured. Set VEGA_ENCRYPTION_KEY or run `vega init-encryption`."
+    );
+  }
+
+  return key;
 }
 
 export async function setKey(service: string, account: string, key: string): Promise<void> {
@@ -32,17 +85,23 @@ export async function setKey(service: string, account: string, key: string): Pro
     "-a",
     account,
     "-w",
-    key,
+    normalizeEncryptionKey(key),
     "-U"
   ]);
 }
 
 export async function deleteKey(service: string, account: string): Promise<void> {
-  await execFileAsync("security", [
-    "delete-generic-password",
-    "-s",
-    service,
-    "-a",
-    account
-  ]);
+  try {
+    await execFileAsync("security", [
+      "delete-generic-password",
+      "-s",
+      service,
+      "-a",
+      account
+    ]);
+  } catch (error) {
+    if (!isMissingKeychainItemError(error)) {
+      throw error;
+    }
+  }
 }

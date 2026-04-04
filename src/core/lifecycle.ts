@@ -106,6 +106,12 @@ export class LifecycleManager {
     );
   }
 
+  clearPendingDeletionTracking(): void {
+    this.repository.deleteMetadata(PENDING_NOTIFICATION_METADATA_KEY);
+    this.repository.deleteMetadata(ARCHIVED_EXPORT_METADATA_KEY);
+    this.writeExtensionCounts({});
+  }
+
   checkPendingDeletions(): GracefulDeletionStatus {
     const extensionCounts = this.readExtensionCounts();
     const pending = this.listArchivedMemories().filter(
@@ -137,11 +143,20 @@ export class LifecycleManager {
       return;
     }
 
+    const existingNotificationTimestamp = this.repository.getMetadata(
+      PENDING_NOTIFICATION_METADATA_KEY
+    );
+
     await this.notificationManager.notifyWarning(
       "Pending Deletions",
-      `${memories.length} memories will be cleaned in 7 days. Run: vega export --archived --before 90d`
+      existingNotificationTimestamp === null
+        ? `${memories.length} memories will be cleaned in 7 days. Run: vega export --archived --before 90d`
+        : `${memories.length} archived memories are still pending cleanup. Run: vega export --archived --before 90d`
     );
-    this.repository.setMetadata(PENDING_NOTIFICATION_METADATA_KEY, now());
+
+    if (existingNotificationTimestamp === null) {
+      this.repository.setMetadata(PENDING_NOTIFICATION_METADATA_KEY, now());
+    }
   }
 
   executeDeletion(): { deleted: number; blocked: number } {

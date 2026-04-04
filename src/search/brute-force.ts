@@ -12,7 +12,11 @@ export class BruteForceEngine {
   ): SearchResult[] {
     return allEmbeddings
       .filter(({ memory }) => {
-        if (options.project && memory.project !== options.project) {
+        if (
+          options.project &&
+          memory.project !== options.project &&
+          memory.scope !== "global"
+        ) {
           return false;
         }
 

@@ -131,6 +131,20 @@ test("shouldExclude detects raw data dumps", () => {
   });
 });
 
+test("shouldExclude detects one-time commands", () => {
+  assert.deepEqual(shouldExclude("Run npm install and restart the server"), {
+    excluded: true,
+    reason: "one-time command"
+  });
+});
+
+test("shouldExclude detects non-coding tasks", () => {
+  assert.deepEqual(shouldExclude("Write an email to the vendor about tomorrow's meeting"), {
+    excluded: true,
+    reason: "non-coding task"
+  });
+});
+
 test("graceful deletion finds memories archived for more than 83 days", () => {
   const harness = createLifecycleHarness();
 
@@ -193,6 +207,35 @@ test("graceful deletion never deletes explicit source memories", async () => {
     assert.equal(result.blocked, 1);
     assert.equal(harness.repository.getMemory("auto-delete"), null);
     assert.ok(harness.repository.getMemory("explicit-keep"));
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("graceful deletion keeps export acknowledgement after reminder notifications", async () => {
+  const harness = createLifecycleHarness();
+
+  try {
+    harness.repository.createMemory(
+      createArchivedMemory({
+        id: "auto-delete-after-export",
+        updated_at: new Date(Date.now() - 91 * DAY_MS).toISOString()
+      })
+    );
+    const pendingMemory = harness.repository.getMemory("auto-delete-after-export") as Memory;
+
+    await harness.lifecycleManager.notifyPendingDeletions([pendingMemory]);
+    harness.repository.setMetadata(
+      ARCHIVED_EXPORT_METADATA_KEY,
+      new Date(Date.now() + 1_000).toISOString()
+    );
+    await harness.lifecycleManager.notifyPendingDeletions([pendingMemory]);
+
+    const result = harness.lifecycleManager.executeDeletion();
+
+    assert.equal(result.deleted, 1);
+    assert.equal(result.blocked, 0);
+    assert.equal(harness.repository.getMemory("auto-delete-after-export"), null);
   } finally {
     harness.cleanup();
   }

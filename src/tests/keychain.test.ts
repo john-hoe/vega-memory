@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import test from "node:test";
 
-import { deleteKey, getKey, setKey } from "../security/keychain.js";
+import {
+  deleteKey,
+  getKey,
+  resolveConfiguredEncryptionKey,
+  setKey
+} from "../security/keychain.js";
 
 test(
   "keychain operations",
@@ -12,7 +17,7 @@ test(
   async () => {
     const service = `dev.vega-memory.test.${randomUUID()}`;
     const account = `account-${randomUUID()}`;
-    const value = randomUUID();
+    const value = randomBytes(32).toString("hex");
 
     try {
       assert.equal(await getKey(service, account), null);
@@ -27,3 +32,20 @@ test(
     }
   }
 );
+
+test("resolveConfiguredEncryptionKey prefers config key and validates format", async () => {
+  assert.equal(
+    await resolveConfiguredEncryptionKey({
+      encryptionKey: "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
+    }),
+    "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+  );
+
+  await assert.rejects(
+    () =>
+      resolveConfiguredEncryptionKey({
+        encryptionKey: "invalid-key"
+      }),
+    /64-character hex string/
+  );
+});

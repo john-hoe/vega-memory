@@ -57,6 +57,8 @@ const unique = (values: string[]): string[] => [...new Set(values)];
 
 const normalizeToken = (value: string): string => value.trim().toLowerCase();
 
+const normalizeTitle = (value: string): string => value.trim().replace(/\s+/g, " ").toLowerCase();
+
 const extractTags = (content: string): string[] =>
   unique(
     content
@@ -170,7 +172,13 @@ export class MemoryService {
     return bestMatch;
   }
 
-  private archiveOldTaskStates(project: string, keepId: string): void {
+  private archiveSupersededTaskStates(project: string, keepId: string, title: string): void {
+    const normalizedTitle = normalizeTitle(title);
+
+    if (normalizedTitle.length === 0) {
+      return;
+    }
+
     const activeTaskStates = this.repository.listMemories({
       project,
       type: "task_state",
@@ -184,6 +192,10 @@ export class MemoryService {
         continue;
       }
 
+      if (normalizeTitle(memory.title) !== normalizedTitle) {
+        continue;
+      }
+
       this.repository.updateMemory(memory.id, {
         status: "archived",
         updated_at: archivedAt
@@ -192,17 +204,20 @@ export class MemoryService {
   }
 
   async store(params: StoreParams): Promise<StoreResult> {
-    const exclusion = shouldExclude(params.content);
+    const source = params.source ?? "auto";
 
-    if (exclusion.excluded) {
-      return {
-        id: "",
-        action: "excluded",
-        title: exclusion.reason
-      };
+    if (source !== "explicit") {
+      const exclusion = shouldExclude(params.content);
+
+      if (exclusion.excluded) {
+        return {
+          id: "",
+          action: "excluded",
+          title: exclusion.reason
+        };
+      }
     }
 
-    const source = params.source ?? "auto";
     const { redacted, wasRedacted } = redactSensitiveData(params.content);
     const embedding = await generateEmbedding(redacted, this.config);
     const title = buildTitle(params.title, redacted);
@@ -247,7 +262,7 @@ export class MemoryService {
       });
 
       if (params.type === "task_state") {
-        this.archiveOldTaskStates(params.project, id);
+        this.archiveSupersededTaskStates(params.project, id, title);
       }
 
       this.repository.logAudit({
@@ -265,15 +280,25 @@ export class MemoryService {
     if (matched !== null) {
       const mergedContent = mergeContent(matched.memory.content, redacted);
       const mergedTags = unique([...matched.memory.tags, ...tags]);
+      const nextSource =
+        matched.memory.source === "explicit" || source === "explicit" ? "explicit" : "auto";
       const verified = source === "explicit" ? "verified" : matched.memory.verified;
       const nextTitle = params.title?.trim() ? title : matched.memory.title;
+      const nextEmbedding =
+        mergedContent === matched.memory.content
+          ? matched.memory.embedding
+          : toEmbeddingBuffer(
+              mergedContent === redacted
+                ? embedding
+                : await generateEmbedding(mergedContent, this.config)
+            );
 
       this.repository.updateMemory(matched.memory.id, {
         title: nextTitle,
         content: mergedContent,
-        embedding: toEmbeddingBuffer(embedding),
+        embedding: nextEmbedding,
         importance: Math.max(matched.memory.importance, importance),
-        source,
+        source: nextSource,
         tags: mergedTags,
         updated_at: timestamp,
         accessed_at: timestamp,
@@ -282,7 +307,7 @@ export class MemoryService {
       });
 
       if (params.type === "task_state") {
-        this.archiveOldTaskStates(params.project, matched.memory.id);
+        this.archiveSupersededTaskStates(params.project, matched.memory.id, nextTitle);
       }
 
       this.repository.logAudit({
@@ -320,7 +345,7 @@ export class MemoryService {
     });
 
     if (params.type === "task_state") {
-      this.archiveOldTaskStates(params.project, id);
+      this.archiveSupersededTaskStates(params.project, id, title);
     }
 
     this.repository.logAudit({

@@ -37,7 +37,7 @@ export class SearchEngine {
 
     return this.bruteForceEngine.search(
       queryEmbedding,
-      this.repository.getAllEmbeddings(options.project, options.type),
+      this.repository.getAllEmbeddings(options.project, options.type, true),
       options
     );
   }
@@ -64,7 +64,7 @@ export class SearchEngine {
     const startedAt = Date.now();
     const vectorResults =
       queryEmbedding === null ? [] : this.searchVectors(queryEmbedding, options);
-    const bm25Results = this.repository.searchFTS(query, options.project, options.type);
+    const bm25Results = this.repository.searchFTS(query, options.project, options.type, true);
 
     const mergedResults =
       bm25Results.length > 0
@@ -72,6 +72,7 @@ export class SearchEngine {
         : vectorResults;
 
     const results = mergedResults
+      .filter((result) => result.memory.verified !== "rejected")
       .map((result) => {
         const recency = computeRecency(result.memory.accessed_at, getDecayRate(result.memory.type));
 

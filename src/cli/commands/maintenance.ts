@@ -8,6 +8,7 @@ import { createBackup } from "../../db/backup.js";
 import { CloudBackupProvider } from "../../db/cloud-backup.js";
 import type { Repository } from "../../db/repository.js";
 import { CompactService } from "../../core/compact.js";
+import { resolveConfiguredEncryptionKey } from "../../security/keychain.js";
 
 const countBy = <T extends string>(values: T[]): Array<{ name: T; count: number }> => {
   const counts = new Map<T, number>();
@@ -59,7 +60,7 @@ export function registerMaintenanceCommands(
         config.dbPath,
         backupDir,
         undefined,
-        config.encryptionKey
+        await resolveConfiguredEncryptionKey(config)
       );
       console.log(backupPath);
 

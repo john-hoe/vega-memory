@@ -12,6 +12,7 @@ import { Repository } from "../db/repository.js";
 import { generateEmbedding, isOllamaAvailable } from "../embedding/ollama.js";
 import { InsightGenerator } from "../insights/generator.js";
 import type { NotificationManager } from "../notify/manager.js";
+import { resolveConfiguredEncryptionKey } from "../security/keychain.js";
 
 interface CountRow<TName extends string> {
   name: TName;
@@ -200,7 +201,12 @@ export async function dailyMaintenance(
     if (config.dbPath === ":memory:") {
       log("Backup skipped because the database is in-memory");
     } else if (shouldBackup(backupDir)) {
-      await createBackup(config.dbPath, backupDir, undefined, config.encryptionKey);
+      await createBackup(
+        config.dbPath,
+        backupDir,
+        undefined,
+        await resolveConfiguredEncryptionKey(config)
+      );
       log(`Backup created in ${backupDir}`);
     } else {
       log("Backup skipped because a recent backup already exists");
@@ -261,6 +267,10 @@ export async function dailyMaintenance(
         config
       );
       const pendingDeletionStatus = lifecycleManager.checkPendingDeletions();
+
+      if (pendingDeletionStatus.pending.length === 0) {
+        lifecycleManager.clearPendingDeletionTracking();
+      }
 
       if (
         pendingDeletionStatus.pending.length > 0 &&

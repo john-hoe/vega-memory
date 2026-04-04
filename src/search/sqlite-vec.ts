@@ -163,7 +163,11 @@ export class SqliteVecEngine {
       })
       .filter((result): result is SearchResult => result !== null)
       .filter((result) => {
-        if (options.project && result.memory.project !== options.project) {
+        if (
+          options.project &&
+          result.memory.project !== options.project &&
+          result.memory.scope !== "global"
+        ) {
           return false;
         }
 

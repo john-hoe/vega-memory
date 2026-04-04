@@ -6,16 +6,20 @@ import { Command, InvalidArgumentError, Option } from "commander";
 import type { VegaConfig } from "../../config.js";
 import { ARCHIVED_EXPORT_METADATA_KEY } from "../../core/lifecycle.js";
 import { MemoryService } from "../../core/memory.js";
-import type { Memory, MemorySource, MemoryType } from "../../core/types.js";
+import type {
+  Memory,
+  MemoryScope,
+  MemorySource,
+  MemoryStatus,
+  MemoryType,
+  VerifiedStatus
+} from "../../core/types.js";
 import type { Repository } from "../../db/repository.js";
 import { decryptBuffer, encryptBuffer } from "../../security/encryption.js";
-import {
-  VEGA_ENCRYPTION_ACCOUNT,
-  VEGA_KEYCHAIN_SERVICE,
-  getKey
-} from "../../security/keychain.js";
+import { requireConfiguredEncryptionKey } from "../../security/keychain.js";
 
 interface PortableMemory {
+  id?: string;
   content: string;
   type: MemoryType;
   project: string;
@@ -23,6 +27,21 @@ interface PortableMemory {
   tags?: string[];
   importance?: number;
   source?: MemorySource;
+  embedding?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  accessed_at?: string;
+  access_count?: number;
+  status?: MemoryStatus;
+  verified?: VerifiedStatus;
+  scope?: MemoryScope;
+  accessed_projects?: string[];
+}
+
+interface PortableExportPayload {
+  format: "vega-memory/v1";
+  exported_at: string;
+  memories: PortableMemory[];
 }
 
 const MEMORY_TYPES = [
@@ -35,6 +54,14 @@ const MEMORY_TYPES = [
 ] as const satisfies readonly MemoryType[];
 
 const MEMORY_SOURCES = ["auto", "explicit"] as const satisfies readonly MemorySource[];
+const MEMORY_STATUSES = ["active", "archived"] as const satisfies readonly MemoryStatus[];
+const VERIFIED_STATUSES = [
+  "verified",
+  "unverified",
+  "rejected",
+  "conflict"
+] as const satisfies readonly VerifiedStatus[];
+const MEMORY_SCOPES = ["project", "global"] as const satisfies readonly MemoryScope[];
 const ENTRY_START = "<!-- vega-memory-entry:start -->";
 const ENTRY_END = "<!-- vega-memory-entry:end -->";
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -59,6 +86,78 @@ const validateSource = (value: unknown): MemorySource | undefined => {
   return value as MemorySource;
 };
 
+const validateStatus = (value: unknown): MemoryStatus | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !MEMORY_STATUSES.includes(value as MemoryStatus)) {
+    throw new Error(`Invalid memory status: ${String(value)}`);
+  }
+
+  return value as MemoryStatus;
+};
+
+const validateVerified = (value: unknown): VerifiedStatus | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !VERIFIED_STATUSES.includes(value as VerifiedStatus)) {
+    throw new Error(`Invalid verification status: ${String(value)}`);
+  }
+
+  return value as VerifiedStatus;
+};
+
+const validateScope = (value: unknown): MemoryScope | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !MEMORY_SCOPES.includes(value as MemoryScope)) {
+    throw new Error(`Invalid memory scope: ${String(value)}`);
+  }
+
+  return value as MemoryScope;
+};
+
+const validateTimestamp = (value: unknown, field: string): string | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
+    throw new Error(`Invalid ${field}: ${String(value)}`);
+  }
+
+  return value;
+};
+
+const validateStringArray = (value: unknown, field: string): string[] | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    throw new Error(`Invalid ${field}`);
+  }
+
+  return value;
+};
+
+const validateEmbedding = (value: unknown): string | null | undefined => {
+  if (value === undefined || value === null) {
+    return value as string | null | undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error("Invalid embedding");
+  }
+
+  return value;
+};
+
 const validatePortableMemory = (value: unknown): PortableMemory => {
   if (!value || typeof value !== "object") {
     throw new Error("Invalid memory entry");
@@ -72,10 +171,7 @@ const validatePortableMemory = (value: unknown): PortableMemory => {
     throw new Error("Memory entry is missing project");
   }
 
-  const tags =
-    Array.isArray(candidate.tags) && candidate.tags.every((tag) => typeof tag === "string")
-      ? candidate.tags
-      : undefined;
+  const tags = validateStringArray(candidate.tags, "tags");
   const importance =
     typeof candidate.importance === "number" && Number.isFinite(candidate.importance)
       ? candidate.importance
@@ -89,22 +185,59 @@ const validatePortableMemory = (value: unknown): PortableMemory => {
     content: candidate.content,
     type: validateType(candidate.type),
     project: candidate.project,
+    id: typeof candidate.id === "string" && candidate.id.trim().length > 0 ? candidate.id : undefined,
     title,
     tags,
     importance,
-    source: validateSource(candidate.source)
+    source: validateSource(candidate.source),
+    embedding: validateEmbedding(candidate.embedding),
+    created_at: validateTimestamp(candidate.created_at, "created_at"),
+    updated_at: validateTimestamp(candidate.updated_at, "updated_at"),
+    accessed_at: validateTimestamp(candidate.accessed_at, "accessed_at"),
+    access_count:
+      typeof candidate.access_count === "number" &&
+      Number.isInteger(candidate.access_count) &&
+      candidate.access_count >= 0
+        ? candidate.access_count
+        : undefined,
+    status: validateStatus(candidate.status),
+    verified: validateVerified(candidate.verified),
+    scope: validateScope(candidate.scope),
+    accessed_projects: validateStringArray(candidate.accessed_projects, "accessed_projects")
   };
 };
 
 const serializePortableMemory = (memory: Memory): PortableMemory => ({
+  id: memory.id,
   content: memory.content,
   type: memory.type,
   project: memory.project,
   title: memory.title,
   tags: memory.tags,
   importance: memory.importance,
-  source: memory.source
+  source: memory.source,
+  embedding: memory.embedding?.toString("base64") ?? null,
+  created_at: memory.created_at,
+  updated_at: memory.updated_at,
+  accessed_at: memory.accessed_at,
+  access_count: memory.access_count,
+  status: memory.status,
+  verified: memory.verified,
+  scope: memory.scope,
+  accessed_projects: memory.accessed_projects
 });
+
+const isLosslessPortableMemory = (memory: PortableMemory): boolean =>
+  memory.id !== undefined ||
+  memory.embedding !== undefined ||
+  memory.created_at !== undefined ||
+  memory.updated_at !== undefined ||
+  memory.accessed_at !== undefined ||
+  memory.access_count !== undefined ||
+  memory.status !== undefined ||
+  memory.verified !== undefined ||
+  memory.scope !== undefined ||
+  memory.accessed_projects !== undefined;
 
 const renderMarkdown = (memories: PortableMemory[]): string => {
   const blocks = memories.map((memory) => {
@@ -198,6 +331,17 @@ const parseJson = (content: string): PortableMemory[] => {
   return entries.map(validatePortableMemory);
 };
 
+const renderJson = (memories: PortableMemory[]): string =>
+  JSON.stringify(
+    {
+      format: "vega-memory/v1",
+      exported_at: new Date().toISOString(),
+      memories
+    } satisfies PortableExportPayload,
+    null,
+    2
+  );
+
 const inferFormat = (output?: string): "json" | "md" => {
   if (!output) {
     return "json";
@@ -231,17 +375,34 @@ const parseBefore = (value: string): string => {
   return new Date(parsed).toISOString();
 };
 
-const resolveEncryptionKey = async (config: VegaConfig): Promise<string> => {
-  if (config.encryptionKey !== undefined) {
-    return config.encryptionKey;
+const buildImportedMemory = (entry: PortableMemory): Memory | null => {
+  if (!isLosslessPortableMemory(entry) || entry.id === undefined) {
+    return null;
   }
 
-  const key = await getKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT);
-  if (key !== null) {
-    return key;
-  }
+  const timestamp = new Date().toISOString();
+  const source = entry.source ?? "auto";
+  const title = entry.title?.trim() || entry.content.trim().split(/\r?\n/, 1)[0] || "Untitled Memory";
 
-  throw new Error("Encryption key not configured. Set VEGA_ENCRYPTION_KEY or run `vega init-encryption`.");
+  return {
+    id: entry.id,
+    type: entry.type,
+    project: entry.project,
+    title,
+    content: entry.content,
+    embedding: entry.embedding ? Buffer.from(entry.embedding, "base64") : null,
+    importance: entry.importance ?? 0.5,
+    source,
+    tags: entry.tags ?? [],
+    created_at: entry.created_at ?? timestamp,
+    updated_at: entry.updated_at ?? timestamp,
+    accessed_at: entry.accessed_at ?? entry.updated_at ?? entry.created_at ?? timestamp,
+    access_count: entry.access_count ?? 0,
+    status: entry.status ?? "active",
+    verified: entry.verified ?? (source === "explicit" ? "verified" : "unverified"),
+    scope: entry.scope ?? (entry.type === "preference" ? "global" : "project"),
+    accessed_projects: entry.accessed_projects ?? [entry.project]
+  };
 };
 
 export function registerImportExportCommands(
@@ -296,7 +457,7 @@ export function registerImportExportCommands(
           .map(serializePortableMemory);
         const rendered =
           format === "json"
-            ? JSON.stringify(memories, null, 2)
+            ? renderJson(memories)
             : renderMarkdown(memories);
 
         if (options.output) {
@@ -305,7 +466,10 @@ export function registerImportExportCommands(
           if (options.encrypt) {
             writeFileSync(
               outputPath,
-              encryptBuffer(Buffer.from(rendered, "utf8"), await resolveEncryptionKey(config))
+              encryptBuffer(
+                Buffer.from(rendered, "utf8"),
+                await requireConfiguredEncryptionKey(config)
+              )
             );
           } else {
             writeFileSync(outputPath, rendered, "utf8");
@@ -336,7 +500,7 @@ export function registerImportExportCommands(
         ? parseJson(
             decryptBuffer(
               readFileSync(inputPath),
-              await resolveEncryptionKey(config)
+              await requireConfiguredEncryptionKey(config)
             ).toString("utf8")
           )
         : (() => {
@@ -357,7 +521,68 @@ export function registerImportExportCommands(
           })();
 
       for (const entry of entries) {
-        await memoryService.store(entry);
+        const importedMemory = buildImportedMemory(entry);
+
+        if (importedMemory === null) {
+          await memoryService.store({
+            content: entry.content,
+            type: entry.type,
+            project: entry.project,
+            title: entry.title,
+            tags: entry.tags,
+            importance: entry.importance,
+            source: entry.source
+          });
+          continue;
+        }
+
+        const existing = repository.getMemory(importedMemory.id);
+
+        if (existing === null) {
+          repository.createMemory({
+            id: importedMemory.id,
+            type: importedMemory.type,
+            project: importedMemory.project,
+            title: importedMemory.title,
+            content: importedMemory.content,
+            embedding: importedMemory.embedding,
+            importance: importedMemory.importance,
+            source: importedMemory.source,
+            tags: importedMemory.tags,
+            created_at: importedMemory.created_at,
+            updated_at: importedMemory.updated_at,
+            accessed_at: importedMemory.accessed_at,
+            status: importedMemory.status,
+            verified: importedMemory.verified,
+            scope: importedMemory.scope,
+            accessed_projects: importedMemory.accessed_projects
+          });
+        }
+
+        repository.updateMemory(
+          importedMemory.id,
+          {
+            type: importedMemory.type,
+            project: importedMemory.project,
+            title: importedMemory.title,
+            content: importedMemory.content,
+            embedding: importedMemory.embedding,
+            importance: importedMemory.importance,
+            source: importedMemory.source,
+            tags: importedMemory.tags,
+            created_at: importedMemory.created_at,
+            updated_at: importedMemory.updated_at,
+            accessed_at: importedMemory.accessed_at,
+            access_count: importedMemory.access_count,
+            status: importedMemory.status,
+            verified: importedMemory.verified,
+            scope: importedMemory.scope,
+            accessed_projects: importedMemory.accessed_projects
+          },
+          {
+            skipVersion: true
+          }
+        );
       }
 
       console.log(`imported ${entries.length} memories from ${inputPath}`);

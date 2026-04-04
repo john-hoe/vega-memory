@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
+import { Repository } from "../db/repository.js";
+
 const cliPath = join(process.cwd(), "dist", "cli", "index.js");
 
 const runCli = (args: string[], env: NodeJS.ProcessEnv): string =>
@@ -160,6 +162,79 @@ test("CLI export and import round-trip JSON", () => {
     assert.match(readFileSync(exportPath, "utf8"), /Prefer concise output/);
     assert.match(listed, /Prefer concise output for CLI responses/);
   } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CLI JSON export/import preserves archived metadata", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-export-metadata-"));
+  const sourceDbPath = join(tempDir, "source.db");
+  const targetDbPath = join(tempDir, "target.db");
+  const exportPath = join(tempDir, "memories.json");
+  const sourceRepository = new Repository(sourceDbPath);
+
+  try {
+    sourceRepository.createMemory({
+      id: "archived-global-memory",
+      type: "decision",
+      project: "project-a",
+      title: "Archived Global Decision",
+      content: "Preserve archived metadata during export and import.",
+      embedding: null,
+      importance: 0.6,
+      source: "explicit",
+      tags: ["archive", "global"],
+      created_at: "2026-04-01T00:00:00.000Z",
+      updated_at: "2026-04-02T00:00:00.000Z",
+      accessed_at: "2026-04-03T00:00:00.000Z",
+      status: "archived",
+      verified: "verified",
+      scope: "global",
+      accessed_projects: ["project-a", "project-b"]
+    });
+    sourceRepository.updateMemory(
+      "archived-global-memory",
+      {
+        access_count: 7,
+        accessed_at: "2026-04-03T00:00:00.000Z",
+        updated_at: "2026-04-02T00:00:00.000Z"
+      },
+      {
+        skipVersion: true
+      }
+    );
+
+    const exportOutput = runCli(
+      ["export", "--format", "json", "--archived", "-o", exportPath],
+      {
+        VEGA_DB_PATH: sourceDbPath,
+        OLLAMA_BASE_URL: "http://localhost:99999"
+      }
+    );
+    const importOutput = runCli(["import", exportPath], {
+      VEGA_DB_PATH: targetDbPath,
+      OLLAMA_BASE_URL: "http://localhost:99999"
+    });
+    const targetRepository = new Repository(targetDbPath);
+
+    try {
+      const imported = targetRepository.getMemory("archived-global-memory");
+
+      assert.match(exportOutput, /\bexported 1 memories\b/);
+      assert.match(importOutput, /\bimported 1 memories\b/);
+      assert.ok(imported);
+      assert.equal(imported.status, "archived");
+      assert.equal(imported.scope, "global");
+      assert.equal(imported.verified, "verified");
+      assert.equal(imported.source, "explicit");
+      assert.equal(imported.access_count, 7);
+      assert.deepEqual(imported.accessed_projects, ["project-a", "project-b"]);
+      assert.match(readFileSync(exportPath, "utf8"), /"format": "vega-memory\/v1"/);
+    } finally {
+      targetRepository.close();
+    }
+  } finally {
+    sourceRepository.close();
     rmSync(tempDir, { recursive: true, force: true });
   }
 });

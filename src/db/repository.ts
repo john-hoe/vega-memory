@@ -386,13 +386,23 @@ export class Repository {
     return rows.map(mapMemory);
   }
 
-  searchFTS(query: string, project?: string, type?: string): { memory: Memory; rank: number }[] {
+  searchFTS(
+    query: string,
+    project?: string,
+    type?: string,
+    includeGlobal = false
+  ): { memory: Memory; rank: number }[] {
     const clauses = ["memories_fts MATCH ?", "memories.status = 'active'"];
     const params: unknown[] = [query];
 
     if (project) {
-      clauses.push("memories.project = ?");
-      params.push(project);
+      if (includeGlobal) {
+        clauses.push("(memories.project = ? OR memories.scope = 'global')");
+        params.push(project);
+      } else {
+        clauses.push("memories.project = ?");
+        params.push(project);
+      }
     }
     if (type) {
       clauses.push("memories.type = ?");
@@ -420,13 +430,22 @@ export class Repository {
     }));
   }
 
-  getAllEmbeddings(project?: string, type?: string): { id: string; embedding: Buffer; memory: Memory }[] {
+  getAllEmbeddings(
+    project?: string,
+    type?: string,
+    includeGlobal = false
+  ): { id: string; embedding: Buffer; memory: Memory }[] {
     const clauses = ["embedding IS NOT NULL", "status = 'active'"];
     const params: unknown[] = [];
 
     if (project) {
-      clauses.push("project = ?");
-      params.push(project);
+      if (includeGlobal) {
+        clauses.push("(project = ? OR scope = 'global')");
+        params.push(project);
+      } else {
+        clauses.push("project = ?");
+        params.push(project);
+      }
     }
     if (type) {
       clauses.push("type = ?");
