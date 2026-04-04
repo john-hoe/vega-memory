@@ -5,6 +5,8 @@ export interface VegaConfig {
   tokenBudget: number;
   similarityThreshold: number;
   backupRetentionDays: number;
+  apiPort: number;
+  apiKey: string | undefined;
 }
 
 const parseNumber = (value: string | undefined, fallback: number): number => {
@@ -29,5 +31,7 @@ export const loadConfig = (): VegaConfig => ({
     parseNumber(process.env.VEGA_BACKUP_RETENTION_DAYS, 7),
     1,
     365
-  )
+  ),
+  apiPort: parseNumber(process.env.VEGA_API_PORT, 3271),
+  apiKey: process.env.VEGA_API_KEY || undefined
 });

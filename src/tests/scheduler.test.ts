@@ -73,7 +73,9 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
     ollamaModel: "bge-m3",
     tokenBudget: 2000,
     similarityThreshold: 0.85,
-    backupRetentionDays: 7
+    backupRetentionDays: 7,
+    apiPort: 3271,
+    apiKey: undefined
   };
   const repository = new Repository(dbPath);
   const compactService = new CompactService(repository, config);
@@ -112,7 +114,9 @@ test("weeklyHealthReport writes integrity and memory count details", async () =>
     ollamaModel: "bge-m3",
     tokenBudget: 2000,
     similarityThreshold: 0.85,
-    backupRetentionDays: 7
+    backupRetentionDays: 7,
+    apiPort: 3271,
+    apiKey: undefined
   };
   const repository = new Repository(dbPath);
 

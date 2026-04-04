@@ -1,0 +1,425 @@
+import { existsSync, statSync } from "node:fs";
+
+import { Router, type RequestHandler } from "express";
+
+import type { VegaConfig } from "../config.js";
+import { CompactService } from "../core/compact.js";
+import { MemoryService } from "../core/memory.js";
+import { RecallService } from "../core/recall.js";
+import { SessionService } from "../core/session.js";
+import type { Memory, MemorySource, MemoryType, SessionStartResult } from "../core/types.js";
+import { Repository } from "../db/repository.js";
+import { isOllamaAvailable } from "../embedding/ollama.js";
+
+const MEMORY_TYPES = new Set<MemoryType>([
+  "task_state",
+  "preference",
+  "project_context",
+  "decision",
+  "pitfall",
+  "insight"
+]);
+
+const MEMORY_SOURCES = new Set<MemorySource>(["auto", "explicit"]);
+
+class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+export interface APIRouterServices {
+  repository: Repository;
+  memoryService: MemoryService;
+  recallService: RecallService;
+  sessionService: SessionService;
+  compactService: CompactService;
+  config: VegaConfig;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const countMemories = (repository: Repository): number =>
+  repository.listMemories({
+    limit: 1_000_000
+  }).length;
+
+const getDatabaseSizeBytes = (dbPath: string): number => {
+  if (dbPath === ":memory:") {
+    return 0;
+  }
+
+  return [dbPath, `${dbPath}-wal`, `${dbPath}-shm`].reduce((total, path) => {
+    if (!existsSync(path)) {
+      return total;
+    }
+
+    return total + statSync(path).size;
+  }, 0);
+};
+
+const serializeMemory = (memory: Memory) => ({
+  id: memory.id,
+  type: memory.type,
+  project: memory.project,
+  title: memory.title,
+  content: memory.content,
+  importance: memory.importance,
+  source: memory.source,
+  tags: memory.tags,
+  created_at: memory.created_at,
+  updated_at: memory.updated_at,
+  accessed_at: memory.accessed_at,
+  access_count: memory.access_count,
+  status: memory.status,
+  verified: memory.verified,
+  scope: memory.scope,
+  accessed_projects: memory.accessed_projects
+});
+
+const serializeSessionStartResult = (result: SessionStartResult) => ({
+  project: result.project,
+  active_tasks: result.active_tasks.map(serializeMemory),
+  preferences: result.preferences.map(serializeMemory),
+  context: result.context.map(serializeMemory),
+  relevant: result.relevant.map(serializeMemory),
+  recent_unverified: result.recent_unverified.map(serializeMemory),
+  conflicts: result.conflicts.map(serializeMemory),
+  proactive_warnings: result.proactive_warnings,
+  token_estimate: result.token_estimate
+});
+
+const getErrorResponse = (error: unknown): { status: number; message: string } => {
+  if (error instanceof ApiError) {
+    return {
+      status: error.status,
+      message: error.message
+    };
+  }
+
+  if (error instanceof Error) {
+    if (
+      error.message.startsWith("Memory not found:") ||
+      error.message.startsWith("Unsupported sort")
+    ) {
+      return {
+        status: 400,
+        message: error.message
+      };
+    }
+
+    return {
+      status: 500,
+      message: error.message
+    };
+  }
+
+  return {
+    status: 500,
+    message: String(error)
+  };
+};
+
+const handleRoute =
+  (handler: RequestHandler): RequestHandler =>
+  (req, res, next) => {
+    void Promise.resolve()
+      .then(() => handler(req, res, next))
+      .catch((error: unknown) => {
+        const { status, message } = getErrorResponse(error);
+        res.status(status).json({
+          error: message
+        });
+      });
+  };
+
+const requireBody = (body: unknown): Record<string, unknown> => {
+  if (!isRecord(body)) {
+    throw new ApiError(400, "request body must be a JSON object");
+  }
+
+  return body;
+};
+
+const parseSingleValue = (value: unknown, field: string): string | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  if (Array.isArray(value) && value.length === 1 && typeof value[0] === "string") {
+    return parseSingleValue(value[0], field);
+  }
+
+  throw new ApiError(400, `${field} must be a string`);
+};
+
+const requireString = (value: unknown, field: string): string => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    throw new ApiError(400, `${field} is required`);
+  }
+
+  return parsed;
+};
+
+const parseNumber = (
+  value: unknown,
+  field: string,
+  options?: {
+    integer?: boolean;
+    min?: number;
+    max?: number;
+  }
+): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    throw new ApiError(400, `${field} must be a number`);
+  }
+
+  if (options?.integer && !Number.isInteger(value)) {
+    throw new ApiError(400, `${field} must be an integer`);
+  }
+
+  if (options?.min !== undefined && value < options.min) {
+    throw new ApiError(400, `${field} must be at least ${options.min}`);
+  }
+
+  if (options?.max !== undefined && value > options.max) {
+    throw new ApiError(400, `${field} must be at most ${options.max}`);
+  }
+
+  return value;
+};
+
+const parseStringArray = (value: unknown, field: string): string[] | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new ApiError(400, `${field} must be an array of strings`);
+  }
+
+  const parsed = value.map((entry) => {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      throw new ApiError(400, `${field} must be an array of non-empty strings`);
+    }
+
+    return entry.trim();
+  });
+
+  return parsed;
+};
+
+const parseMemoryType = (value: unknown, field: string): MemoryType | undefined => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  if (!MEMORY_TYPES.has(parsed as MemoryType)) {
+    throw new ApiError(400, `${field} must be a supported memory type`);
+  }
+
+  return parsed as MemoryType;
+};
+
+const parseMemorySource = (value: unknown, field: string): MemorySource | undefined => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  if (!MEMORY_SOURCES.has(parsed as MemorySource)) {
+    throw new ApiError(400, `${field} must be a supported memory source`);
+  }
+
+  return parsed as MemorySource;
+};
+
+const parseIntegerString = (value: unknown, field: string): number | undefined => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  return parseNumber(Number.parseInt(parsed, 10), field, {
+    integer: true,
+    min: 1
+  });
+};
+
+export function createRouter(services: APIRouterServices): Router {
+  const router = Router();
+
+  router.post(
+    "/api/store",
+    handleRoute(async (req, res) => {
+      const body = requireBody(req.body);
+      const result = await services.memoryService.store({
+        content: requireString(body.content, "content"),
+        type: parseMemoryType(body.type, "type") ?? (() => {
+          throw new ApiError(400, "type is required");
+        })(),
+        project: parseSingleValue(body.project, "project") ?? "global",
+        title: parseSingleValue(body.title, "title"),
+        tags: parseStringArray(body.tags, "tags"),
+        importance: parseNumber(body.importance, "importance", {
+          min: 0,
+          max: 1
+        }),
+        source: parseMemorySource(body.source, "source")
+      });
+
+      res.status(200).json(result);
+    })
+  );
+
+  router.post(
+    "/api/recall",
+    handleRoute(async (req, res) => {
+      const body = requireBody(req.body);
+      const query = requireString(body.query, "query");
+      const result = await services.recallService.recall(query, {
+        project: parseSingleValue(body.project, "project"),
+        type: parseMemoryType(body.type, "type"),
+        limit:
+          parseNumber(body.limit, "limit", {
+            integer: true,
+            min: 1
+          }) ?? 5,
+        minSimilarity:
+          parseNumber(body.min_similarity ?? body.minSimilarity, "min_similarity", {
+            min: 0,
+            max: 1
+          }) ?? 0.3
+      });
+
+      res.status(200).json(
+        result.map((entry) => ({
+          id: entry.memory.id,
+          title: entry.memory.title,
+          content: entry.memory.content,
+          type: entry.memory.type,
+          similarity: entry.similarity,
+          project: entry.memory.project
+        }))
+      );
+    })
+  );
+
+  router.get(
+    "/api/list",
+    handleRoute((req, res) => {
+      const memories = services.recallService.listMemories({
+        project: parseSingleValue(req.query.project, "project"),
+        type: parseMemoryType(req.query.type, "type"),
+        limit: parseIntegerString(req.query.limit, "limit") ?? 20,
+        sort: parseSingleValue(req.query.sort, "sort")
+      });
+
+      res.status(200).json(memories.map(serializeMemory));
+    })
+  );
+
+  router.patch(
+    "/api/memory/:id",
+    handleRoute(async (req, res) => {
+      const body = requireBody(req.body);
+      const id = requireString(req.params.id, "id");
+
+      await services.memoryService.update(id, {
+        content: parseSingleValue(body.content, "content"),
+        importance: parseNumber(body.importance, "importance", {
+          min: 0,
+          max: 1
+        }),
+        tags: parseStringArray(body.tags, "tags")
+      });
+
+      res.status(200).json({
+        id,
+        action: "updated"
+      });
+    })
+  );
+
+  router.delete(
+    "/api/memory/:id",
+    handleRoute(async (req, res) => {
+      const id = requireString(req.params.id, "id");
+      await services.memoryService.delete(id);
+
+      res.status(200).json({
+        id,
+        action: "deleted"
+      });
+    })
+  );
+
+  router.post(
+    "/api/session/start",
+    handleRoute(async (req, res) => {
+      const body = requireBody(req.body);
+      const result = await services.sessionService.sessionStart(
+        requireString(body.working_directory, "working_directory"),
+        parseSingleValue(body.task_hint, "task_hint")
+      );
+
+      res.status(200).json(serializeSessionStartResult(result));
+    })
+  );
+
+  router.post(
+    "/api/session/end",
+    handleRoute(async (req, res) => {
+      const body = requireBody(req.body);
+      const project = requireString(body.project, "project");
+      await services.sessionService.sessionEnd(
+        project,
+        requireString(body.summary, "summary"),
+        parseStringArray(body.completed_tasks, "completed_tasks")
+      );
+
+      res.status(200).json({
+        project,
+        action: "ended"
+      });
+    })
+  );
+
+  router.get(
+    "/api/health",
+    handleRoute(async (_req, res) => {
+      res.status(200).json({
+        memory_count: countMemories(services.repository),
+        db_size_bytes: getDatabaseSizeBytes(services.config.dbPath),
+        ollama_available: await isOllamaAvailable(services.config)
+      });
+    })
+  );
+
+  router.post(
+    "/api/compact",
+    handleRoute((req, res) => {
+      const body = req.body === undefined ? {} : requireBody(req.body);
+      const result = services.compactService.compact(parseSingleValue(body.project, "project"));
+
+      res.status(200).json(result);
+    })
+  );
+
+  return router;
+}

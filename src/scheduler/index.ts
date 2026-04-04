@@ -1,9 +1,14 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
+import { createAPIServer } from "../api/server.js";
 import { loadConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
+import { MemoryService } from "../core/memory.js";
+import { RecallService } from "../core/recall.js";
+import { SessionService } from "../core/session.js";
 import { Repository } from "../db/repository.js";
+import { SearchEngine } from "../search/engine.js";
 import { dailyMaintenance, weeklyHealthReport } from "./tasks.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -71,7 +76,28 @@ async function main(): Promise<void> {
   ensureSchedulerDirectories(config.dbPath);
 
   const repository = new Repository(config.dbPath);
+  const searchEngine = new SearchEngine(repository, config);
+  const memoryService = new MemoryService(repository, config);
+  const recallService = new RecallService(repository, searchEngine, config);
+  const sessionService = new SessionService(
+    repository,
+    memoryService,
+    recallService,
+    config
+  );
   const compactService = new CompactService(repository, config);
+  const apiServer = createAPIServer(
+    {
+      repository,
+      memoryService,
+      recallService,
+      sessionService,
+      compactService
+    },
+    config
+  );
+  const apiPort = await apiServer.start(config.apiPort);
+  log(`HTTP API listening on port ${apiPort}`);
   const runDaily = createGuardedRunner("daily maintenance", async () => {
     await dailyMaintenance(repository, compactService, config);
   });
@@ -96,7 +122,7 @@ async function main(): Promise<void> {
     }, WEEK_MS);
   }, getMsUntilNextSunday());
 
-  const shutdown = (signal: NodeJS.Signals): void => {
+  const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     if (shuttingDown) {
       return;
     }
@@ -110,16 +136,21 @@ async function main(): Promise<void> {
       clearInterval(weeklyInterval);
     }
 
-    repository.close();
+    try {
+      await apiServer.stop();
+    } finally {
+      repository.close();
+    }
+
     log("Scheduler stopped");
     process.exit(0);
   };
 
   process.once("SIGINT", () => {
-    shutdown("SIGINT");
+    void shutdown("SIGINT");
   });
   process.once("SIGTERM", () => {
-    shutdown("SIGTERM");
+    void shutdown("SIGTERM");
   });
 
   log("Scheduler daemon started");

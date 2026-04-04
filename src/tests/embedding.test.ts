@@ -10,7 +10,9 @@ const unreachableConfig: VegaConfig = {
   ollamaModel: "bge-m3",
   tokenBudget: 2000,
   similarityThreshold: 0.85,
-  backupRetentionDays: 7
+  backupRetentionDays: 7,
+  apiPort: 3271,
+  apiKey: undefined
 };
 
 test("cosineSimilarity returns 1 for identical vectors", () => {

@@ -11,6 +11,8 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
+    VEGA_API_PORT: process.env.VEGA_API_PORT,
+    VEGA_API_KEY: process.env.VEGA_API_KEY,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID
   };
@@ -21,6 +23,8 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_TOKEN_BUDGET;
   delete process.env.VEGA_SIMILARITY_THRESHOLD;
   delete process.env.VEGA_BACKUP_RETENTION_DAYS;
+  delete process.env.VEGA_API_PORT;
+  delete process.env.VEGA_API_KEY;
   delete process.env.VEGA_TG_BOT_TOKEN;
   delete process.env.VEGA_TG_CHAT_ID;
 
@@ -30,7 +34,9 @@ test("loadConfig returns the documented defaults", () => {
     ollamaModel: "bge-m3",
     tokenBudget: 2000,
     similarityThreshold: 0.85,
-    backupRetentionDays: 7
+    backupRetentionDays: 7,
+    apiPort: 3271,
+    apiKey: undefined
   });
 
   Object.assign(process.env, previous);
@@ -44,6 +50,8 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
+    VEGA_API_PORT: process.env.VEGA_API_PORT,
+    VEGA_API_KEY: process.env.VEGA_API_KEY,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID
   };
@@ -54,6 +62,8 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_TOKEN_BUDGET = "4096";
   process.env.VEGA_SIMILARITY_THRESHOLD = "0.91";
   process.env.VEGA_BACKUP_RETENTION_DAYS = "14";
+  process.env.VEGA_API_PORT = "4321";
+  process.env.VEGA_API_KEY = "super-secret";
   process.env.VEGA_TG_BOT_TOKEN = "bot-token";
   process.env.VEGA_TG_CHAT_ID = "chat-id";
 
@@ -63,7 +73,9 @@ test("loadConfig reads overrides from process.env", () => {
     ollamaModel: "nomic-embed-text",
     tokenBudget: 4096,
     similarityThreshold: 0.91,
-    backupRetentionDays: 14
+    backupRetentionDays: 14,
+    apiPort: 4321,
+    apiKey: "super-secret"
   });
 
   Object.assign(process.env, previous);
@@ -73,18 +85,21 @@ test("loadConfig clamps invalid numeric values", () => {
   const previous = {
     VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
-    VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS
+    VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
+    VEGA_API_PORT: process.env.VEGA_API_PORT
   };
 
   process.env.VEGA_TOKEN_BUDGET = "100";
   process.env.VEGA_SIMILARITY_THRESHOLD = "1.5";
   process.env.VEGA_BACKUP_RETENTION_DAYS = "999";
+  process.env.VEGA_API_PORT = "not-a-number";
 
   const config = loadConfig();
 
   assert.equal(config.tokenBudget, 500);
   assert.equal(config.similarityThreshold, 1);
   assert.equal(config.backupRetentionDays, 365);
+  assert.equal(config.apiPort, 3271);
 
   Object.assign(process.env, previous);
 });
