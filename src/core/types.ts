@@ -94,6 +94,13 @@ export interface HealthReport {
   fix_suggestions: string[];
 }
 
+export interface DiagnoseReport {
+  report_path: string;
+  summary: string;
+  suggested_fixes: string[];
+  issues_found: string[];
+}
+
 export interface StoreParams {
   content: string;
   type: MemoryType;

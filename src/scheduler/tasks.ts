@@ -21,6 +21,18 @@ interface IntegrityCheckRow {
   integrity_check: string;
 }
 
+interface AverageLatencyRow {
+  average_latency: number | null;
+  entry_count: number;
+}
+
+interface TopAccessedMemoryRow {
+  id: string;
+  title: string;
+  access_count: number;
+  accessed_at: string;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -41,6 +53,9 @@ const formatDate = (value: Date): string => value.toISOString().slice(0, 10);
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.stack ?? error.message : String(error);
+
+const formatPercent = (count: number, total: number): string =>
+  total === 0 ? "0.0" : ((count / total) * 100).toFixed(1);
 
 const getDataDir = (config: VegaConfig): string =>
   config.dbPath === ":memory:" ? resolve(process.cwd(), "data") : dirname(resolve(config.dbPath));
@@ -103,6 +118,28 @@ const formatCountTable = <TName extends string>(title: string, rows: CountRow<TN
 
   if (rows.length === 0) {
     lines.push("| none | 0 |");
+  }
+
+  lines.push("");
+  return lines.join("\n");
+};
+
+const formatTopAccessedTable = (rows: TopAccessedMemoryRow[]): string => {
+  const lines = [
+    "## Top 5 Most Accessed Memories",
+    "",
+    "| Rank | ID | Title | Access Count | Last Accessed |",
+    "| ---: | --- | --- | ---: | --- |"
+  ];
+
+  if (rows.length === 0) {
+    lines.push("| 1 | none | none | 0 | n/a |");
+  }
+
+  for (const [index, row] of rows.entries()) {
+    lines.push(
+      `| ${index + 1} | ${row.id} | ${row.title} | ${row.access_count} | ${row.accessed_at} |`
+    );
   }
 
   lines.push("");
@@ -263,17 +300,66 @@ export async function weeklyHealthReport(
        ORDER BY count DESC, name ASC`
     )
     .all();
-  const staleCutoff = new Date(Date.now() - 30 * DAY_MS).toISOString();
+  const now = Date.now();
+  const weekCutoff = new Date(now - 7 * DAY_MS).toISOString();
+  const staleCutoff = new Date(now - 30 * DAY_MS).toISOString();
+  const latencyRow = repository.db
+    .prepare<[string], AverageLatencyRow>(
+      `SELECT AVG(latency_ms) AS average_latency, COUNT(*) AS entry_count
+       FROM performance_log
+       WHERE timestamp >= ?`
+    )
+    .get(weekCutoff);
+  const recentlyAccessedRow = repository.db
+    .prepare<[string], { count: number }>(
+      "SELECT COUNT(*) AS count FROM memories WHERE accessed_at >= ?"
+    )
+    .get(staleCutoff);
   const staleRow = repository.db
     .prepare<[string], { count: number }>(
       "SELECT COUNT(*) AS count FROM memories WHERE accessed_at <= ?"
     )
     .get(staleCutoff);
+  const unverifiedRow = repository.db
+    .prepare<[], { count: number }>(
+      "SELECT COUNT(*) AS count FROM memories WHERE verified = 'unverified'"
+    )
+    .get();
+  const archivedRow = repository.db
+    .prepare<[], { count: number }>(
+      "SELECT COUNT(*) AS count FROM memories WHERE status = 'archived'"
+    )
+    .get();
+  const activeRow = repository.db
+    .prepare<[], { count: number }>(
+      "SELECT COUNT(*) AS count FROM memories WHERE status = 'active'"
+    )
+    .get();
+  const newThisWeekRow = repository.db
+    .prepare<[string], { count: number }>(
+      "SELECT COUNT(*) AS count FROM memories WHERE created_at >= ?"
+    )
+    .get(weekCutoff);
   const totalRow = repository.db
     .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM memories")
     .get();
+  const topAccessed = repository.db
+    .prepare<[], TopAccessedMemoryRow>(
+      `SELECT id, title, access_count, accessed_at
+       FROM memories
+       ORDER BY access_count DESC, accessed_at DESC, title ASC
+       LIMIT 5`
+    )
+    .all();
   const generatedAt = timestamp();
+  const averageLatency = latencyRow?.average_latency ?? 0;
+  const latencyEntryCount = latencyRow?.entry_count ?? 0;
+  const recentlyAccessedCount = recentlyAccessedRow?.count ?? 0;
   const staleCount = staleRow?.count ?? 0;
+  const unverifiedCount = unverifiedRow?.count ?? 0;
+  const archivedCount = archivedRow?.count ?? 0;
+  const activeCount = activeRow?.count ?? 0;
+  const newThisWeekCount = newThisWeekRow?.count ?? 0;
   const totalCount = totalRow?.count ?? 0;
   const reportPath = getWeeklyReportPath(config);
   const content = [
@@ -287,6 +373,24 @@ export async function weeklyHealthReport(
     `- Total memories: ${totalCount}`,
     `- Not accessed in 30+ days: ${staleCount}`,
     "",
+    "## Performance Trends",
+    "",
+    `- Average latency over past 7 days: ${averageLatency.toFixed(2)} ms`,
+    `- Performance samples over past 7 days: ${latencyEntryCount}`,
+    "",
+    "## Memory Quality",
+    "",
+    `- Accessed in last 30 days: ${formatPercent(recentlyAccessedCount, totalCount)}% (${recentlyAccessedCount}/${totalCount})`,
+    `- Unverified: ${formatPercent(unverifiedCount, totalCount)}% (${unverifiedCount}/${totalCount})`,
+    `- Archived: ${formatPercent(archivedCount, totalCount)}% (${archivedCount}/${totalCount})`,
+    "",
+    "## Growth Stats",
+    "",
+    `- New memories this week: ${newThisWeekCount}`,
+    `- Total active: ${activeCount}`,
+    `- Total archived: ${archivedCount}`,
+    "",
+    formatTopAccessedTable(topAccessed),
     formatCountTable("Memories by Type", typeCounts),
     formatCountTable("Memories by Status", statusCounts)
   ].join("\n");

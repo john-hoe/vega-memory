@@ -6,6 +6,8 @@ import { Command } from "commander";
 
 import { loadConfig } from "../config.js";
 import { registerAuditCommand } from "./commands/audit.js";
+import { registerBenchmarkCommand } from "./commands/benchmark.js";
+import { registerDiagnoseCommand } from "./commands/diagnose.js";
 import { registerHealthCommand } from "./commands/health.js";
 import { registerImportExportCommands } from "./commands/import-export.js";
 import { registerListCommand } from "./commands/list.js";
@@ -68,10 +70,12 @@ async function main(): Promise<void> {
   registerListCommand(program, recallService);
   registerSessionCommands(program, sessionService);
   registerHealthCommand(program, repository, config);
+  registerDiagnoseCommand(program, repository, config);
   registerMaintenanceCommands(program, repository, compactService, config);
   registerImportExportCommands(program, repository, memoryService);
   registerMigrateCommand(program, memoryService);
   registerAuditCommand(program, repository);
+  registerBenchmarkCommand(program, repository, memoryService, recallService, config);
 
   try {
     await program.parseAsync(process.argv);

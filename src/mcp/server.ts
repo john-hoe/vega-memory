@@ -6,6 +6,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import type { VegaConfig } from "../config.js";
+import { DiagnoseService } from "../core/diagnose.js";
 import { isOllamaAvailable } from "../embedding/ollama.js";
 import { Repository } from "../db/repository.js";
 import type {
@@ -177,6 +178,7 @@ export function createMCPServer({
     name: "vega-memory",
     version: "0.1.0"
   });
+  const diagnoseService = new DiagnoseService(repository, config);
 
   server.tool(
     "memory_store",
@@ -370,6 +372,23 @@ export function createMCPServer({
         return {
           result,
           resultCount: 1
+        };
+      })
+  );
+
+  server.tool(
+    "memory_diagnose",
+    "Run a diagnostic report for Vega Memory.",
+    {
+      issue: z.string().trim().min(1).optional()
+    },
+    async (args) =>
+      runTool(repository, "memory_diagnose", async () => {
+        const result = await diagnoseService.diagnose(args.issue);
+
+        return {
+          result,
+          resultCount: Math.max(result.issues_found.length, 1)
         };
       })
   );

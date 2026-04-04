@@ -131,11 +131,16 @@ test("weeklyHealthReport writes integrity and memory count details", async () =>
   const repository = new Repository(dbPath);
 
   try {
+    const recentCreatedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+
     repository.createMemory(
       createMemory({
         id: "decision-active",
         type: "decision",
+        created_at: recentCreatedAt,
+        updated_at: recentCreatedAt,
         status: "active",
+        verified: "unverified",
         accessed_at: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString()
       })
     );
@@ -143,11 +148,53 @@ test("weeklyHealthReport writes integrity and memory count details", async () =>
       createMemory({
         id: "insight-archived",
         type: "insight",
+        title: "Archived Insight",
+        created_at: recentCreatedAt,
+        updated_at: recentCreatedAt,
         status: "archived",
         embedding: Buffer.from([1, 2, 3]),
         accessed_at: new Date().toISOString()
       })
     );
+    repository.updateMemory(
+      "decision-active",
+      {
+        access_count: 3
+      },
+      {
+        skipVersion: true
+      }
+    );
+    repository.updateMemory(
+      "insight-archived",
+      {
+        access_count: 8
+      },
+      {
+        skipVersion: true
+      }
+    );
+    repository.logPerformance({
+      timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      operation: "memory_store",
+      latency_ms: 80,
+      memory_count: 1,
+      result_count: 1
+    });
+    repository.logPerformance({
+      timestamp: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+      operation: "memory_recall",
+      latency_ms: 120,
+      memory_count: 2,
+      result_count: 1
+    });
+    repository.logPerformance({
+      timestamp: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
+      operation: "memory_list",
+      latency_ms: 400,
+      memory_count: 2,
+      result_count: 2
+    });
 
     await weeklyHealthReport(repository, config);
 
@@ -158,6 +205,14 @@ test("weeklyHealthReport writes integrity and memory count details", async () =>
     assert.match(report, /Result: ok/);
     assert.match(report, /Total memories: 2/);
     assert.match(report, /Not accessed in 30\+ days: 1/);
+    assert.match(report, /Average latency over past 7 days: 100\.00 ms/);
+    assert.match(report, /Accessed in last 30 days: 50\.0% \(1\/2\)/);
+    assert.match(report, /Unverified: 50\.0% \(1\/2\)/);
+    assert.match(report, /Archived: 50\.0% \(1\/2\)/);
+    assert.match(report, /New memories this week: 2/);
+    assert.match(report, /Total active: 1/);
+    assert.match(report, /Total archived: 1/);
+    assert.match(report, /\| 1 \| insight-archived \| Archived Insight \| 8 \|/);
     assert.match(report, /\| decision \| 1 \|/);
     assert.match(report, /\| insight \| 1 \|/);
     assert.match(report, /\| active \| 1 \|/);
