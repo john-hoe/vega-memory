@@ -21,7 +21,7 @@ import { SessionService } from "../core/session.js";
 import type { Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { SearchEngine } from "../search/engine.js";
-import { startSchedulerApiServer } from "../scheduler/index.js";
+import { shouldRunDaily, shouldRunWeekly, startSchedulerApiServer } from "../scheduler/index.js";
 import { dailyMaintenance, weeklyHealthReport } from "../scheduler/tasks.js";
 
 const createMemory = (overrides: Partial<Memory> = {}): Memory => ({
@@ -151,6 +151,23 @@ test("scheduler starts the HTTP API when apiKey is configured", async () => {
   } finally {
     harness.cleanup();
   }
+});
+
+test("shouldRunDaily only triggers once during the scheduled hour", () => {
+  const scheduledTime = new Date("2026-04-06T04:10:00");
+
+  assert.equal(shouldRunDaily(scheduledTime, null), true);
+  assert.equal(shouldRunDaily(scheduledTime, Date.parse("2026-04-06T04:00:00")), false);
+  assert.equal(shouldRunDaily(new Date("2026-04-06T03:59:00"), null), false);
+});
+
+test("shouldRunWeekly only triggers on Sunday at 03:00 once per week", () => {
+  const sundayRun = new Date("2026-04-05T03:15:00");
+
+  assert.equal(shouldRunWeekly(sundayRun, null), true);
+  assert.equal(shouldRunWeekly(sundayRun, Date.parse("2026-04-05T03:00:00")), false);
+  assert.equal(shouldRunWeekly(sundayRun, Date.parse("2026-03-29T03:00:00")), true);
+  assert.equal(shouldRunWeekly(new Date("2026-04-06T03:15:00"), null), false);
 });
 
 test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snapshot", async () => {

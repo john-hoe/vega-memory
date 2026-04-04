@@ -97,3 +97,28 @@ test("mergeMemories reports conflicts when both updated within 1 second", () => 
   assert.equal(result.conflicts[0]?.id, "shared");
   assert.equal(result.merged[0]?.content, "Remote near-simultaneous update");
 });
+
+test("mergeMemories field-merges concurrent updates", () => {
+  const merger = new CRDTMerger();
+  const local = createMemory({
+    id: "shared",
+    content: "Short local content",
+    tags: ["sqlite"],
+    importance: 0.4,
+    updated_at: "2026-04-04T00:00:00.000Z"
+  });
+  const remote = createMemory({
+    id: "shared",
+    content: "Much longer remote content that should win",
+    tags: ["scheduler"],
+    importance: 0.9,
+    updated_at: "2026-04-04T00:00:00.500Z"
+  });
+
+  const result = merger.mergeMemories([local], [remote]);
+
+  assert.equal(result.merged[0]?.content, "Much longer remote content that should win");
+  assert.deepEqual(result.merged[0]?.tags, ["scheduler", "sqlite"]);
+  assert.equal(result.merged[0]?.importance, 0.9);
+  assert.equal(result.conflicts.length, 1);
+});

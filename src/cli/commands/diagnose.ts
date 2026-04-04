@@ -20,6 +20,7 @@ export function registerDiagnoseCommand(
 
       console.log(report.summary);
       console.log(`report: ${report.report_path}`);
+      console.log(`can auto fix: ${report.can_auto_fix ? "yes" : "no"}`);
 
       if (report.issues_found.length > 0) {
         console.log("issues found:");
@@ -34,5 +35,8 @@ export function registerDiagnoseCommand(
           console.log(`- ${fix}`);
         }
       }
+
+      console.log("handoff prompt:");
+      console.log(report.handoff_prompt);
     });
 }

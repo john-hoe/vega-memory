@@ -70,9 +70,15 @@ const startHealthServer = async (apiKey: string): Promise<{
     res.setHeader("content-type", "application/json");
     res.end(
       JSON.stringify({
-        memory_count: 0,
-        db_size_bytes: 0,
-        ollama_available: false
+        status: "healthy",
+        ollama: false,
+        db_integrity: true,
+        memories: 0,
+        latency_avg_ms: 0,
+        db_size_mb: 0,
+        last_backup: null,
+        issues: [],
+        fix_suggestions: []
       })
     );
   });

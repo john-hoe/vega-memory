@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -27,6 +27,7 @@ test("upload copies file to destination directory", async () => {
 
     assert.equal(remoteName, "memory-2026-04-04.db");
     assert.equal(readFileSync(uploadedPath, "utf8"), "backup-content");
+    assert.equal(existsSync(join(destDir, "memory-2026-04-04.db.metadata.json")), true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -38,17 +39,19 @@ test("listBackups returns uploaded files", async () => {
   const provider = createProvider(destDir);
 
   try {
-    for (const name of ["memory-2026-04-03.db", "memory-2026-04-04.db"]) {
+    for (const [name, timestamp] of [
+      ["memory-2026-04-03.db", "2026-04-03T00:00:00.000Z"],
+      ["memory-2026-04-04.db", "2026-04-04T00:00:00.000Z"]
+    ] as const) {
       const localPath = join(tempDir, name);
       writeFileSync(localPath, name, "utf8");
+      utimesSync(localPath, new Date(timestamp), new Date(timestamp));
       await provider.upload(localPath);
     }
 
     const backups = await provider.listBackups();
 
-    assert.equal(backups.length, 2);
-    assert.ok(backups.includes("memory-2026-04-03.db"));
-    assert.ok(backups.includes("memory-2026-04-04.db"));
+    assert.deepEqual(backups, ["memory-2026-04-04.db", "memory-2026-04-03.db"]);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
