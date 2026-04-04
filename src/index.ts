@@ -11,6 +11,9 @@ import { SessionService } from "./core/session.js";
 import { Repository } from "./db/repository.js";
 import { createMCPServer } from "./mcp/server.js";
 import { SearchEngine } from "./search/engine.js";
+import { VegaSyncClient } from "./sync/client.js";
+import { SyncManager } from "./sync/manager.js";
+import { PendingQueue } from "./sync/queue.js";
 
 const ensureDataDirectory = (dbPath: string): void => {
   if (dbPath === ":memory:") {
@@ -29,25 +32,82 @@ const debugLog = (msg: string) => {
 async function main(): Promise<void> {
   debugLog("main() starting");
   const config = loadConfig();
-  ensureDataDirectory(config.dbPath);
+  const activeDbPath = config.mode === "client" ? config.cacheDbPath : config.dbPath;
+  ensureDataDirectory(activeDbPath);
 
-  const repository = new Repository(config.dbPath);
-  const searchEngine = new SearchEngine(repository, config);
-  const memoryService = new MemoryService(repository, config);
-  const recallService = new RecallService(repository, searchEngine, config);
-  const sessionService = new SessionService(
-    repository,
-    memoryService,
-    recallService,
-    config
-  );
-  const compactService = new CompactService(repository, config);
+  const runtime =
+    config.mode === "client"
+      ? await (async () => {
+          if (!config.serverUrl) {
+            throw new Error("VEGA_SERVER_URL is required when VEGA_MODE=client");
+          }
+
+          const repository = new Repository(config.cacheDbPath);
+          const client = new VegaSyncClient(config.serverUrl, config.apiKey);
+          const queue = new PendingQueue();
+          const syncManager = new SyncManager(client, queue, repository);
+
+          client.setPendingQueue(queue);
+          client.setCacheRepository(repository);
+
+          await syncManager.syncPending();
+
+          return {
+            repository,
+            memoryService: {
+              store: (params: Parameters<VegaSyncClient["store"]>[0]) => client.store(params),
+              update: (id: string, updates: Parameters<VegaSyncClient["update"]>[1]) =>
+                client.update(id, updates),
+              delete: (id: string) => client.delete(id)
+            },
+            recallService: {
+              recall: (
+                query: Parameters<VegaSyncClient["recall"]>[0],
+                options: Parameters<VegaSyncClient["recall"]>[1]
+              ) => client.recall(query, options),
+              listMemories: (filters: Parameters<VegaSyncClient["list"]>[0]) => client.list(filters)
+            },
+            sessionService: {
+              sessionStart: (
+                workingDirectory: Parameters<VegaSyncClient["sessionStart"]>[0],
+                taskHint?: Parameters<VegaSyncClient["sessionStart"]>[1]
+              ) => client.sessionStart(workingDirectory, taskHint),
+              sessionEnd: (
+                project: Parameters<VegaSyncClient["sessionEnd"]>[0],
+                summary: Parameters<VegaSyncClient["sessionEnd"]>[1],
+                completedTasks?: Parameters<VegaSyncClient["sessionEnd"]>[2]
+              ) => client.sessionEnd(project, summary, completedTasks)
+            },
+            compactService: {
+              compact: (project?: Parameters<VegaSyncClient["compact"]>[0]) =>
+                client.compact(project)
+            },
+            healthProvider: () => client.health()
+          };
+        })()
+      : (() => {
+          const repository = new Repository(config.dbPath);
+          const searchEngine = new SearchEngine(repository, config);
+          const memoryService = new MemoryService(repository, config);
+          const recallService = new RecallService(repository, searchEngine, config);
+          const sessionService = new SessionService(
+            repository,
+            memoryService,
+            recallService,
+            config
+          );
+          const compactService = new CompactService(repository, config);
+
+          return {
+            repository,
+            memoryService,
+            recallService,
+            sessionService,
+            compactService
+          };
+        })();
   const server = createMCPServer({
-    repository,
-    memoryService,
-    recallService,
-    sessionService,
-    compactService,
+    ...runtime,
     config
   });
   const transport = new StdioServerTransport();
@@ -64,7 +124,7 @@ async function main(): Promise<void> {
       await server.close();
     } catch {}
 
-    repository.close();
+    runtime.repository.close();
 
     if (exitCode !== undefined) {
       process.exit(exitCode);
@@ -79,7 +139,7 @@ async function main(): Promise<void> {
   });
 
   transport.onclose = () => {
-    repository.close();
+    runtime.repository.close();
   };
   transport.onerror = (error) => {
     console.error(error);

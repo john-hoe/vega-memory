@@ -75,7 +75,10 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
     similarityThreshold: 0.85,
     backupRetentionDays: 7,
     apiPort: 3271,
-    apiKey: undefined
+    apiKey: undefined,
+    mode: "server",
+    serverUrl: undefined,
+    cacheDbPath: "./data/cache.db"
   };
   const repository = new Repository(dbPath);
   const compactService = new CompactService(repository, config);
@@ -116,7 +119,10 @@ test("weeklyHealthReport writes integrity and memory count details", async () =>
     similarityThreshold: 0.85,
     backupRetentionDays: 7,
     apiPort: 3271,
-    apiKey: undefined
+    apiKey: undefined,
+    mode: "server",
+    serverUrl: undefined,
+    cacheDbPath: "./data/cache.db"
   };
   const repository = new Repository(dbPath);
 

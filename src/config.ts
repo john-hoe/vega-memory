@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import { resolve } from "node:path";
+
 export interface VegaConfig {
   dbPath: string;
   ollamaBaseUrl: string;
@@ -7,6 +10,9 @@ export interface VegaConfig {
   backupRetentionDays: number;
   apiPort: number;
   apiKey: string | undefined;
+  mode: "server" | "client";
+  serverUrl: string | undefined;
+  cacheDbPath: string;
 }
 
 const parseNumber = (value: string | undefined, fallback: number): number => {
@@ -21,8 +27,23 @@ const parseNumber = (value: string | undefined, fallback: number): number => {
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
+export const expandHomePath = (value: string): string => {
+  if (value === "~") {
+    return homedir();
+  }
+
+  if (value.startsWith("~/")) {
+    return resolve(homedir(), value.slice(2));
+  }
+
+  return value;
+};
+
+const parseMode = (value: string | undefined): VegaConfig["mode"] =>
+  value === "client" ? "client" : "server";
+
 export const loadConfig = (): VegaConfig => ({
-  dbPath: process.env.VEGA_DB_PATH ?? "./data/memory.db",
+  dbPath: expandHomePath(process.env.VEGA_DB_PATH ?? "./data/memory.db"),
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
   ollamaModel: process.env.OLLAMA_MODEL ?? "bge-m3",
   tokenBudget: clamp(parseNumber(process.env.VEGA_TOKEN_BUDGET, 2000), 500, 10_000),
@@ -33,5 +54,8 @@ export const loadConfig = (): VegaConfig => ({
     365
   ),
   apiPort: parseNumber(process.env.VEGA_API_PORT, 3271),
-  apiKey: process.env.VEGA_API_KEY || undefined
+  apiKey: process.env.VEGA_API_KEY || undefined,
+  mode: parseMode(process.env.VEGA_MODE),
+  serverUrl: process.env.VEGA_SERVER_URL || undefined,
+  cacheDbPath: expandHomePath(process.env.VEGA_CACHE_DB ?? "~/.vega/cache.db")
 });

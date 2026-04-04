@@ -94,6 +94,22 @@ export interface HealthReport {
   fix_suggestions: string[];
 }
 
+export interface StoreParams {
+  content: string;
+  type: MemoryType;
+  project: string;
+  title?: string;
+  tags?: string[];
+  importance?: number;
+  source?: MemorySource;
+}
+
+export interface StoreResult {
+  id: string;
+  action: "created" | "updated" | "conflict" | "queued";
+  title: string;
+}
+
 export interface SearchResult {
   memory: Memory;
   similarity: number;
@@ -105,4 +121,31 @@ export interface SearchOptions {
   type?: MemoryType;
   limit: number;
   minSimilarity: number;
+}
+
+export interface MemoryListFilters {
+  project?: string;
+  type?: MemoryType;
+  status?: MemoryStatus;
+  scope?: MemoryScope;
+  limit?: number;
+  sort?: string;
+}
+
+export interface MemoryUpdateParams {
+  content?: string;
+  importance?: number;
+  tags?: string[];
+}
+
+export interface HealthInfo {
+  status: "online" | "offline";
+  memory_count?: number;
+  db_size_bytes?: number;
+  ollama_available?: boolean;
+}
+
+export interface CompactResult {
+  merged: number;
+  archived: number;
 }

@@ -1,5 +1,5 @@
 import type { VegaConfig } from "../config.js";
-import type { Memory, SearchOptions, SearchResult } from "./types.js";
+import type { Memory, MemoryListFilters, SearchOptions, SearchResult } from "./types.js";
 import { Repository } from "../db/repository.js";
 import { generateEmbedding } from "../embedding/ollama.js";
 import { SearchEngine } from "../search/engine.js";
@@ -40,12 +40,7 @@ export class RecallService {
     return results;
   }
 
-  listMemories(filters: {
-    project?: string;
-    type?: string;
-    limit?: number;
-    sort?: string;
-  }): Memory[] {
+  listMemories(filters: MemoryListFilters): Memory[] {
     return this.repository.listMemories(filters);
   }
 }

@@ -12,7 +12,10 @@ const unreachableConfig: VegaConfig = {
   similarityThreshold: 0.85,
   backupRetentionDays: 7,
   apiPort: 3271,
-  apiKey: undefined
+  apiKey: undefined,
+  mode: "server",
+  serverUrl: undefined,
+  cacheDbPath: "./data/cache.db"
 };
 
 test("cosineSimilarity returns 1 for identical vectors", () => {

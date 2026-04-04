@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { loadConfig } from "../config.js";
@@ -13,6 +15,9 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
     VEGA_API_PORT: process.env.VEGA_API_PORT,
     VEGA_API_KEY: process.env.VEGA_API_KEY,
+    VEGA_MODE: process.env.VEGA_MODE,
+    VEGA_SERVER_URL: process.env.VEGA_SERVER_URL,
+    VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID
   };
@@ -25,6 +30,9 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_BACKUP_RETENTION_DAYS;
   delete process.env.VEGA_API_PORT;
   delete process.env.VEGA_API_KEY;
+  delete process.env.VEGA_MODE;
+  delete process.env.VEGA_SERVER_URL;
+  delete process.env.VEGA_CACHE_DB;
   delete process.env.VEGA_TG_BOT_TOKEN;
   delete process.env.VEGA_TG_CHAT_ID;
 
@@ -36,7 +44,10 @@ test("loadConfig returns the documented defaults", () => {
     similarityThreshold: 0.85,
     backupRetentionDays: 7,
     apiPort: 3271,
-    apiKey: undefined
+    apiKey: undefined,
+    mode: "server",
+    serverUrl: undefined,
+    cacheDbPath: join(homedir(), ".vega", "cache.db")
   });
 
   Object.assign(process.env, previous);
@@ -52,6 +63,9 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
     VEGA_API_PORT: process.env.VEGA_API_PORT,
     VEGA_API_KEY: process.env.VEGA_API_KEY,
+    VEGA_MODE: process.env.VEGA_MODE,
+    VEGA_SERVER_URL: process.env.VEGA_SERVER_URL,
+    VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID
   };
@@ -64,6 +78,9 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_BACKUP_RETENTION_DAYS = "14";
   process.env.VEGA_API_PORT = "4321";
   process.env.VEGA_API_KEY = "super-secret";
+  process.env.VEGA_MODE = "client";
+  process.env.VEGA_SERVER_URL = "http://127.0.0.1:3271";
+  process.env.VEGA_CACHE_DB = "/tmp/vega-cache.db";
   process.env.VEGA_TG_BOT_TOKEN = "bot-token";
   process.env.VEGA_TG_CHAT_ID = "chat-id";
 
@@ -75,7 +92,10 @@ test("loadConfig reads overrides from process.env", () => {
     similarityThreshold: 0.91,
     backupRetentionDays: 14,
     apiPort: 4321,
-    apiKey: "super-secret"
+    apiKey: "super-secret",
+    mode: "client",
+    serverUrl: "http://127.0.0.1:3271",
+    cacheDbPath: "/tmp/vega-cache.db"
   });
 
   Object.assign(process.env, previous);

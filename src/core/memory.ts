@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 
 import type { VegaConfig } from "../config.js";
-import type { Memory, MemorySource, MemoryType } from "./types.js";
+import type { Memory, MemorySource, MemoryType, StoreParams, StoreResult } from "./types.js";
 import { Repository } from "../db/repository.js";
 import { generateEmbedding, cosineSimilarity } from "../embedding/ollama.js";
 import { redactSensitiveData } from "../security/redactor.js";
@@ -190,15 +190,7 @@ export class MemoryService {
     }
   }
 
-  async store(params: {
-    content: string;
-    type: MemoryType;
-    project: string;
-    title?: string;
-    tags?: string[];
-    importance?: number;
-    source?: MemorySource;
-  }): Promise<{ id: string; action: "created" | "updated" | "conflict"; title: string }> {
+  async store(params: StoreParams): Promise<StoreResult> {
     const source = params.source ?? "auto";
     const { redacted, wasRedacted } = redactSensitiveData(params.content);
     const embedding = await generateEmbedding(redacted, this.config);

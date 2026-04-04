@@ -4,7 +4,14 @@ import { dirname } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
 
-import type { AuditEntry, Memory, MemoryVersion, PerformanceLog, Session } from "../core/types.js";
+import type {
+  AuditEntry,
+  Memory,
+  MemoryListFilters,
+  MemoryVersion,
+  PerformanceLog,
+  Session
+} from "../core/types.js";
 import { initializeDatabase } from "./schema.js";
 
 interface MemoryRow {
@@ -342,14 +349,7 @@ export class Repository {
     transaction();
   }
 
-  listMemories(filters: {
-    project?: string;
-    type?: string;
-    status?: string;
-    scope?: string;
-    limit?: number;
-    sort?: string;
-  }): Memory[] {
+  listMemories(filters: MemoryListFilters): Memory[] {
     const clauses: string[] = [];
     const params: unknown[] = [];
 

@@ -8,11 +8,20 @@ import { z } from "zod";
 import type { VegaConfig } from "../config.js";
 import { isOllamaAvailable } from "../embedding/ollama.js";
 import { Repository } from "../db/repository.js";
-import { CompactService } from "../core/compact.js";
-import { MemoryService } from "../core/memory.js";
-import { RecallService } from "../core/recall.js";
-import { SessionService } from "../core/session.js";
-import type { Memory, MemorySource, MemoryType, SessionStartResult } from "../core/types.js";
+import type {
+  CompactResult,
+  HealthInfo,
+  Memory,
+  MemoryListFilters,
+  MemorySource,
+  MemoryType,
+  MemoryUpdateParams,
+  SearchOptions,
+  SearchResult,
+  SessionStartResult,
+  StoreParams,
+  StoreResult
+} from "../core/types.js";
 
 const MEMORY_TYPES = [
   "task_state",
@@ -132,11 +141,27 @@ const runTool = async <T>(
 
 export interface CreateMCPServerOptions {
   repository: Repository;
-  memoryService: MemoryService;
-  recallService: RecallService;
-  sessionService: SessionService;
-  compactService: CompactService;
+  memoryService: {
+    store(params: StoreParams): Promise<StoreResult>;
+    update(id: string, updates: MemoryUpdateParams): Promise<void>;
+    delete(id: string): Promise<void>;
+  };
+  recallService: {
+    recall(query: string, options: SearchOptions): Promise<SearchResult[]>;
+    listMemories(filters: MemoryListFilters): Memory[] | Promise<Memory[]>;
+  };
+  sessionService: {
+    sessionStart(
+      workingDirectory: string,
+      taskHint?: string
+    ): Promise<SessionStartResult>;
+    sessionEnd(project: string, summary: string, completedTasks?: string[]): Promise<void>;
+  };
+  compactService: {
+    compact(project?: string): CompactResult | Promise<CompactResult>;
+  };
   config: VegaConfig;
+  healthProvider?: () => Promise<HealthInfo>;
 }
 
 export function createMCPServer({
@@ -145,7 +170,8 @@ export function createMCPServer({
   recallService,
   sessionService,
   compactService,
-  config
+  config,
+  healthProvider
 }: CreateMCPServerOptions): McpServer {
   const server = new McpServer({
     name: "vega-memory",
@@ -222,12 +248,12 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "memory_list", async () => {
-        const result = recallService.listMemories({
+        const result = await Promise.resolve(recallService.listMemories({
           project: args.project,
           type: args.type,
           limit: args.limit,
           sort: args.sort
-        });
+        }));
 
         return {
           result: result.map(serializeMemory),
@@ -332,11 +358,14 @@ export function createMCPServer({
     {},
     async () =>
       runTool(repository, "memory_health", async () => {
-        const result = {
-          memory_count: countMemories(repository),
-          db_size_bytes: getDatabaseSizeBytes(config.dbPath),
-          ollama_available: await isOllamaAvailable(config)
-        };
+        const result =
+          healthProvider === undefined
+            ? {
+                memory_count: countMemories(repository),
+                db_size_bytes: getDatabaseSizeBytes(config.dbPath),
+                ollama_available: await isOllamaAvailable(config)
+              }
+            : await healthProvider();
 
         return {
           result,
@@ -353,7 +382,7 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "memory_compact", async () => {
-        const result = compactService.compact(args.project);
+        const result = await Promise.resolve(compactService.compact(args.project));
 
         return {
           result,

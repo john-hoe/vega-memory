@@ -31,7 +31,10 @@ const createHarness = async (apiKey?: string): Promise<TestHarness> => {
     similarityThreshold: 0.85,
     backupRetentionDays: 7,
     apiPort: 0,
-    apiKey
+    apiKey,
+    mode: "server",
+    serverUrl: undefined,
+    cacheDbPath: join(tempDir, "cache.db")
   };
   const repository = new Repository(config.dbPath);
   const searchEngine = new SearchEngine(repository, config);

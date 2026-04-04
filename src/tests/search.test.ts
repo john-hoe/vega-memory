@@ -49,7 +49,10 @@ const baseConfig: VegaConfig = {
   similarityThreshold: 0.85,
   backupRetentionDays: 7,
   apiPort: 3271,
-  apiKey: undefined
+  apiKey: undefined,
+  mode: "server",
+  serverUrl: undefined,
+  cacheDbPath: "./data/cache.db"
 };
 
 test("BruteForceEngine returns results sorted by similarity", () => {
