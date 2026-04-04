@@ -15,8 +15,13 @@ import test from "node:test";
 
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
+import { MemoryService } from "../core/memory.js";
+import { RecallService } from "../core/recall.js";
+import { SessionService } from "../core/session.js";
 import type { Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
+import { SearchEngine } from "../search/engine.js";
+import { startSchedulerApiServer } from "../scheduler/index.js";
 import { dailyMaintenance, weeklyHealthReport } from "../scheduler/tasks.js";
 
 const createMemory = (overrides: Partial<Memory> = {}): Memory => ({
@@ -60,6 +65,93 @@ const installEmbeddingMock = (vector: number[]): (() => void) => {
     globalThis.fetch = originalFetch;
   };
 };
+
+const createSchedulerApiHarness = (apiKey?: string) => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-scheduler-api-"));
+  const config: VegaConfig = {
+    dbPath: join(tempDir, "memory.db"),
+    ollamaBaseUrl: "http://localhost:99999",
+    ollamaModel: "bge-m3",
+    tokenBudget: 2000,
+    similarityThreshold: 0.85,
+    backupRetentionDays: 7,
+    apiPort: 0,
+    apiKey,
+    mode: "server",
+    serverUrl: undefined,
+    cacheDbPath: join(tempDir, "cache.db"),
+    telegramBotToken: undefined,
+    telegramChatId: undefined
+  };
+  const repository = new Repository(config.dbPath);
+  const searchEngine = new SearchEngine(repository, config);
+  const memoryService = new MemoryService(repository, config);
+  const recallService = new RecallService(repository, searchEngine, config);
+  const sessionService = new SessionService(
+    repository,
+    memoryService,
+    recallService,
+    config
+  );
+  const compactService = new CompactService(repository, config);
+
+  return {
+    config,
+    services: {
+      repository,
+      memoryService,
+      recallService,
+      sessionService,
+      compactService
+    },
+    cleanup(): void {
+      repository.close();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  };
+};
+
+test("scheduler does not start the HTTP API when apiKey is undefined", async () => {
+  const harness = createSchedulerApiHarness();
+  const messages: string[] = [];
+
+  try {
+    const runtime = await startSchedulerApiServer(
+      harness.services,
+      harness.config,
+      (message) => messages.push(message)
+    );
+
+    assert.equal(runtime, null);
+    assert.deepEqual(messages, [
+      "HTTP API disabled: VEGA_API_KEY not configured. Set VEGA_API_KEY to enable remote access."
+    ]);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("scheduler starts the HTTP API when apiKey is configured", async () => {
+  const harness = createSchedulerApiHarness("top-secret");
+
+  try {
+    const runtime = await startSchedulerApiServer(harness.services, harness.config);
+
+    assert.ok(runtime);
+
+    const response = await fetch(`http://127.0.0.1:${runtime.apiPort}/api/health`, {
+      headers: {
+        authorization: "Bearer top-secret"
+      }
+    });
+
+    assert.equal(response.status, 200);
+
+    await runtime.apiServer.stop();
+  } finally {
+    harness.cleanup();
+  }
+});
 
 test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snapshot", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-scheduler-daily-"));

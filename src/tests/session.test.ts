@@ -291,7 +291,7 @@ test("sessionEnd creates session record", async () => {
   }
 });
 
-test("sessionEnd archives completed tasks and decays importance to 0.2", async () => {
+test("sessionEnd keeps completed tasks active and decays importance to 0.2", async () => {
   const { repository, sessionService } = createSessionService();
 
   try {
@@ -309,9 +309,102 @@ test("sessionEnd archives completed tasks and decays importance to 0.2", async (
     const updated = repository.getMemory("task-1");
     assert.ok(updated);
     assert.equal(updated.importance, 0.2);
-    assert.equal(updated.status, "archived");
+    assert.equal(updated.status, "active");
   } finally {
     repository.close();
+  }
+});
+
+test("sessionStart includes global pitfalls, decisions, and insights from other projects", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-start-global-relevant-"));
+  const { repository, sessionService } = createSessionService();
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "global-pitfall",
+        type: "pitfall",
+        project: "other-project",
+        scope: "global",
+        content: "Avoid opening the HTTP API without an API key."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "global-decision",
+        type: "decision",
+        project: "other-project",
+        scope: "global",
+        content: "Use better-sqlite3 for local persistence."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "global-insight",
+        type: "insight",
+        project: "other-project",
+        scope: "global",
+        content: "Offline cache fallback keeps the client usable."
+      })
+    );
+
+    const result = await sessionService.sessionStart(tempDir);
+    const relevantIds = result.relevant.map((memory) => memory.id).sort();
+
+    assert.deepEqual(relevantIds, [
+      "global-decision",
+      "global-insight",
+      "global-pitfall"
+    ]);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("sessionStart task hints recall other projects but prefer current project matches", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-start-cross-project-"));
+  const project = basename(tempDir);
+  const restoreFetch = installEmbeddingMock([0.6, 0.4]);
+  const { repository, sessionService } = createSessionService();
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "project-match",
+        type: "decision",
+        project,
+        title: "Current project match",
+        content: "SQLite cache fixes keep the current project stable.",
+        importance: 0.6,
+        verified: "verified"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "other-match",
+        type: "decision",
+        project: "other-project",
+        title: "Other project match",
+        content: "SQLite cache fixes keep another project stable.",
+        importance: 0.6,
+        verified: "verified"
+      })
+    );
+
+    const result = await sessionService.sessionStart(tempDir, "SQLite cache fixes");
+    const relevantIds = result.relevant.map((memory) => memory.id);
+
+    assert.equal(relevantIds.includes("project-match"), true);
+    assert.equal(relevantIds.includes("other-match"), true);
+    assert.equal(
+      relevantIds.indexOf("project-match") < relevantIds.indexOf("other-match"),
+      true
+    );
+  } finally {
+    restoreFetch();
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
   }
 });
 

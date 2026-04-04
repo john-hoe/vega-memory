@@ -1,4 +1,5 @@
 import { basename, resolve } from "node:path";
+import { v4 as uuidv4 } from "uuid";
 
 import { Repository } from "../db/repository.js";
 import type {
@@ -61,6 +62,14 @@ class HttpResponseError extends Error {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const REACHABILITY_TIMEOUT_MS = 3_000;
+const DEFAULT_IMPORTANCE: Record<Memory["type"], number> = {
+  preference: 0.95,
+  project_context: 0.85,
+  task_state: 0.9,
+  pitfall: 0.7,
+  decision: 0.5,
+  insight: 0.75
+};
 
 const now = (): string => new Date().toISOString();
 
@@ -88,8 +97,31 @@ const buildPendingTitle = (params: StoreParams): string => {
   return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
 };
 
+const unique = (values: string[]): string[] => [...new Set(values)];
+
+const getProjectFromWorkingDirectory = (workingDirectory: string): string =>
+  basename(resolve(workingDirectory));
+
+const estimateTokens = (memories: Memory[]): number =>
+  memories.reduce((total, memory) => total + memory.content.length / 4, 0);
+
+const defaultImportanceFor = (
+  type: Memory["type"],
+  source: Memory["source"],
+  providedImportance?: number
+): number => {
+  if (providedImportance !== undefined) {
+    return Math.max(0, Math.min(1, providedImportance));
+  }
+
+  const base = DEFAULT_IMPORTANCE[type];
+  const bonus = source === "explicit" ? 0.1 : 0;
+
+  return Math.min(1, base + bonus);
+};
+
 const emptySessionResult = (workingDirectory: string): SessionStartResult => {
-  const project = basename(resolve(workingDirectory));
+  const project = getProjectFromWorkingDirectory(workingDirectory);
 
   return {
     project,
@@ -172,6 +204,8 @@ export class VegaSyncClient {
         throw error;
       }
 
+      const cachedMemory = this.createCachedMemory(params);
+
       this.enqueue({
         type: "store",
         params,
@@ -179,7 +213,7 @@ export class VegaSyncClient {
       });
 
       return {
-        id: `pending:${Date.now()}`,
+        id: cachedMemory?.id ?? `pending:${Date.now()}`,
         action: "queued",
         title: buildPendingTitle(params)
       };
@@ -263,8 +297,12 @@ export class VegaSyncClient {
         recent_unverified: result.recent_unverified.map((memory) => this.toMemory(memory)),
         conflicts: result.conflicts.map((memory) => this.toMemory(memory))
       };
-    } catch {
-      return emptySessionResult(workingDirectory);
+    } catch (error) {
+      if (!isNetworkError(error)) {
+        throw error;
+      }
+
+      return this.loadSessionFromCache(workingDirectory, taskHint);
     }
   }
 
@@ -522,6 +560,88 @@ export class VegaSyncClient {
     }
 
     this.pendingQueue.enqueue(operation);
+  }
+
+  private createCachedMemory(params: StoreParams): Memory | null {
+    if (!this.cacheRepo) {
+      return null;
+    }
+
+    const timestamp = now();
+    const source = params.source ?? "auto";
+    const cachedMemory: Memory = {
+      id: uuidv4(),
+      type: params.type,
+      project: params.project,
+      title: buildPendingTitle(params),
+      content: params.content,
+      embedding: null,
+      importance: defaultImportanceFor(params.type, source, params.importance),
+      source,
+      tags: unique((params.tags ?? []).map((tag) => tag.trim()).filter(Boolean)),
+      created_at: timestamp,
+      updated_at: timestamp,
+      accessed_at: timestamp,
+      access_count: 0,
+      status: "active",
+      verified: source === "explicit" ? "verified" : "unverified",
+      scope: params.type === "preference" ? "global" : "project",
+      accessed_projects: [params.project]
+    };
+    const { access_count: _accessCount, ...createdMemory } = cachedMemory;
+
+    this.cacheRepo.createMemory(createdMemory);
+
+    return cachedMemory;
+  }
+
+  private loadSessionFromCache(
+    workingDirectory: string,
+    taskHint?: string
+  ): SessionStartResult {
+    if (!this.cacheRepo) {
+      return emptySessionResult(workingDirectory);
+    }
+
+    const project = getProjectFromWorkingDirectory(workingDirectory);
+    const preferences = this.cacheRepo.listMemories({
+      type: "preference",
+      status: "active",
+      scope: "global",
+      limit: 10_000,
+      sort: "importance DESC"
+    });
+    const active_tasks = this.cacheRepo.listMemories({
+      type: "task_state",
+      status: "active",
+      project,
+      limit: 10_000
+    });
+    const context = this.cacheRepo.listMemories({
+      type: "project_context",
+      status: "active",
+      project,
+      limit: 10_000
+    });
+    const relevant = taskHint?.trim()
+      ? this.searchLocalCache(taskHint, {
+          project,
+          limit: 5,
+          minSimilarity: 0.3
+        }).map((result) => result.memory)
+      : [];
+
+    return {
+      project,
+      active_tasks,
+      preferences,
+      context,
+      relevant,
+      recent_unverified: [],
+      conflicts: [],
+      proactive_warnings: [],
+      token_estimate: estimateTokens([...preferences, ...active_tasks, ...context, ...relevant])
+    };
   }
 
   private upsertCache(memories: Memory[]): void {

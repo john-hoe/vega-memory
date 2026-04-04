@@ -44,6 +44,26 @@ const splitSentences = (summary: string): string[] =>
 const isInProjectScope = (memory: Memory, project: string): boolean =>
   memory.project === project || memory.scope === "global";
 
+const toRelevantResult = (memory: Memory, finalScore: number): SearchResult => ({
+  memory,
+  similarity: finalScore,
+  finalScore
+});
+
+const dedupeRelevantResults = (results: SearchResult[]): SearchResult[] => {
+  const uniqueResults = new Map<string, SearchResult>();
+
+  for (const result of results) {
+    const existing = uniqueResults.get(result.memory.id);
+
+    if (!existing || result.finalScore > existing.finalScore) {
+      uniqueResults.set(result.memory.id, result);
+    }
+  }
+
+  return [...uniqueResults.values()];
+};
+
 export class SessionService {
   private readonly sessionStartTimes = new Map<string, string>();
 
@@ -67,6 +87,29 @@ export class SessionService {
       limit: 10_000,
       sort: "importance DESC"
     });
+    const globalRelevant = [
+      ...this.repository.listMemories({
+        scope: "global",
+        type: "pitfall",
+        status: "active",
+        limit: 20,
+        sort: "importance DESC"
+      }),
+      ...this.repository.listMemories({
+        scope: "global",
+        type: "decision",
+        status: "active",
+        limit: 10,
+        sort: "importance DESC"
+      }),
+      ...this.repository.listMemories({
+        scope: "global",
+        type: "insight",
+        status: "active",
+        limit: 10,
+        sort: "importance DESC"
+      })
+    ];
     const active_tasks = this.repository.listMemories({
       type: "task_state",
       status: "active",
@@ -81,12 +124,19 @@ export class SessionService {
     });
     const relevantResults =
       taskHintKeywords.length > 0
-        ? await this.recallService.recall(normalizedTaskHint, {
-            project,
+        ? (await this.recallService.recall(normalizedTaskHint, {
             limit: 5,
             minSimilarity: 0.3
-          })
+          })).map((result) => ({
+            ...result,
+            finalScore:
+              result.memory.project === project ? result.finalScore : result.finalScore * 0.5
+          }))
         : [];
+    const allRelevantResults = dedupeRelevantResults([
+      ...globalRelevant.map((memory) => toRelevantResult(memory, memory.importance)),
+      ...relevantResults
+    ]);
     const allMemories = this.repository.listMemories({
       limit: 10_000,
       sort: "created_at DESC"
@@ -119,7 +169,7 @@ export class SessionService {
           .map((memory) => memory.content)
       : [];
 
-    let trimmedRelevantResults = [...relevantResults];
+    let trimmedRelevantResults = [...allRelevantResults];
     let token_estimate = estimateTokens([
       ...preferences,
       ...active_tasks,
@@ -176,7 +226,6 @@ export class SessionService {
     for (const taskId of completedTaskIds ?? []) {
       this.repository.updateMemory(taskId, {
         importance: 0.2,
-        status: "archived",
         updated_at: ended_at
       });
     }

@@ -1,8 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { createAPIServer } from "../api/server.js";
-import { loadConfig } from "../config.js";
+import { loadConfig, type VegaConfig } from "../config.js";
+import type { APIRouterServices } from "../api/routes.js";
 import { CompactService } from "../core/compact.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
@@ -24,6 +26,12 @@ const timestamp = (): string => new Date().toISOString();
 
 const log = (message: string): void => {
   console.log(`[${timestamp()}] ${message}`);
+};
+
+const isEntrypoint = (): boolean => {
+  const entryPath = process.argv[1];
+
+  return typeof entryPath === "string" && import.meta.url === pathToFileURL(entryPath).href;
 };
 
 const getDataDir = (dbPath: string): string =>
@@ -77,6 +85,34 @@ const createGuardedRunner = (
   };
 };
 
+export const startSchedulerApiServer = async (
+  services: Omit<APIRouterServices, "config">,
+  config: VegaConfig,
+  writeLog: (message: string) => void = log
+): Promise<
+  | {
+      apiServer: ReturnType<typeof createAPIServer>;
+      apiPort: number;
+    }
+  | null
+> => {
+  if (config.apiKey === undefined) {
+    writeLog(
+      "HTTP API disabled: VEGA_API_KEY not configured. Set VEGA_API_KEY to enable remote access."
+    );
+    return null;
+  }
+
+  const apiServer = createAPIServer(services, config);
+  const apiPort = await apiServer.start(config.apiPort);
+  writeLog(`HTTP API listening on port ${apiPort}`);
+
+  return {
+    apiServer,
+    apiPort
+  };
+};
+
 async function main(): Promise<void> {
   const config = loadConfig();
   ensureSchedulerDirectories(config.dbPath);
@@ -96,7 +132,7 @@ async function main(): Promise<void> {
     config
   );
   const compactService = new CompactService(repository, config);
-  const apiServer = createAPIServer(
+  const apiRuntime = await startSchedulerApiServer(
     {
       repository,
       memoryService,
@@ -106,8 +142,6 @@ async function main(): Promise<void> {
     },
     config
   );
-  const apiPort = await apiServer.start(config.apiPort);
-  log(`HTTP API listening on port ${apiPort}`);
   const runDaily = createGuardedRunner("daily maintenance", async () => {
     await dailyMaintenance(repository, compactService, config, notificationManager);
   });
@@ -154,7 +188,9 @@ async function main(): Promise<void> {
     }
 
     try {
-      await apiServer.stop();
+      if (apiRuntime !== null) {
+        await apiRuntime.apiServer.stop();
+      }
     } finally {
       repository.close();
     }
@@ -175,8 +211,10 @@ async function main(): Promise<void> {
   await runDaily();
 }
 
-main().catch((error) => {
-  const message = error instanceof Error ? error.stack ?? error.message : String(error);
-  console.error(`[${timestamp()}] Scheduler daemon failed: ${message}`);
-  process.exit(1);
-});
+if (isEntrypoint()) {
+  main().catch((error) => {
+    const message = error instanceof Error ? error.stack ?? error.message : String(error);
+    console.error(`[${timestamp()}] Scheduler daemon failed: ${message}`);
+    process.exit(1);
+  });
+}

@@ -5,7 +5,6 @@ import { cosineSimilarity } from "../embedding/ollama.js";
 
 const SIMILARITY_THRESHOLD = 0.9;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-const COMPLETED_TASK_PATTERN = /\b(done|completed|complete|resolved|finished|closed)\b/i;
 
 const now = (): string => new Date().toISOString();
 
@@ -34,10 +33,10 @@ const mergeContent = (newer: string, older: string): string => {
 const isOlderThanSevenDays = (value: string): boolean =>
   Date.now() - Date.parse(value) > SEVEN_DAYS_MS;
 
-const isCompletedTaskState = (memory: Memory): boolean =>
+const isCooledTaskState = (memory: Memory): boolean =>
   memory.type === "task_state" &&
   memory.importance <= 0.2 &&
-  COMPLETED_TASK_PATTERN.test(memory.content) &&
+  memory.status === "active" &&
   isOlderThanSevenDays(memory.updated_at);
 
 export class CompactService {
@@ -116,14 +115,20 @@ export class CompactService {
         continue;
       }
 
-      if (memory.importance < 0.1 || isCompletedTaskState(memory)) {
-        this.repository.updateMemory(memory.id, {
-          status: "archived",
-          updated_at: timestamp
-        });
-        archivedIds.add(memory.id);
-        archived += 1;
+      if (memory.type === "task_state") {
+        if (!isCooledTaskState(memory)) {
+          continue;
+        }
+      } else if (memory.importance >= 0.1) {
+        continue;
       }
+
+      this.repository.updateMemory(memory.id, {
+        status: "archived",
+        updated_at: timestamp
+      });
+      archivedIds.add(memory.id);
+      archived += 1;
     }
 
     return { merged, archived };

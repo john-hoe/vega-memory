@@ -312,6 +312,46 @@ test("compact does not merge memories across different types", () => {
   }
 });
 
+test("compact archives cooled task_state memories after seven days", () => {
+  const repository = new Repository(":memory:");
+  const service = new CompactService(repository, baseConfig);
+  const oldTimestamp = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+  const recentTimestamp = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "task-old",
+        type: "task_state",
+        title: "Old completed task",
+        importance: 0.2,
+        updated_at: oldTimestamp
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "task-recent",
+        type: "task_state",
+        title: "Recent completed task",
+        importance: 0.2,
+        updated_at: recentTimestamp
+      })
+    );
+
+    const result = service.compact("vega");
+    const oldTask = repository.getMemory("task-old");
+    const recentTask = repository.getMemory("task-recent");
+
+    assert.equal(result.archived, 1);
+    assert.ok(oldTask);
+    assert.equal(oldTask.status, "archived");
+    assert.ok(recentTask);
+    assert.equal(recentTask.status, "active");
+  } finally {
+    repository.close();
+  }
+});
+
 test("compact clears the surviving embedding after a merge", () => {
   const repository = new Repository(":memory:");
   const service = new CompactService(repository, baseConfig);

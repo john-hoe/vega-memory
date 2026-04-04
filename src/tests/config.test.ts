@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -136,4 +137,49 @@ test("loadConfig clamps invalid numeric values", () => {
   assert.equal(config.apiPort, 3271);
 
   Object.assign(process.env, previous);
+});
+
+test("loadConfig reads ~/.vega/config.json values and lets env override them", () => {
+  const tempHome = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "vega-config-home-"));
+  const previous = {
+    HOME: process.env.HOME,
+    VEGA_MODE: process.env.VEGA_MODE,
+    VEGA_SERVER_URL: process.env.VEGA_SERVER_URL,
+    VEGA_API_KEY: process.env.VEGA_API_KEY,
+    VEGA_CACHE_DB: process.env.VEGA_CACHE_DB
+  };
+
+  try {
+    mkdirSync(join(tempHome, ".vega"), { recursive: true });
+    writeFileSync(
+      join(tempHome, ".vega", "config.json"),
+      `${JSON.stringify({
+        mode: "client",
+        server: "http://127.0.0.1:4321",
+        api_key: "file-secret",
+        cache_db: "~/.vega/file-cache.db"
+      })}\n`,
+      "utf8"
+    );
+
+    process.env.HOME = tempHome;
+    delete process.env.VEGA_MODE;
+    delete process.env.VEGA_SERVER_URL;
+    delete process.env.VEGA_API_KEY;
+    delete process.env.VEGA_CACHE_DB;
+
+    const config = loadConfig();
+
+    assert.equal(config.mode, "client");
+    assert.equal(config.serverUrl, "http://127.0.0.1:4321");
+    assert.equal(config.apiKey, "file-secret");
+    assert.equal(config.cacheDbPath, join(tempHome, ".vega", "file-cache.db"));
+
+    process.env.VEGA_API_KEY = "env-secret";
+
+    assert.equal(loadConfig().apiKey, "env-secret");
+  } finally {
+    Object.assign(process.env, previous);
+    rmSync(tempHome, { recursive: true, force: true });
+  }
 });
