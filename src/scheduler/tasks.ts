@@ -3,11 +3,13 @@ import { dirname, join, resolve } from "node:path";
 
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
+import { MemoryService } from "../core/memory.js";
 import { exportSnapshot } from "../core/snapshot.js";
 import type { MemoryStatus, MemoryType } from "../core/types.js";
 import { cleanOldBackups, createBackup, shouldBackup } from "../db/backup.js";
 import { Repository } from "../db/repository.js";
 import { generateEmbedding } from "../embedding/ollama.js";
+import { InsightGenerator } from "../insights/generator.js";
 
 interface CountRow<TName extends string> {
   name: TName;
@@ -141,9 +143,16 @@ export async function dailyMaintenance(
 
 export async function weeklyHealthReport(
   repository: Repository,
-  config: VegaConfig
+  config: VegaConfig,
+  memoryService?: MemoryService
 ): Promise<void> {
   log("Weekly health report started");
+
+  if (memoryService) {
+    const insightGenerator = new InsightGenerator(repository, memoryService);
+    const generated = await insightGenerator.generateInsights();
+    log(`Insight generation finished with ${generated} new insights`);
+  }
 
   const integrityRows = repository.db
     .prepare<[], IntegrityCheckRow>("PRAGMA integrity_check")

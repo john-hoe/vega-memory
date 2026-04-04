@@ -57,6 +57,8 @@ export class SessionService {
   async sessionStart(workingDirectory: string, taskHint?: string): Promise<SessionStartResult> {
     const project = this.inferProject(workingDirectory);
     this.sessionStartTimes.set(project, now());
+    const normalizedTaskHint = taskHint?.trim() ?? "";
+    const taskHintKeywords = normalizedTaskHint ? extractTaskHintKeywords(normalizedTaskHint) : [];
 
     const preferences = this.repository.listMemories({
       type: "preference",
@@ -78,8 +80,8 @@ export class SessionService {
       limit: 10_000
     });
     const relevantResults =
-      taskHint && taskHint.trim().length > 0
-        ? await this.recallService.recall(taskHint, {
+      taskHintKeywords.length > 0
+        ? await this.recallService.recall(normalizedTaskHint, {
             project,
             limit: 5,
             minSimilarity: 0.3
@@ -98,21 +100,24 @@ export class SessionService {
     const conflicts = allMemories.filter(
       (memory) => memory.verified === "conflict" && isInProjectScope(memory, project)
     );
-    const proactive_warnings =
-      taskHint && taskHint.trim().length > 0
-        ? this.repository
-            .listMemories({
-              type: "insight",
-              project,
-              limit: 10_000
-            })
-            .filter((memory) => {
-              const keywords = extractTaskHintKeywords(taskHint);
-              const tags = memory.tags.map((tag) => tag.toLowerCase());
-              return keywords.some((keyword) => tags.includes(keyword));
-            })
-            .map((memory) => memory.content)
-        : [];
+    const proactive_warnings = taskHintKeywords.length
+      ? this.repository
+          .listMemories({
+            type: "insight",
+            status: "active",
+            limit: 10_000,
+            sort: "importance DESC"
+          })
+          .filter((memory) => {
+            if (!isInProjectScope(memory, project)) {
+              return false;
+            }
+
+            const tags = memory.tags.map((tag) => tag.toLowerCase());
+            return taskHintKeywords.some((keyword) => tags.includes(keyword));
+          })
+          .map((memory) => memory.content)
+      : [];
 
     let trimmedRelevantResults = [...relevantResults];
     let token_estimate = estimateTokens([
