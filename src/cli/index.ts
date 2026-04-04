@@ -13,6 +13,7 @@ import { registerMaintenanceCommands } from "./commands/maintenance.js";
 import { registerMigrateCommand } from "./commands/migrate.js";
 import { registerRecallCommand } from "./commands/recall.js";
 import { registerSessionCommands } from "./commands/session.js";
+import { registerSetupCommand } from "./commands/setup.js";
 import { registerStoreCommand } from "./commands/store.js";
 import { CompactService } from "../core/compact.js";
 import { MemoryService } from "../core/memory.js";
@@ -29,7 +30,24 @@ const ensureDataDirectory = (dbPath: string): void => {
   mkdirSync(dirname(resolve(dbPath)), { recursive: true });
 };
 
+const createProgram = (): Command =>
+  new Command().name("vega").description("Vega Memory System CLI").showHelpAfterError();
+
+const isSetupInvocation = (argv: string[]): boolean => {
+  const [firstArg, secondArg] = argv;
+
+  return firstArg === "setup" || (firstArg === "help" && secondArg === "setup");
+};
+
 async function main(): Promise<void> {
+  const program = createProgram();
+  registerSetupCommand(program);
+
+  if (isSetupInvocation(process.argv.slice(2))) {
+    await program.parseAsync(process.argv);
+    return;
+  }
+
   const config = loadConfig();
   ensureDataDirectory(config.dbPath);
 
@@ -44,11 +62,6 @@ async function main(): Promise<void> {
     config
   );
   const compactService = new CompactService(repository, config);
-
-  const program = new Command()
-    .name("vega")
-    .description("Vega Memory System CLI")
-    .showHelpAfterError();
 
   registerStoreCommand(program, memoryService);
   registerRecallCommand(program, recallService);
