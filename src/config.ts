@@ -22,6 +22,7 @@ export interface VegaConfig {
   cacheDbPath: string;
   telegramBotToken: string | undefined;
   telegramChatId: string | undefined;
+  encryptionKey?: string;
   cloudBackup?: CloudBackupConfig;
 }
 
@@ -109,6 +110,7 @@ const parseCloudBackup = (): CloudBackupConfig | undefined => {
 
 export const loadConfig = (): VegaConfig => {
   const fileConfig = loadFileConfig();
+  const encryptionKey = process.env.VEGA_ENCRYPTION_KEY || undefined;
 
   return {
     dbPath: expandHomePath(process.env.VEGA_DB_PATH ?? "./data/memory.db"),
@@ -130,6 +132,7 @@ export const loadConfig = (): VegaConfig => {
     ),
     telegramBotToken: process.env.VEGA_TG_BOT_TOKEN || undefined,
     telegramChatId: process.env.VEGA_TG_CHAT_ID || undefined,
+    ...(encryptionKey === undefined ? {} : { encryptionKey }),
     cloudBackup: parseCloudBackup()
   };
 };

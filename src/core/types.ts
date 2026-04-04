@@ -34,6 +34,12 @@ export interface Memory {
   accessed_projects: string[];
 }
 
+export interface GracefulDeletionStatus {
+  pending: Memory[];
+  daysUntilDeletion: number;
+  userAcknowledged: boolean;
+}
+
 export interface MemoryVersion {
   id: string;
   memory_id: string;
@@ -115,7 +121,7 @@ export interface StoreParams {
 
 export interface StoreResult {
   id: string;
-  action: "created" | "updated" | "conflict" | "queued";
+  action: "created" | "updated" | "conflict" | "queued" | "excluded";
   title: string;
 }
 

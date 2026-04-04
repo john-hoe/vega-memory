@@ -21,20 +21,31 @@ export class RecallService {
     const accessedAt = now();
 
     for (const result of results) {
+      const accessedProjects = unique([
+        ...result.memory.accessed_projects,
+        options.project ?? result.memory.project
+      ]);
+      const shouldPromote =
+        result.memory.scope === "project" && accessedProjects.length >= 2;
+
       this.repository.updateMemory(
         result.memory.id,
         {
           accessed_at: accessedAt,
           access_count: result.memory.access_count + 1,
-          accessed_projects: unique([
-            ...result.memory.accessed_projects,
-            options.project ?? result.memory.project
-          ])
+          accessed_projects: accessedProjects,
+          ...(shouldPromote ? { scope: "global" as const } : {})
         },
         {
           skipVersion: true
         }
       );
+
+      if (shouldPromote) {
+        console.log(
+          `Memory ${result.memory.id} promoted to global scope (accessed by ${accessedProjects.length} projects)`
+        );
+      }
     }
 
     return results;

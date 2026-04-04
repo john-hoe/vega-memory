@@ -18,6 +18,7 @@ import { cleanOldBackups, createBackup, restoreFromBackup, shouldBackup } from "
 import { Repository } from "../db/repository.js";
 import { initializeDatabase } from "../db/schema.js";
 import type { Memory, Session } from "../core/types.js";
+import { generateKey } from "../security/encryption.js";
 
 const now = "2026-04-03T12:00:00.000Z";
 
@@ -76,6 +77,7 @@ test("database initialization creates all tables", () => {
     assert.ok(tables.includes("sessions"));
     assert.ok(tables.includes("audit_log"));
     assert.ok(tables.includes("performance_log"));
+    assert.ok(tables.includes("metadata"));
     assert.ok(tables.includes("memories_fts"));
 
     const journalMode = db.pragma("journal_mode", { simple: true });
@@ -427,6 +429,46 @@ test("backup create and restore", async () => {
     cleanOldBackups(backupDir, 30);
 
     assert.equal(existsSync(oldBackupPath), false);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("backup create and restore with encryption", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-backup-encrypted-"));
+  const backupDir = join(tempDir, "backups");
+  const dbPath = join(tempDir, "memory.db");
+  const repository = new Repository(dbPath);
+  const memory = createMemory({
+    id: "mem-encrypted",
+    title: "Encrypted backup memory"
+  });
+  const encryptionKey = generateKey();
+
+  try {
+    repository.createMemory(memory);
+
+    const backupPath = await createBackup(dbPath, backupDir, undefined, encryptionKey);
+    const encryptedContent = readFileSync(backupPath);
+
+    assert.match(backupPath, /\.db\.enc$/);
+    assert.equal(encryptedContent.includes(Buffer.from("SQLite format 3", "utf8")), false);
+
+    repository.close();
+    restoreFromBackup(backupDir, dbPath, encryptionKey);
+
+    const restoredDb = new Database(dbPath, { readonly: true });
+    try {
+      const stored = restoredDb.prepare("SELECT title FROM memories WHERE id = ?").get(memory.id) as
+        | { title: string }
+        | undefined;
+
+      assert.ok(stored);
+      assert.equal(stored.title, memory.title);
+    } finally {
+      restoredDb.close();
+    }
   } finally {
     repository.close();
     rmSync(tempDir, { recursive: true, force: true });

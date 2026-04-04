@@ -45,17 +45,19 @@ export class CloudBackupProvider {
     const fileStat = await stat(localPath);
     let memoryCount = 0;
 
-    try {
-      const db = new Database(localPath, { readonly: true, fileMustExist: true });
-
+    if (!localPath.endsWith(".enc")) {
       try {
-        memoryCount =
-          db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM memories").get()?.count ?? 0;
-      } finally {
-        db.close();
+        const db = new Database(localPath, { readonly: true, fileMustExist: true });
+
+        try {
+          memoryCount =
+            db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM memories").get()?.count ?? 0;
+        } finally {
+          db.close();
+        }
+      } catch (error) {
+        logError(`Metadata count lookup failed for ${localPath}: ${getErrorMessage(error)}`);
       }
-    } catch (error) {
-      logError(`Metadata count lookup failed for ${localPath}: ${getErrorMessage(error)}`);
     }
 
     return {
@@ -112,7 +114,7 @@ export class CloudBackupProvider {
       const entries = await readdir(this.config.destDir, { withFileTypes: true });
       const backups = await Promise.all(
         entries
-          .filter((entry) => entry.isFile() && entry.name.endsWith(".db"))
+          .filter((entry) => entry.isFile() && /\.db(?:\.enc)?$/.test(entry.name))
           .map(async (entry) => {
             const metadata = await this.readMetadata(entry.name);
             const fileStat = await stat(join(this.config.destDir, entry.name));

@@ -21,6 +21,7 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID,
+    VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
     VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR
   };
 
@@ -37,6 +38,7 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_CACHE_DB;
   delete process.env.VEGA_TG_BOT_TOKEN;
   delete process.env.VEGA_TG_CHAT_ID;
+  delete process.env.VEGA_ENCRYPTION_KEY;
   delete process.env.VEGA_CLOUD_BACKUP_DIR;
 
   assert.deepEqual(loadConfig(), {
@@ -74,6 +76,7 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID,
+    VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
     VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR
   };
 
@@ -90,6 +93,8 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_CACHE_DB = "/tmp/vega-cache.db";
   process.env.VEGA_TG_BOT_TOKEN = "bot-token";
   process.env.VEGA_TG_CHAT_ID = "chat-id";
+  process.env.VEGA_ENCRYPTION_KEY =
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
   process.env.VEGA_CLOUD_BACKUP_DIR = "/tmp/vega-cloud";
 
   assert.deepEqual(loadConfig(), {
@@ -106,6 +111,8 @@ test("loadConfig reads overrides from process.env", () => {
     cacheDbPath: "/tmp/vega-cache.db",
     telegramBotToken: "bot-token",
     telegramChatId: "chat-id",
+    encryptionKey:
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     cloudBackup: {
       enabled: true,
       provider: "local-sync",

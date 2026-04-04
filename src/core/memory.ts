@@ -4,6 +4,7 @@ import type { VegaConfig } from "../config.js";
 import type { Memory, MemorySource, MemoryType, StoreParams, StoreResult } from "./types.js";
 import { Repository } from "../db/repository.js";
 import { generateEmbedding, cosineSimilarity } from "../embedding/ollama.js";
+import { shouldExclude } from "../security/exclusion.js";
 import { redactSensitiveData } from "../security/redactor.js";
 
 const DEFAULT_IMPORTANCE: Record<MemoryType, number> = {
@@ -191,6 +192,16 @@ export class MemoryService {
   }
 
   async store(params: StoreParams): Promise<StoreResult> {
+    const exclusion = shouldExclude(params.content);
+
+    if (exclusion.excluded) {
+      return {
+        id: "",
+        action: "excluded",
+        title: exclusion.reason
+      };
+    }
+
     const source = params.source ?? "auto";
     const { redacted, wasRedacted } = redactSensitiveData(params.content);
     const embedding = await generateEmbedding(redacted, this.config);

@@ -55,7 +55,12 @@ export function registerMaintenanceCommands(
         throw new Error("Backups are unavailable for in-memory databases");
       }
 
-      const backupPath = await createBackup(config.dbPath, backupDir);
+      const backupPath = await createBackup(
+        config.dbPath,
+        backupDir,
+        undefined,
+        config.encryptionKey
+      );
       console.log(backupPath);
 
       if (!options.cloud) {

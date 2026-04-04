@@ -49,7 +49,7 @@ export const getLatestBackup = (config: VegaConfig): BackupInfo | null => {
 
   try {
     const latest = readdirSync(getBackupDir(config))
-      .filter((entry) => /^memory-\d{4}-\d{2}-\d{2}\.db$/.test(entry))
+      .filter((entry) => /^memory-\d{4}-\d{2}-\d{2}\.db(?:\.enc)?$/.test(entry))
       .map((entry) => join(getBackupDir(config), entry))
       .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)[0];
 

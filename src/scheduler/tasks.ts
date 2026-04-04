@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
+import { LifecycleManager } from "../core/lifecycle.js";
 import { MemoryService } from "../core/memory.js";
 import { exportSnapshot } from "../core/snapshot.js";
 import type { MemoryStatus, MemoryType } from "../core/types.js";
@@ -186,6 +187,7 @@ export async function dailyMaintenance(
 ): Promise<void> {
   const backupDir = getBackupDir(config);
   const errors: string[] = [];
+  let preserveAlert = false;
   const recordError = (message: string): void => {
     errors.push(message);
     logError(message);
@@ -198,7 +200,7 @@ export async function dailyMaintenance(
     if (config.dbPath === ":memory:") {
       log("Backup skipped because the database is in-memory");
     } else if (shouldBackup(backupDir)) {
-      await createBackup(config.dbPath, backupDir);
+      await createBackup(config.dbPath, backupDir, undefined, config.encryptionKey);
       log(`Backup created in ${backupDir}`);
     } else {
       log("Backup skipped because a recent backup already exists");
@@ -248,6 +250,38 @@ export async function dailyMaintenance(
     recordError(`Backup cleanup step failed: ${getErrorMessage(error)}`);
   }
 
+  log("Checking graceful deletion lifecycle");
+  try {
+    if (notificationManager === undefined) {
+      log("Graceful deletion skipped because notifications are unavailable");
+    } else {
+      const lifecycleManager = new LifecycleManager(
+        repository,
+        notificationManager,
+        config
+      );
+      const pendingDeletionStatus = lifecycleManager.checkPendingDeletions();
+
+      if (
+        pendingDeletionStatus.pending.length > 0 &&
+        !pendingDeletionStatus.userAcknowledged
+      ) {
+        await lifecycleManager.notifyPendingDeletions(pendingDeletionStatus.pending);
+        preserveAlert = true;
+        log(
+          `Graceful deletion warning sent for ${pendingDeletionStatus.pending.length} archived memories`
+        );
+      }
+
+      const deletionResult = lifecycleManager.executeDeletion();
+      log(
+        `Graceful deletion finished with ${deletionResult.deleted} deleted and ${deletionResult.blocked} blocked`
+      );
+    }
+  } catch (error) {
+    recordError(`Graceful deletion step failed: ${getErrorMessage(error)}`);
+  }
+
   if (errors.length > 0) {
     await notifySafely(
       "Daily maintenance notification",
@@ -263,7 +297,9 @@ export async function dailyMaintenance(
     return;
   }
 
-  notificationManager?.clearAlert();
+  if (!preserveAlert) {
+    notificationManager?.clearAlert();
+  }
   log("Daily maintenance finished");
 }
 

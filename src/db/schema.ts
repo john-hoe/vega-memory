@@ -62,6 +62,12 @@ export function initializeDatabase(db: Database.Database): void {
       result_count INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS metadata (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
     USING fts5(title, content, tags, content=memories, content_rowid=rowid);
   `);

@@ -1,14 +1,25 @@
-import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { join } from "node:path";
 
 import BetterSqlite3 from "better-sqlite3";
 
+import { decryptBuffer, encryptBuffer } from "../security/encryption.js";
+
 type BackupOptions = Parameters<InstanceType<typeof BetterSqlite3>["backup"]>[1];
+const ENCRYPTED_BACKUP_SUFFIX = ".enc";
 
 function listBackupPaths(backupDir: string): string[] {
   try {
     return readdirSync(backupDir)
-      .filter((entry) => /^memory-\d{4}-\d{2}-\d{2}\.db$/.test(entry))
+      .filter((entry) => /^memory-\d{4}-\d{2}-\d{2}\.db(?:\.enc)?$/.test(entry))
       .map((entry) => join(backupDir, entry));
   } catch {
     return [];
@@ -27,7 +38,8 @@ function getLatestBackupPath(backupDir: string): string | null {
 export async function createBackup(
   dbPath: string,
   backupDir: string,
-  options?: BackupOptions
+  options?: BackupOptions,
+  encryptionKey?: string
 ): Promise<string> {
   mkdirSync(backupDir, { recursive: true });
   const backupPath = join(backupDir, `memory-${new Date().toISOString().slice(0, 10)}.db`);
@@ -39,16 +51,37 @@ export async function createBackup(
     sourceDb.close();
   }
 
-  return backupPath;
+  if (encryptionKey === undefined) {
+    return backupPath;
+  }
+
+  const encryptedPath = `${backupPath}${ENCRYPTED_BACKUP_SUFFIX}`;
+  writeFileSync(encryptedPath, encryptBuffer(readFileSync(backupPath), encryptionKey));
+  rmSync(backupPath, { force: true });
+
+  return encryptedPath;
 }
 
-export function restoreFromBackup(backupDir: string, dbPath: string): void {
+export function restoreFromBackup(
+  backupDir: string,
+  dbPath: string,
+  encryptionKey?: string
+): void {
   const latestBackupPath = getLatestBackupPath(backupDir);
   if (!latestBackupPath) {
     throw new Error("No backups available");
   }
 
-  copyFileSync(latestBackupPath, dbPath);
+  if (!latestBackupPath.endsWith(ENCRYPTED_BACKUP_SUFFIX)) {
+    copyFileSync(latestBackupPath, dbPath);
+    return;
+  }
+
+  if (encryptionKey === undefined) {
+    throw new Error("Encrypted backup requires VEGA_ENCRYPTION_KEY");
+  }
+
+  writeFileSync(dbPath, decryptBuffer(readFileSync(latestBackupPath), encryptionKey));
 }
 
 export function cleanOldBackups(backupDir: string, retentionDays: number): void {

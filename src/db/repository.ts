@@ -53,6 +53,12 @@ interface MemoryVersionRow {
   updated_at: string;
 }
 
+interface MetadataRow {
+  key: string;
+  value: string;
+  updated_at: string;
+}
+
 const SORT_COLUMNS = new Set([
   "id",
   "type",
@@ -532,6 +538,28 @@ export class Repository {
         "SELECT * FROM memory_versions WHERE memory_id = ? ORDER BY updated_at DESC"
       )
       .all(memoryId);
+  }
+
+  getMetadata(key: string): string | null {
+    const row = this.db
+      .prepare<[string], MetadataRow>("SELECT * FROM metadata WHERE key = ?")
+      .get(key);
+
+    return row?.value ?? null;
+  }
+
+  setMetadata(key: string, value: string): void {
+    this.db
+      .prepare<[string, string, string]>(
+        `INSERT INTO metadata (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      )
+      .run(key, value, timestamp());
+  }
+
+  deleteMetadata(key: string): void {
+    this.db.prepare<[string]>("DELETE FROM metadata WHERE key = ?").run(key);
   }
 
   close(): void {

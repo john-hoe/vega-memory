@@ -58,6 +58,63 @@ test("CLI store and list commands work together", () => {
   }
 });
 
+test("CLI export and import support encrypted JSON", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-export-encrypted-"));
+  const sourceDbPath = join(tempDir, "source.db");
+  const targetDbPath = join(tempDir, "target.db");
+  const exportPath = join(tempDir, "memories.enc.json");
+  const encryptionKey =
+    "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+  try {
+    runCli(
+      [
+        "store",
+        "Persist encrypted export data",
+        "--type",
+        "decision",
+        "--project",
+        "vega"
+      ],
+      {
+        VEGA_DB_PATH: sourceDbPath,
+        VEGA_ENCRYPTION_KEY: encryptionKey,
+        OLLAMA_BASE_URL: "http://localhost:99999"
+      }
+    );
+
+    const exportOutput = runCli(
+      ["export", "--format", "json", "--encrypt", "-o", exportPath],
+      {
+        VEGA_DB_PATH: sourceDbPath,
+        VEGA_ENCRYPTION_KEY: encryptionKey,
+        OLLAMA_BASE_URL: "http://localhost:99999"
+      }
+    );
+    const importOutput = runCli(["import", "--decrypt", exportPath], {
+      VEGA_DB_PATH: targetDbPath,
+      VEGA_ENCRYPTION_KEY: encryptionKey,
+      OLLAMA_BASE_URL: "http://localhost:99999"
+    });
+    const listed = runCli(["list"], {
+      VEGA_DB_PATH: targetDbPath,
+      VEGA_ENCRYPTION_KEY: encryptionKey,
+      OLLAMA_BASE_URL: "http://localhost:99999"
+    });
+    const encryptedContent = readFileSync(exportPath);
+
+    assert.match(exportOutput, /\bexported 1 memories\b/);
+    assert.match(importOutput, /\bimported 1 memories\b/);
+    assert.equal(
+      encryptedContent.includes(Buffer.from("Persist encrypted export data", "utf8")),
+      false
+    );
+    assert.match(listed, /Persist encrypted export data/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CLI export and import round-trip JSON", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-export-"));
   const sourceDbPath = join(tempDir, "source.db");

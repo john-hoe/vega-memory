@@ -8,6 +8,7 @@ import { loadConfig } from "../config.js";
 import { registerAuditCommand } from "./commands/audit.js";
 import { registerBenchmarkCommand } from "./commands/benchmark.js";
 import { registerDiagnoseCommand } from "./commands/diagnose.js";
+import { registerEncryptionCommand } from "./commands/encryption.js";
 import { registerHealthCommand } from "./commands/health.js";
 import { registerImportExportCommands } from "./commands/import-export.js";
 import { registerListCommand } from "./commands/list.js";
@@ -35,17 +36,23 @@ const ensureDataDirectory = (dbPath: string): void => {
 const createProgram = (): Command =>
   new Command().name("vega").description("Vega Memory System CLI").showHelpAfterError();
 
-const isSetupInvocation = (argv: string[]): boolean => {
+const isBootstrapInvocation = (argv: string[]): boolean => {
   const [firstArg, secondArg] = argv;
 
-  return firstArg === "setup" || (firstArg === "help" && secondArg === "setup");
+  return (
+    firstArg === "setup" ||
+    firstArg === "init-encryption" ||
+    (firstArg === "help" &&
+      (secondArg === "setup" || secondArg === "init-encryption"))
+  );
 };
 
 async function main(): Promise<void> {
   const program = createProgram();
   registerSetupCommand(program);
+  registerEncryptionCommand(program);
 
-  if (isSetupInvocation(process.argv.slice(2))) {
+  if (isBootstrapInvocation(process.argv.slice(2))) {
     await program.parseAsync(process.argv);
     return;
   }
@@ -72,7 +79,7 @@ async function main(): Promise<void> {
   registerHealthCommand(program, repository, config);
   registerDiagnoseCommand(program, repository, config);
   registerMaintenanceCommands(program, repository, compactService, config);
-  registerImportExportCommands(program, repository, memoryService);
+  registerImportExportCommands(program, repository, memoryService, config);
   registerMigrateCommand(program, memoryService);
   registerAuditCommand(program, repository);
   registerBenchmarkCommand(program, repository, memoryService, recallService, config);
