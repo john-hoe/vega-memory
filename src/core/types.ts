@@ -130,6 +130,14 @@ export interface SearchOptions {
   minSimilarity: number;
 }
 
+export interface MergeResult {
+  merged: Memory[];
+  kept: number;
+  added: number;
+  updated: number;
+  conflicts: Memory[];
+}
+
 export interface MemoryListFilters {
   project?: string;
   type?: MemoryType;

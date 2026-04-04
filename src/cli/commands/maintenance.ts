@@ -4,6 +4,8 @@ import { Command } from "commander";
 
 import type { VegaConfig } from "../../config.js";
 import { exportSnapshot } from "../../core/snapshot.js";
+import { createBackup } from "../../db/backup.js";
+import { CloudBackupProvider } from "../../db/cloud-backup.js";
 import type { Repository } from "../../db/repository.js";
 import { CompactService } from "../../core/compact.js";
 
@@ -24,6 +26,9 @@ const getSnapshotPath = (dbPath: string): string =>
     ? resolve(process.cwd(), "memory-snapshot.md")
     : join(dirname(resolve(dbPath)), "memory-snapshot.md");
 
+const getBackupPath = (dbPath: string): string | null =>
+  dbPath === ":memory:" ? null : join(dirname(resolve(dbPath)), "backups");
+
 export function registerMaintenanceCommands(
   program: Command,
   repository: Repository,
@@ -38,6 +43,33 @@ export function registerMaintenanceCommands(
       const result = compactService.compact(options.project);
       console.log(`merged: ${result.merged}`);
       console.log(`archived: ${result.archived}`);
+    });
+
+  program
+    .command("backup")
+    .description("Create a database backup")
+    .option("--cloud", "upload the backup to the configured cloud sync folder")
+    .action(async (options: { cloud?: boolean }) => {
+      const backupDir = getBackupPath(config.dbPath);
+      if (!backupDir) {
+        throw new Error("Backups are unavailable for in-memory databases");
+      }
+
+      const backupPath = await createBackup(config.dbPath, backupDir);
+      console.log(backupPath);
+
+      if (!options.cloud) {
+        return;
+      }
+
+      if (!config.cloudBackup?.enabled) {
+        throw new Error("Cloud backup is not configured");
+      }
+
+      const provider = new CloudBackupProvider(config.cloudBackup);
+      const remoteName = await provider.upload(backupPath);
+
+      console.log(`cloud: ${remoteName}`);
     });
 
   program

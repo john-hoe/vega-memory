@@ -19,7 +19,8 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_SERVER_URL: process.env.VEGA_SERVER_URL,
     VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
-    VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID
+    VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID,
+    VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR
   };
 
   delete process.env.VEGA_DB_PATH;
@@ -35,6 +36,7 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_CACHE_DB;
   delete process.env.VEGA_TG_BOT_TOKEN;
   delete process.env.VEGA_TG_CHAT_ID;
+  delete process.env.VEGA_CLOUD_BACKUP_DIR;
 
   assert.deepEqual(loadConfig(), {
     dbPath: "./data/memory.db",
@@ -49,7 +51,8 @@ test("loadConfig returns the documented defaults", () => {
     serverUrl: undefined,
     cacheDbPath: join(homedir(), ".vega", "cache.db"),
     telegramBotToken: undefined,
-    telegramChatId: undefined
+    telegramChatId: undefined,
+    cloudBackup: undefined
   });
 
   Object.assign(process.env, previous);
@@ -69,7 +72,8 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_SERVER_URL: process.env.VEGA_SERVER_URL,
     VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
-    VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID
+    VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID,
+    VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR
   };
 
   process.env.VEGA_DB_PATH = "/tmp/vega.db";
@@ -85,6 +89,7 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_CACHE_DB = "/tmp/vega-cache.db";
   process.env.VEGA_TG_BOT_TOKEN = "bot-token";
   process.env.VEGA_TG_CHAT_ID = "chat-id";
+  process.env.VEGA_CLOUD_BACKUP_DIR = "/tmp/vega-cloud";
 
   assert.deepEqual(loadConfig(), {
     dbPath: "/tmp/vega.db",
@@ -99,7 +104,12 @@ test("loadConfig reads overrides from process.env", () => {
     serverUrl: "http://127.0.0.1:3271",
     cacheDbPath: "/tmp/vega-cache.db",
     telegramBotToken: "bot-token",
-    telegramChatId: "chat-id"
+    telegramChatId: "chat-id",
+    cloudBackup: {
+      enabled: true,
+      provider: "local-sync",
+      destDir: "/tmp/vega-cloud"
+    }
   });
 
   Object.assign(process.env, previous);
