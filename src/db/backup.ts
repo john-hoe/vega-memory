@@ -3,9 +3,7 @@ import { join } from "node:path";
 
 import BetterSqlite3 from "better-sqlite3";
 
-interface BackupOptions {
-  progress?: (info: { totalPages: number; remainingPages: number }) => number;
-}
+type BackupOptions = Parameters<InstanceType<typeof BetterSqlite3>["backup"]>[1];
 
 function listBackupPaths(backupDir: string): string[] {
   try {
