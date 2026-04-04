@@ -78,7 +78,9 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
     apiKey: undefined,
     mode: "server",
     serverUrl: undefined,
-    cacheDbPath: "./data/cache.db"
+    cacheDbPath: "./data/cache.db",
+    telegramBotToken: undefined,
+    telegramChatId: undefined
   };
   const repository = new Repository(dbPath);
   const compactService = new CompactService(repository, config);
@@ -122,7 +124,9 @@ test("weeklyHealthReport writes integrity and memory count details", async () =>
     apiKey: undefined,
     mode: "server",
     serverUrl: undefined,
-    cacheDbPath: "./data/cache.db"
+    cacheDbPath: "./data/cache.db",
+    telegramBotToken: undefined,
+    telegramChatId: undefined
   };
   const repository = new Repository(dbPath);
 

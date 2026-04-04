@@ -15,7 +15,9 @@ const unreachableConfig: VegaConfig = {
   apiKey: undefined,
   mode: "server",
   serverUrl: undefined,
-  cacheDbPath: "./data/cache.db"
+  cacheDbPath: "./data/cache.db",
+  telegramBotToken: undefined,
+  telegramChatId: undefined
 };
 
 test("cosineSimilarity returns 1 for identical vectors", () => {

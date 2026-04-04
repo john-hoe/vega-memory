@@ -34,7 +34,9 @@ const createHarness = async (apiKey?: string): Promise<TestHarness> => {
     apiKey,
     mode: "server",
     serverUrl: undefined,
-    cacheDbPath: join(tempDir, "cache.db")
+    cacheDbPath: join(tempDir, "cache.db"),
+    telegramBotToken: undefined,
+    telegramChatId: undefined
   };
   const repository = new Repository(config.dbPath);
   const searchEngine = new SearchEngine(repository, config);

@@ -47,7 +47,9 @@ test("loadConfig returns the documented defaults", () => {
     apiKey: undefined,
     mode: "server",
     serverUrl: undefined,
-    cacheDbPath: join(homedir(), ".vega", "cache.db")
+    cacheDbPath: join(homedir(), ".vega", "cache.db"),
+    telegramBotToken: undefined,
+    telegramChatId: undefined
   });
 
   Object.assign(process.env, previous);
@@ -95,7 +97,9 @@ test("loadConfig reads overrides from process.env", () => {
     apiKey: "super-secret",
     mode: "client",
     serverUrl: "http://127.0.0.1:3271",
-    cacheDbPath: "/tmp/vega-cache.db"
+    cacheDbPath: "/tmp/vega-cache.db",
+    telegramBotToken: "bot-token",
+    telegramChatId: "chat-id"
   });
 
   Object.assign(process.env, previous);

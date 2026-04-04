@@ -13,6 +13,8 @@ export interface VegaConfig {
   mode: "server" | "client";
   serverUrl: string | undefined;
   cacheDbPath: string;
+  telegramBotToken: string | undefined;
+  telegramChatId: string | undefined;
 }
 
 const parseNumber = (value: string | undefined, fallback: number): number => {
@@ -57,5 +59,7 @@ export const loadConfig = (): VegaConfig => ({
   apiKey: process.env.VEGA_API_KEY || undefined,
   mode: parseMode(process.env.VEGA_MODE),
   serverUrl: process.env.VEGA_SERVER_URL || undefined,
-  cacheDbPath: expandHomePath(process.env.VEGA_CACHE_DB ?? "~/.vega/cache.db")
+  cacheDbPath: expandHomePath(process.env.VEGA_CACHE_DB ?? "~/.vega/cache.db"),
+  telegramBotToken: process.env.VEGA_TG_BOT_TOKEN || undefined,
+  telegramChatId: process.env.VEGA_TG_CHAT_ID || undefined
 });

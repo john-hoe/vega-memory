@@ -8,11 +8,17 @@ import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import { Repository } from "../db/repository.js";
+import { NotificationManager } from "../notify/manager.js";
 import { SearchEngine } from "../search/engine.js";
-import { dailyMaintenance, weeklyHealthReport } from "./tasks.js";
+import {
+  dailyMaintenance,
+  monitorOllamaAvailability,
+  weeklyHealthReport
+} from "./tasks.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
+const OLLAMA_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
 const timestamp = (): string => new Date().toISOString();
 
@@ -74,6 +80,10 @@ const createGuardedRunner = (
 async function main(): Promise<void> {
   const config = loadConfig();
   ensureSchedulerDirectories(config.dbPath);
+  const notificationManager = new NotificationManager(
+    config,
+    join(getDataDir(config.dbPath), "alerts")
+  );
 
   const repository = new Repository(config.dbPath);
   const searchEngine = new SearchEngine(repository, config);
@@ -99,7 +109,7 @@ async function main(): Promise<void> {
   const apiPort = await apiServer.start(config.apiPort);
   log(`HTTP API listening on port ${apiPort}`);
   const runDaily = createGuardedRunner("daily maintenance", async () => {
-    await dailyMaintenance(repository, compactService, config);
+    await dailyMaintenance(repository, compactService, config, notificationManager);
   });
   const runWeekly = createGuardedRunner("weekly health report", async () => {
     if (!isSunday(new Date())) {
@@ -107,7 +117,10 @@ async function main(): Promise<void> {
       return;
     }
 
-    await weeklyHealthReport(repository, config, memoryService);
+    await weeklyHealthReport(repository, config, memoryService, notificationManager);
+  });
+  const runOllamaMonitor = createGuardedRunner("ollama health check", async () => {
+    await monitorOllamaAvailability(config, notificationManager);
   });
 
   let shuttingDown = false;
@@ -115,6 +128,9 @@ async function main(): Promise<void> {
   const dailyInterval = setInterval(() => {
     void runDaily();
   }, DAY_MS);
+  const ollamaInterval = setInterval(() => {
+    void runOllamaMonitor();
+  }, OLLAMA_CHECK_INTERVAL_MS);
   const weeklyStarter = setTimeout(() => {
     void runWeekly();
     weeklyInterval = setInterval(() => {
@@ -130,6 +146,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     log(`Received ${signal}, shutting down scheduler`);
     clearInterval(dailyInterval);
+    clearInterval(ollamaInterval);
     clearTimeout(weeklyStarter);
 
     if (weeklyInterval !== null) {
@@ -154,6 +171,7 @@ async function main(): Promise<void> {
   });
 
   log("Scheduler daemon started");
+  await runOllamaMonitor();
   await runDaily();
 }
 

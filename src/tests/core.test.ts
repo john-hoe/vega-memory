@@ -29,7 +29,9 @@ const baseConfig: VegaConfig = {
   apiKey: undefined,
   mode: "server",
   serverUrl: undefined,
-  cacheDbPath: "./data/cache.db"
+  cacheDbPath: "./data/cache.db",
+  telegramBotToken: undefined,
+  telegramChatId: undefined
 };
 
 const createEmbeddingBuffer = (values: number[]): Buffer => Buffer.from(new Float32Array(values).buffer);
