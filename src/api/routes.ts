@@ -1,15 +1,13 @@
-import { existsSync, statSync } from "node:fs";
-
 import { Router, type RequestHandler } from "express";
 
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
+import { getHealthReport } from "../core/health.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import type { Memory, MemorySource, MemoryType, SessionStartResult } from "../core/types.js";
 import { Repository } from "../db/repository.js";
-import { isOllamaAvailable } from "../embedding/ollama.js";
 
 const MEMORY_TYPES = new Set<MemoryType>([
   "task_state",
@@ -42,25 +40,6 @@ export interface APIRouterServices {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-const countMemories = (repository: Repository): number =>
-  repository.listMemories({
-    limit: 1_000_000
-  }).length;
-
-const getDatabaseSizeBytes = (dbPath: string): number => {
-  if (dbPath === ":memory:") {
-    return 0;
-  }
-
-  return [dbPath, `${dbPath}-wal`, `${dbPath}-shm`].reduce((total, path) => {
-    if (!existsSync(path)) {
-      return total;
-    }
-
-    return total + statSync(path).size;
-  }, 0);
-};
 
 const serializeMemory = (memory: Memory) => ({
   id: memory.id,
@@ -403,11 +382,7 @@ export function createRouter(services: APIRouterServices): Router {
   router.get(
     "/api/health",
     handleRoute(async (_req, res) => {
-      res.status(200).json({
-        memory_count: countMemories(services.repository),
-        db_size_bytes: getDatabaseSizeBytes(services.config.dbPath),
-        ollama_available: await isOllamaAvailable(services.config)
-      });
+      res.status(200).json(await getHealthReport(services.repository, services.config));
     })
   );
 

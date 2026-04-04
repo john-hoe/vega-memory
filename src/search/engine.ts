@@ -9,7 +9,7 @@ export class SearchEngine {
   private readonly bruteForceEngine: BruteForceEngine;
   private readonly sqliteVecEngine: SqliteVecEngine;
   private readonly activeVectorEngine: "brute-force" | "sqlite-vec";
-  private slowRecallCount = 0;
+  private slowQueryCount = 0;
 
   constructor(
     private readonly repository: Repository,
@@ -20,6 +20,11 @@ export class SearchEngine {
     this.activeVectorEngine = this.sqliteVecEngine.isAvailable() ? "sqlite-vec" : "brute-force";
 
     console.log(`Vector search engine: ${this.activeVectorEngine}`);
+
+    if (this.activeVectorEngine === "sqlite-vec") {
+      const indexed = this.sqliteVecEngine.createIndex();
+      console.log(`Vector search auto-upgraded to sqlite-vec with ${indexed} indexed embeddings.`);
+    }
   }
 
   private searchVectors(
@@ -37,23 +42,22 @@ export class SearchEngine {
     );
   }
 
-  private trackRecallLatency(durationMs: number, hasVectorQuery: boolean): void {
-    if (!hasVectorQuery || this.activeVectorEngine === "sqlite-vec") {
-      this.slowRecallCount = 0;
-      return;
-    }
-
+  private trackQueryLatency(durationMs: number): void {
     if (durationMs > 300) {
-      this.slowRecallCount += 1;
+      this.slowQueryCount += 1;
 
-      if (this.slowRecallCount === 10) {
-        console.log("Recall is consistently slow; install sqlite-vec to accelerate vector search.");
+      if (this.slowQueryCount === 10) {
+        console.log(
+          this.activeVectorEngine === "sqlite-vec"
+            ? "Search is slow for 10 consecutive queries; rebuild the sqlite-vec index or run `vega benchmark --suite recall`."
+            : "Search is slow for 10 consecutive queries; install sqlite-vec or run `vega benchmark --suite recall`."
+        );
       }
 
       return;
     }
 
-    this.slowRecallCount = 0;
+    this.slowQueryCount = 0;
   }
 
   search(query: string, queryEmbedding: Float32Array | null, options: SearchOptions): SearchResult[] {
@@ -84,7 +88,7 @@ export class SearchEngine {
       .sort((left, right) => right.finalScore - left.finalScore)
       .slice(0, options.limit);
 
-    this.trackRecallLatency(Date.now() - startedAt, queryEmbedding !== null);
+    this.trackQueryLatency(Date.now() - startedAt);
 
     return results;
   }

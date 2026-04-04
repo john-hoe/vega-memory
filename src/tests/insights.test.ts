@@ -12,10 +12,13 @@ import type { Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { InsightGenerator } from "../insights/generator.js";
 import {
+  detectDecisionPatterns,
   detectProjectRiskAreas,
+  detectRepeatOffenders,
   detectTagClusters
 } from "../insights/patterns.js";
 import { SearchEngine } from "../search/engine.js";
+import { weeklyHealthReport } from "../scheduler/tasks.js";
 
 const baseConfig: VegaConfig = {
   dbPath: ":memory:",
@@ -134,6 +137,92 @@ test("detectProjectRiskAreas identifies high-risk projects", () => {
   }
 });
 
+test("detectRepeatOffenders finds tags across multiple sessions", () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createMemory(createStoredMemory({ id: "pitfall-1", tags: ["auth"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-2", tags: ["auth"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-3", tags: ["auth"] }));
+    repository.createSession({
+      id: "session-1",
+      project: "vega",
+      summary: "First session",
+      started_at: "2026-04-01T00:00:00.000Z",
+      ended_at: "2026-04-01T01:00:00.000Z",
+      memories_created: ["pitfall-1"]
+    });
+    repository.createSession({
+      id: "session-2",
+      project: "vega",
+      summary: "Second session",
+      started_at: "2026-04-02T00:00:00.000Z",
+      ended_at: "2026-04-02T01:00:00.000Z",
+      memories_created: ["pitfall-2"]
+    });
+    repository.createSession({
+      id: "session-3",
+      project: "vega",
+      summary: "Third session",
+      started_at: "2026-04-03T00:00:00.000Z",
+      ended_at: "2026-04-03T01:00:00.000Z",
+      memories_created: ["pitfall-3"]
+    });
+
+    const insights = detectRepeatOffenders(repository);
+
+    assert.deepEqual(insights, [
+      {
+        content: "Recurring issue: 'auth' appears across 3 sessions.",
+        tags: ["auth"],
+        project: "vega"
+      }
+    ]);
+  } finally {
+    repository.close();
+  }
+});
+
+test("detectDecisionPatterns groups decisions by shared tags", () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "decision-1",
+        type: "decision",
+        tags: ["sqlite", "storage"]
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "decision-2",
+        type: "decision",
+        tags: ["sqlite", "performance"]
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "decision-3",
+        type: "decision",
+        tags: ["sqlite", "indexing"]
+      })
+    );
+
+    const insights = detectDecisionPatterns(repository);
+
+    assert.deepEqual(insights, [
+      {
+        content: "Decision pattern: 'sqlite' influenced 3 decisions.",
+        tags: ["sqlite"],
+        project: "vega"
+      }
+    ]);
+  } finally {
+    repository.close();
+  }
+});
+
 test("InsightGenerator creates new insight memories", async () => {
   const restoreFetch = installEmbeddingMock();
   const repository = new Repository(":memory:");
@@ -230,6 +319,43 @@ test("sessionStart includes proactive warnings when task_hint matches insight ta
     assert.deepEqual(result.proactive_warnings, [
       "Tag 'auth': 3 pitfalls recorded. Common issue area."
     ]);
+  } finally {
+    restoreFetch();
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("InsightGenerator runs through weeklyHealthReport", async () => {
+  const restoreFetch = installEmbeddingMock();
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-insights-weekly-"));
+  const config: VegaConfig = {
+    ...baseConfig,
+    dbPath: join(tempDir, "memory.db"),
+    cacheDbPath: join(tempDir, "cache.db")
+  };
+  const repository = new Repository(config.dbPath);
+  const memoryService = new MemoryService(repository, config);
+
+  try {
+    repository.createMemory(createStoredMemory({ id: "pitfall-1", tags: ["auth"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-2", tags: ["auth"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-3", tags: ["auth"] }));
+
+    await weeklyHealthReport(repository, config, memoryService);
+
+    const insights = repository.listMemories({
+      type: "insight",
+      project: "vega",
+      status: "active",
+      limit: 10
+    });
+
+    assert.equal(insights.length, 1);
+    assert.equal(
+      insights[0]?.content,
+      "Tag 'auth': 3 pitfalls recorded. Common issue area."
+    );
   } finally {
     restoreFetch();
     repository.close();

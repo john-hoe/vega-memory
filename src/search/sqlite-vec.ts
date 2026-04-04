@@ -27,8 +27,17 @@ const getExtensionCandidates = (): string[] => {
 };
 
 export class SqliteVecEngine {
+  private static cachedExtensionPath: string | null | undefined;
   private availabilityChecked = false;
   private available = false;
+  private readonly indexTableName = `vega_vec_${randomUUID().replace(/-/g, "_")}`;
+  private indexedCandidates: Array<{
+    id: string;
+    memory: SearchResult["memory"];
+    vector: Float32Array;
+  }> = [];
+  private indexSignature = "";
+  private indexDimension: number | null = null;
 
   constructor(private readonly repository: Repository) {}
 
@@ -38,10 +47,27 @@ export class SqliteVecEngine {
     }
 
     this.availabilityChecked = true;
+    const cachedExtensionPath = SqliteVecEngine.cachedExtensionPath;
+
+    if (cachedExtensionPath === null) {
+      this.available = false;
+      return false;
+    }
+
+    if (cachedExtensionPath !== undefined) {
+      try {
+        this.repository.db.loadExtension(cachedExtensionPath);
+        this.available = true;
+        return true;
+      } catch {
+        SqliteVecEngine.cachedExtensionPath = undefined;
+      }
+    }
 
     for (const candidate of getExtensionCandidates()) {
       try {
         this.repository.db.loadExtension(candidate);
+        SqliteVecEngine.cachedExtensionPath = candidate;
         this.available = true;
         return true;
       } catch {
@@ -49,8 +75,58 @@ export class SqliteVecEngine {
       }
     }
 
+    SqliteVecEngine.cachedExtensionPath = null;
     this.available = false;
     return false;
+  }
+
+  createIndex(): number {
+    if (!this.isAvailable()) {
+      throw new Error("sqlite-vec not available");
+    }
+
+    const candidates = this.repository
+      .getAllEmbeddings()
+      .map((entry) => ({
+        ...entry,
+        vector: toFloat32Array(entry.embedding)
+      }));
+    const dimension = candidates[0]?.vector.length ?? null;
+    const usableCandidates =
+      dimension === null
+        ? []
+        : candidates.filter((entry) => entry.vector.length === dimension);
+    const signature = usableCandidates
+      .map((entry) => `${entry.id}:${entry.memory.updated_at}:${entry.vector.length}`)
+      .join("|");
+
+    if (signature === this.indexSignature) {
+      return usableCandidates.length;
+    }
+
+    this.repository.db.exec(`DROP TABLE IF EXISTS temp.${this.indexTableName}`);
+    this.indexSignature = signature;
+    this.indexedCandidates = usableCandidates;
+    this.indexDimension = dimension;
+
+    if (usableCandidates.length === 0 || dimension === null) {
+      return 0;
+    }
+
+    this.repository.db.exec(
+      `CREATE VIRTUAL TABLE temp.${this.indexTableName} USING vec0(embedding float[${dimension}])`
+    );
+    const insertStatement = this.repository.db.prepare<[number, string]>(
+      `INSERT INTO temp.${this.indexTableName}(rowid, embedding) VALUES (?, ?)`
+    );
+
+    this.repository.db.transaction(() => {
+      usableCandidates.forEach((candidate, index) => {
+        insertStatement.run(index + 1, toVectorJson(candidate.vector));
+      });
+    })();
+
+    return usableCandidates.length;
   }
 
   search(queryEmbedding: Float32Array, options: SearchOptions): SearchResult[] {
@@ -58,63 +134,46 @@ export class SqliteVecEngine {
       throw new Error("sqlite-vec not available");
     }
 
-    const candidates = this.repository
-      .getAllEmbeddings(options.project, options.type)
-      .map((entry) => ({
-        ...entry,
-        vector: toFloat32Array(entry.embedding)
-      }))
-      .filter((entry) => entry.vector.length === queryEmbedding.length);
-
-    if (candidates.length === 0) {
+    if (this.createIndex() === 0 || this.indexDimension !== queryEmbedding.length) {
       return [];
     }
-
-    const tableName = `vega_vec_${randomUUID().replace(/-/g, "_")}`;
-    const createTableSql =
-      `CREATE VIRTUAL TABLE temp.${tableName} USING vec0(embedding float[${queryEmbedding.length}])`;
-    const insertStatement = this.repository.db.prepare<[number, string]>(
-      `INSERT INTO temp.${tableName}(rowid, embedding) VALUES (?, ?)`
-    );
     const queryStatement = this.repository.db.prepare<[string, number], { rowid: number; distance: number }>(
       `SELECT rowid, distance
-       FROM temp.${tableName}
+       FROM temp.${this.indexTableName}
        WHERE embedding MATCH ?
        ORDER BY distance
        LIMIT ?`
     );
+    const queryLimit = Math.max(options.limit * 4, options.limit);
 
-    this.repository.db.exec(createTableSql);
+    return queryStatement
+      .all(toVectorJson(queryEmbedding), queryLimit)
+      .map(({ rowid }) => {
+        const candidate = this.indexedCandidates[rowid - 1];
 
-    try {
-      this.repository.db.transaction(() => {
-        candidates.forEach((candidate, index) => {
-          insertStatement.run(index + 1, toVectorJson(candidate.vector));
-        });
-      })();
+        if (!candidate) {
+          return null;
+        }
 
-      const queryLimit = Math.max(options.limit * 4, options.limit);
+        return {
+          memory: candidate.memory,
+          similarity: cosineSimilarity(queryEmbedding, candidate.vector),
+          finalScore: 0
+        };
+      })
+      .filter((result): result is SearchResult => result !== null)
+      .filter((result) => {
+        if (options.project && result.memory.project !== options.project) {
+          return false;
+        }
 
-      return queryStatement
-        .all(toVectorJson(queryEmbedding), queryLimit)
-        .map(({ rowid }) => {
-          const candidate = candidates[rowid - 1];
-          if (!candidate) {
-            return null;
-          }
+        if (options.type && result.memory.type !== options.type) {
+          return false;
+        }
 
-          return {
-            memory: candidate.memory,
-            similarity: cosineSimilarity(queryEmbedding, candidate.vector),
-            finalScore: 0
-          };
-        })
-        .filter((result): result is SearchResult => result !== null)
-        .filter((result) => result.similarity >= options.minSimilarity)
-        .sort((left, right) => right.similarity - left.similarity)
-        .slice(0, options.limit);
-    } finally {
-      this.repository.db.exec(`DROP TABLE IF EXISTS temp.${tableName}`);
-    }
+        return result.similarity >= options.minSimilarity;
+      })
+      .sort((left, right) => right.similarity - left.similarity)
+      .slice(0, options.limit);
   }
 }

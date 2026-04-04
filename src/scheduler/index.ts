@@ -18,9 +18,10 @@ import {
   weeklyHealthReport
 } from "./tasks.js";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const WEEK_MS = 7 * DAY_MS;
 const OLLAMA_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const SCHEDULER_TICK_INTERVAL_MS = 5 * 60 * 1000;
+const DAILY_RUN_HOUR = 4;
+const WEEKLY_RUN_HOUR = 3;
 
 const timestamp = (): string => new Date().toISOString();
 
@@ -45,20 +46,26 @@ const ensureSchedulerDirectories = (dbPath: string): void => {
   }
 };
 
-const isSunday = (value: Date): boolean => value.getDay() === 0;
+const isSameDay = (left: Date, right: Date): boolean =>
+  left.getFullYear() === right.getFullYear() &&
+  left.getMonth() === right.getMonth() &&
+  left.getDate() === right.getDate();
 
-const getMsUntilNextSunday = (): number => {
-  const now = new Date();
-
-  if (isSunday(now)) {
-    return 0;
-  }
-
-  const nextSunday = new Date(now);
-  nextSunday.setDate(now.getDate() + ((7 - now.getDay()) % 7));
-  nextSunday.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
-  return nextSunday.getTime() - now.getTime();
+const getWeekKey = (value: Date): string => {
+  const sunday = new Date(value);
+  sunday.setHours(0, 0, 0, 0);
+  sunday.setDate(sunday.getDate() - sunday.getDay());
+  return sunday.toISOString().slice(0, 10);
 };
+
+export const shouldRunDaily = (currentTime: Date, lastDailyRun: number | null): boolean =>
+  currentTime.getHours() === DAILY_RUN_HOUR &&
+  (lastDailyRun === null || !isSameDay(new Date(lastDailyRun), currentTime));
+
+export const shouldRunWeekly = (currentTime: Date, lastWeeklyRun: number | null): boolean =>
+  currentTime.getDay() === 0 &&
+  currentTime.getHours() === WEEKLY_RUN_HOUR &&
+  (lastWeeklyRun === null || getWeekKey(new Date(lastWeeklyRun)) !== getWeekKey(currentTime));
 
 const createGuardedRunner = (
   name: string,
@@ -146,11 +153,6 @@ async function main(): Promise<void> {
     await dailyMaintenance(repository, compactService, config, notificationManager);
   });
   const runWeekly = createGuardedRunner("weekly health report", async () => {
-    if (!isSunday(new Date())) {
-      log("Weekly health report skipped because today is not Sunday");
-      return;
-    }
-
     await weeklyHealthReport(repository, config, memoryService, notificationManager);
   });
   const runOllamaMonitor = createGuardedRunner("ollama health check", async () => {
@@ -158,19 +160,27 @@ async function main(): Promise<void> {
   });
 
   let shuttingDown = false;
-  let weeklyInterval: NodeJS.Timeout | null = null;
-  const dailyInterval = setInterval(() => {
-    void runDaily();
-  }, DAY_MS);
+  let lastDailyRun: number | null = null;
+  let lastWeeklyRun: number | null = null;
+  const runScheduledTasks = createGuardedRunner("scheduler tick", async () => {
+    const currentTime = new Date();
+
+    if (shouldRunWeekly(currentTime, lastWeeklyRun)) {
+      lastWeeklyRun = currentTime.getTime();
+      await runWeekly();
+    }
+
+    if (shouldRunDaily(currentTime, lastDailyRun)) {
+      lastDailyRun = currentTime.getTime();
+      await runDaily();
+    }
+  });
+  const schedulerInterval = setInterval(() => {
+    void runScheduledTasks();
+  }, SCHEDULER_TICK_INTERVAL_MS);
   const ollamaInterval = setInterval(() => {
     void runOllamaMonitor();
   }, OLLAMA_CHECK_INTERVAL_MS);
-  const weeklyStarter = setTimeout(() => {
-    void runWeekly();
-    weeklyInterval = setInterval(() => {
-      void runWeekly();
-    }, WEEK_MS);
-  }, getMsUntilNextSunday());
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     if (shuttingDown) {
@@ -179,13 +189,8 @@ async function main(): Promise<void> {
 
     shuttingDown = true;
     log(`Received ${signal}, shutting down scheduler`);
-    clearInterval(dailyInterval);
+    clearInterval(schedulerInterval);
     clearInterval(ollamaInterval);
-    clearTimeout(weeklyStarter);
-
-    if (weeklyInterval !== null) {
-      clearInterval(weeklyInterval);
-    }
 
     try {
       if (apiRuntime !== null) {
@@ -208,7 +213,7 @@ async function main(): Promise<void> {
 
   log("Scheduler daemon started");
   await runOllamaMonitor();
-  await runDaily();
+  await runScheduledTasks();
 }
 
 if (isEntrypoint()) {

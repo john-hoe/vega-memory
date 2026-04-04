@@ -90,21 +90,32 @@ const createHarness = async (apiKey?: string): Promise<TestHarness> => {
 
 const readJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
-test("GET /api/health returns 200 with memory_count", async () => {
+test("GET /api/health returns the expanded health payload", async () => {
   const harness = await createHarness();
 
   try {
     const response = await harness.request("/api/health");
     const body = await readJson<{
-      memory_count: number;
-      db_size_bytes: number;
-      ollama_available: boolean;
+      status: string;
+      ollama: boolean;
+      db_integrity: boolean;
+      memories: number;
+      latency_avg_ms: number;
+      db_size_mb: number;
+      last_backup: string | null;
+      issues: string[];
+      fix_suggestions: string[];
     }>(response);
 
     assert.equal(response.status, 200);
-    assert.equal(typeof body.memory_count, "number");
-    assert.equal(typeof body.db_size_bytes, "number");
-    assert.equal(typeof body.ollama_available, "boolean");
+    assert.equal(typeof body.status, "string");
+    assert.equal(typeof body.ollama, "boolean");
+    assert.equal(typeof body.db_integrity, "boolean");
+    assert.equal(typeof body.memories, "number");
+    assert.equal(typeof body.latency_avg_ms, "number");
+    assert.equal(typeof body.db_size_mb, "number");
+    assert.equal(Array.isArray(body.issues), true);
+    assert.equal(Array.isArray(body.fix_suggestions), true);
   } finally {
     await harness.cleanup();
   }

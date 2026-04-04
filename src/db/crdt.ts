@@ -1,6 +1,7 @@
 import type { Memory, MergeResult } from "../core/types.js";
 
 const CONFLICT_WINDOW_MS = 1_000;
+const unique = (values: string[]): string[] => [...new Set(values)];
 
 const getUpdatedAtMs = (memory: Memory): number => {
   const value = Date.parse(memory.updated_at);
@@ -38,6 +39,36 @@ const memoriesEqual = (left: Memory, right: Memory): boolean =>
   left.accessed_projects.every((value, index) => value === right.accessed_projects[index]);
 
 export class CRDTMerger {
+  private mergeConcurrentMemory(local: Memory, remote: Memory): Memory {
+    const localUpdatedAt = getUpdatedAtMs(local);
+    const remoteUpdatedAt = getUpdatedAtMs(remote);
+    const latest = remoteUpdatedAt >= localUpdatedAt ? remote : local;
+    const older = latest === remote ? local : remote;
+    const content =
+      remote.content.length > local.content.length
+        ? remote.content
+        : local.content.length > remote.content.length
+          ? local.content
+          : latest.content;
+
+    return {
+      ...latest,
+      content,
+      embedding:
+        content === latest.content
+          ? latest.embedding
+          : content === older.content
+            ? older.embedding
+            : null,
+      importance: Math.max(local.importance, remote.importance),
+      tags: unique([...latest.tags, ...older.tags]),
+      created_at: local.created_at < remote.created_at ? local.created_at : remote.created_at,
+      accessed_at: getUpdatedAtMs(local) >= getUpdatedAtMs(remote) ? local.accessed_at : remote.accessed_at,
+      access_count: Math.max(local.access_count, remote.access_count),
+      accessed_projects: unique([...latest.accessed_projects, ...older.accessed_projects])
+    };
+  }
+
   mergeMemories(local: Memory[], remote: Memory[]): MergeResult {
     const remoteById = new Map(remote.map((memory) => [memory.id, memory]));
     const merged: Memory[] = [];
@@ -59,12 +90,13 @@ export class CRDTMerger {
 
       const localUpdatedAt = getUpdatedAtMs(localMemory);
       const remoteUpdatedAt = getUpdatedAtMs(remoteMemory);
-      const winner = remoteUpdatedAt > localUpdatedAt ? remoteMemory : localMemory;
+      let winner = remoteUpdatedAt > localUpdatedAt ? remoteMemory : localMemory;
 
       if (
         Math.abs(remoteUpdatedAt - localUpdatedAt) <= CONFLICT_WINDOW_MS &&
         !memoriesEqual(localMemory, remoteMemory)
       ) {
+        winner = this.mergeConcurrentMemory(localMemory, remoteMemory);
         conflicts.push(winner);
       }
 

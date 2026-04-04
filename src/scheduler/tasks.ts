@@ -263,6 +263,7 @@ export async function dailyMaintenance(
     return;
   }
 
+  notificationManager?.clearAlert();
   log("Daily maintenance finished");
 }
 
@@ -445,6 +446,7 @@ export async function monitorOllamaAvailability(
   await notifySafely(
     "Ollama warning notification",
     () =>
+      // TODO: batch warnings into the daily digest once scheduler digests are implemented.
       notificationManager.notifyWarning(
         "Ollama Unavailable",
         `Ollama has been unreachable for more than 1 hour since ${new Date(downSince).toISOString()}.`

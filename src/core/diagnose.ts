@@ -1,9 +1,16 @@
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import type { VegaConfig } from "../config.js";
 import { Repository } from "../db/repository.js";
 import { isOllamaAvailable } from "../embedding/ollama.js";
+import {
+  getBackupDir,
+  getConfigSummary,
+  getDatabaseSizeBytes,
+  getDiskIssues,
+  getLatestBackup
+} from "./health.js";
 import type {
   DiagnoseReport,
   MemoryStatus,
@@ -35,13 +42,6 @@ interface AverageLatencyRow {
   average_latency: number | null;
 }
 
-interface BackupInfo {
-  path: string;
-  age_days: number;
-}
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 const formatDate = (value: Date): string => value.toISOString().slice(0, 10);
 
 const formatTime = (value: Date): string => value.toISOString().slice(11, 16).replace(":", "");
@@ -51,55 +51,12 @@ const formatPercent = (count: number, total: number): string =>
 
 const formatMb = (bytes: number): string => (bytes / 1_048_576).toFixed(2);
 
-const getDataDir = (config: VegaConfig): string =>
-  config.dbPath === ":memory:" ? resolve(process.cwd(), "data") : dirname(resolve(config.dbPath));
-
 const getDiagnosticsPath = (config: VegaConfig, now: Date): string =>
   join(
-    getDataDir(config),
+    dirname(getBackupDir(config)),
     "diagnostics",
     `diagnose-${formatDate(now)}-${formatTime(now)}.md`
   );
-
-const getBackupDir = (config: VegaConfig): string => join(getDataDir(config), "backups");
-
-const getDatabaseSizeBytes = (dbPath: string): number => {
-  if (dbPath === ":memory:") {
-    return 0;
-  }
-
-  return [dbPath, `${dbPath}-wal`, `${dbPath}-shm`].reduce((total, path) => {
-    if (!existsSync(path)) {
-      return total;
-    }
-
-    return total + statSync(path).size;
-  }, 0);
-};
-
-const getLatestBackup = (config: VegaConfig): BackupInfo | null => {
-  if (config.dbPath === ":memory:") {
-    return null;
-  }
-
-  try {
-    const latest = readdirSync(getBackupDir(config))
-      .filter((entry) => /^memory-\d{4}-\d{2}-\d{2}\.db$/.test(entry))
-      .map((entry) => join(getBackupDir(config), entry))
-      .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)[0];
-
-    if (!latest) {
-      return null;
-    }
-
-    return {
-      path: latest,
-      age_days: (Date.now() - statSync(latest).mtimeMs) / DAY_MS
-    };
-  } catch {
-    return null;
-  }
-};
 
 const tokenizeIssue = (issue: string): string[] =>
   [...new Set(issue.toLowerCase().match(/[a-z0-9]+/g) ?? [])]
@@ -185,6 +142,95 @@ const formatBulletSection = (title: string, values: string[]): string => {
   return lines.join("\n");
 };
 
+const formatSystemInfoSection = (
+  config: VegaConfig,
+  dbSizeBytes: number,
+  backupPath: string | null
+): string =>
+  [
+    "## System Info",
+    "",
+    `- Node version: ${process.version}`,
+    `- OS: ${process.platform} ${process.arch}`,
+    `- DB path: ${config.dbPath}`,
+    `- Database size: ${dbSizeBytes} bytes (${formatMb(dbSizeBytes)} MB)`,
+    `- Latest backup: ${backupPath ?? "none"}`,
+    "",
+    "### Config Summary",
+    "",
+    ...getConfigSummary(config).map((entry) => `- ${entry}`),
+    ""
+  ].join("\n");
+
+const buildHandoffPrompt = (options: {
+  generatedAt: string;
+  issue: string | undefined;
+  summary: string;
+  issuesFound: string[];
+  suggestedFixes: string[];
+  totalMemories: number;
+  nullEmbeddings: number;
+  integrityResult: string;
+  ollamaAvailable: boolean;
+  backupPath: string | null;
+  averageLatency: number;
+  performanceEntries: PerformanceLog[];
+  diskIssues: string[];
+  config: VegaConfig;
+}): string => {
+  const recentPerformance =
+    options.performanceEntries.length === 0
+      ? "- none"
+      : options.performanceEntries
+          .slice(0, 10)
+          .map(
+            (entry) =>
+              `- ${entry.timestamp} | ${entry.operation} | ${entry.latency_ms.toFixed(2)} ms | memories=${entry.memory_count} | results=${entry.result_count}`
+          )
+          .join("\n");
+
+  return [
+    "# Vega Memory Debug Handoff",
+    "",
+    "## Issue Description",
+    "",
+    `- Reported issue: ${options.issue ?? "No specific issue provided"}`,
+    `- Diagnose summary: ${options.summary}`,
+    "",
+    "## System State",
+    "",
+    `- Generated at: ${options.generatedAt}`,
+    `- Node version: ${process.version}`,
+    `- OS: ${process.platform} ${process.arch}`,
+    `- DB path: ${options.config.dbPath}`,
+    `- Config summary: ${getConfigSummary(options.config).join(", ")}`,
+    `- Database integrity: ${options.integrityResult}`,
+    `- Ollama available: ${options.ollamaAvailable ? "yes" : "no"}`,
+    `- Total memories: ${options.totalMemories}`,
+    `- Null embeddings: ${options.nullEmbeddings}`,
+    `- Latest backup: ${options.backupPath ?? "none"}`,
+    `- Average latency: ${options.averageLatency.toFixed(2)} ms`,
+    options.diskIssues.length > 0 ? `- Disk issues: ${options.diskIssues.join("; ")}` : "- Disk issues: none",
+    "",
+    "## Recent Performance",
+    "",
+    recentPerformance,
+    "",
+    "## Suggested Next Steps",
+    "",
+    ...options.suggestedFixes.map((fix, index) => `${index + 1}. ${fix}`),
+    ...(options.suggestedFixes.length === 0
+      ? ["1. Review the diagnose report and reproduce the issue with more targeted logs."]
+      : []),
+    "",
+    "## Issues Found",
+    "",
+    ...(options.issuesFound.length > 0
+      ? options.issuesFound.map((issue) => `- ${issue}`)
+      : ["- none"])
+  ].join("\n");
+};
+
 export class DiagnoseService {
   constructor(
     private readonly repository: Repository,
@@ -247,6 +293,7 @@ export class DiagnoseService {
       .all();
     const dbSizeBytes = getDatabaseSizeBytes(this.config.dbPath);
     const backupInfo = getLatestBackup(this.config);
+    const diskIssues = getDiskIssues(this.config);
     const performanceEntries = this.repository.db
       .prepare<[], PerformanceLog>(
         `SELECT timestamp, operation, latency_ms, memory_count, result_count
@@ -261,20 +308,29 @@ export class DiagnoseService {
         .get()?.average_latency ?? 0;
     const relatedMemories = issue ? this.findRelatedMemories(issue) : [];
     const issuesFound: string[] = [];
+    const autoFixableIssues: string[] = [];
 
     if (integrityResult !== "ok") {
       issuesFound.push(`Database integrity check returned: ${integrityResult}`);
+    }
+    if (diskIssues.length > 0) {
+      issuesFound.push(...diskIssues);
     }
     if (!ollamaAvailable) {
       issuesFound.push(`Ollama is unavailable at ${this.config.ollamaBaseUrl}`);
     }
     if (nullEmbeddings > 0) {
-      issuesFound.push(`${nullEmbeddings} memories have null embeddings`);
+      const message = `${nullEmbeddings} memories have null embeddings`;
+      issuesFound.push(message);
+      autoFixableIssues.push(message);
     }
-    if (backupInfo === null) {
+    if (this.config.dbPath !== ":memory:" && backupInfo === null) {
       issuesFound.push("No backups found");
-    } else if (backupInfo.age_days > 1.5) {
-      issuesFound.push(`Latest backup is ${backupInfo.age_days.toFixed(1)} days old`);
+      autoFixableIssues.push("No backups found");
+    } else if (backupInfo !== null && backupInfo.age_days > 1.5) {
+      const message = `Latest backup is ${backupInfo.age_days.toFixed(1)} days old`;
+      issuesFound.push(message);
+      autoFixableIssues.push(message);
     }
     if (performanceEntries.length === 0) {
       issuesFound.push("No performance log entries found");
@@ -289,6 +345,11 @@ export class DiagnoseService {
 
     if (integrityResult !== "ok") {
       suggestedFixes.push("Restore the database from the latest healthy backup and rerun integrity_check.");
+    }
+    if (diskIssues.length > 0) {
+      suggestedFixes.push(
+        "Verify database path permissions and free disk space before retrying maintenance or write operations."
+      );
     }
     if (!ollamaAvailable) {
       suggestedFixes.push(
@@ -320,6 +381,27 @@ export class DiagnoseService {
         ? `Diagnose completed with no issues across ${totalMemories} memories.`
         : `Diagnose completed with ${issuesFound.length} issue(s) across ${totalMemories} memories.`;
     const reportPath = getDiagnosticsPath(this.config, now);
+    const handoffPrompt = buildHandoffPrompt({
+      generatedAt: now.toISOString(),
+      issue,
+      summary,
+      issuesFound,
+      suggestedFixes,
+      totalMemories,
+      nullEmbeddings,
+      integrityResult,
+      ollamaAvailable,
+      backupPath: backupInfo?.path ?? null,
+      averageLatency,
+      performanceEntries,
+      diskIssues,
+      config: this.config
+    });
+    const canAutoFix =
+      issuesFound.length === 0 ||
+      (integrityResult === "ok" &&
+        diskIssues.length === 0 &&
+        issuesFound.length === autoFixableIssues.length);
     const content = [
       "# Memory Diagnose Report",
       "",
@@ -330,12 +412,13 @@ export class DiagnoseService {
       "",
       `- ${summary}`,
       `- Ollama available: ${ollamaAvailable ? "yes" : "no"}`,
-      `- Database size: ${dbSizeBytes} bytes (${formatMb(dbSizeBytes)} MB)`,
+      `- Can auto fix: ${canAutoFix ? "yes" : "no"}`,
       `- Latest backup: ${backupInfo?.path ?? "none"}`,
       `- Backup age: ${backupInfo ? `${backupInfo.age_days.toFixed(1)} days` : "n/a"}`,
       `- Null embeddings: ${nullEmbeddings}`,
       `- Average latency: ${averageLatency.toFixed(2)} ms`,
       "",
+      formatSystemInfoSection(this.config, dbSizeBytes, backupInfo?.path ?? null),
       "## Memory Quality",
       "",
       `- Total memories: ${totalMemories}`,
@@ -346,7 +429,13 @@ export class DiagnoseService {
       formatPerformanceTable(performanceEntries),
       issue ? formatRelatedMemoriesTable(relatedMemories) : "",
       formatBulletSection("Issues Found", issuesFound),
-      formatBulletSection("Suggested Fixes", suggestedFixes)
+      formatBulletSection("Suggested Fixes", suggestedFixes),
+      "## Handoff Prompt",
+      "",
+      "```md",
+      handoffPrompt,
+      "```",
+      ""
     ]
       .filter(Boolean)
       .join("\n");
@@ -358,7 +447,9 @@ export class DiagnoseService {
       report_path: reportPath,
       summary,
       suggested_fixes: suggestedFixes,
-      issues_found: issuesFound
+      issues_found: issuesFound,
+      handoff_prompt: handoffPrompt,
+      can_auto_fix: canAutoFix
     };
   }
 }

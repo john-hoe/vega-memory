@@ -5,9 +5,13 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { VegaConfig } from "../config.js";
+import { CompactService } from "../core/compact.js";
+import type { Memory } from "../core/types.js";
+import { Repository } from "../db/repository.js";
 import { AlertFileWriter } from "../notify/alert-file.js";
 import { NotificationManager } from "../notify/manager.js";
 import { TelegramNotifier } from "../notify/telegram.js";
+import { dailyMaintenance } from "../scheduler/tasks.js";
 
 const createConfig = (overrides: Partial<VegaConfig> = {}): VegaConfig => ({
   dbPath: ":memory:",
@@ -23,6 +27,27 @@ const createConfig = (overrides: Partial<VegaConfig> = {}): VegaConfig => ({
   cacheDbPath: "./data/cache.db",
   telegramBotToken: undefined,
   telegramChatId: undefined,
+  ...overrides
+});
+
+const createMemory = (overrides: Partial<Memory> = {}): Memory => ({
+  id: "memory-1",
+  type: "decision",
+  project: "vega",
+  title: "Memory",
+  content: "Content",
+  embedding: Buffer.from([1, 2, 3]),
+  importance: 0.8,
+  source: "explicit",
+  tags: ["vega"],
+  created_at: "2026-04-04T00:00:00.000Z",
+  updated_at: "2026-04-04T00:00:00.000Z",
+  accessed_at: "2026-04-04T00:00:00.000Z",
+  access_count: 0,
+  status: "active",
+  verified: "verified",
+  scope: "project",
+  accessed_projects: ["vega"],
   ...overrides
 });
 
@@ -80,6 +105,33 @@ test("NotificationManager.clearAlert removes the active alert file", async () =>
     manager.clearAlert();
     assert.equal(existsSync(alertPath), false);
   } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("NotificationManager clears alert after successful maintenance", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-notify-maintenance-"));
+  const dataDir = join(tempDir, "data");
+  const alertDir = join(dataDir, "alerts");
+  const config = createConfig({
+    dbPath: join(dataDir, "memory.db"),
+    cacheDbPath: join(tempDir, "cache.db")
+  });
+  const repository = new Repository(config.dbPath);
+  const compactService = new CompactService(repository, config);
+  const manager = new NotificationManager(config, alertDir);
+  const alertPath = join(alertDir, "active-alert.md");
+
+  try {
+    repository.createMemory(createMemory());
+    await manager.notifyError("Previous Error", "Clear me after maintenance");
+    assert.equal(existsSync(alertPath), true);
+
+    await dailyMaintenance(repository, compactService, config, manager);
+
+    assert.equal(existsSync(alertPath), false);
+  } finally {
+    repository.close();
     rmSync(tempDir, { recursive: true, force: true });
   }
 });

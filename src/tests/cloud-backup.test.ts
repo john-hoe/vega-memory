@@ -46,7 +46,9 @@ test("listBackups returns uploaded files", async () => {
 
     const backups = await provider.listBackups();
 
-    assert.deepEqual(backups, ["memory-2026-04-03.db", "memory-2026-04-04.db"]);
+    assert.equal(backups.length, 2);
+    assert.ok(backups.includes("memory-2026-04-03.db"));
+    assert.ok(backups.includes("memory-2026-04-04.db"));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

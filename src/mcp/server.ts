@@ -1,4 +1,4 @@
-import { existsSync, statSync, appendFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import type { VegaConfig } from "../config.js";
 import { DiagnoseService } from "../core/diagnose.js";
-import { isOllamaAvailable } from "../embedding/ollama.js";
+import { getHealthReport } from "../core/health.js";
 import { Repository } from "../db/repository.js";
 import type {
   CompactResult,
@@ -39,20 +39,6 @@ const countMemories = (repository: Repository): number =>
   repository.listMemories({
     limit: 1_000_000
   }).length;
-
-const getDatabaseSizeBytes = (dbPath: string): number => {
-  if (dbPath === ":memory:") {
-    return 0;
-  }
-
-  return [dbPath, `${dbPath}-wal`, `${dbPath}-shm`].reduce((total, path) => {
-    if (!existsSync(path)) {
-      return total;
-    }
-
-    return total + statSync(path).size;
-  }, 0);
-};
 
 const toTextResult = (result: unknown, isError = false): CallToolResult => ({
   content: [
@@ -362,11 +348,7 @@ export function createMCPServer({
       runTool(repository, "memory_health", async () => {
         const result =
           healthProvider === undefined
-            ? {
-                memory_count: countMemories(repository),
-                db_size_bytes: getDatabaseSizeBytes(config.dbPath),
-                ollama_available: await isOllamaAvailable(config)
-              }
+            ? await getHealthReport(repository, config)
             : await healthProvider();
 
         return {

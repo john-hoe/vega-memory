@@ -83,7 +83,7 @@ export interface SessionStartResult {
 }
 
 export interface HealthReport {
-  status: string;
+  status: "healthy" | "degraded" | "unhealthy";
   ollama: boolean;
   db_integrity: boolean;
   memories: number;
@@ -99,6 +99,8 @@ export interface DiagnoseReport {
   summary: string;
   suggested_fixes: string[];
   issues_found: string[];
+  handoff_prompt: string;
+  can_auto_fix: boolean;
 }
 
 export interface StoreParams {
@@ -153,12 +155,7 @@ export interface MemoryUpdateParams {
   tags?: string[];
 }
 
-export interface HealthInfo {
-  status: "online" | "offline";
-  memory_count?: number;
-  db_size_bytes?: number;
-  ollama_available?: boolean;
-}
+export type HealthInfo = HealthReport | { status: "offline" };
 
 export interface CompactResult {
   merged: number;

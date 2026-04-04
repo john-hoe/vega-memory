@@ -14,6 +14,7 @@ import type { Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { SearchEngine } from "../search/engine.js";
 import { VegaSyncClient } from "../sync/client.js";
+import { SyncManager } from "../sync/manager.js";
 import { PendingQueue } from "../sync/queue.js";
 
 interface TestHarness {
@@ -44,7 +45,7 @@ const createStoredMemory = (
   ...overrides
 });
 
-const createHarness = async (): Promise<TestHarness> => {
+const createHarness = async (apiKey?: string): Promise<TestHarness> => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-sync-"));
   const config: VegaConfig = {
     dbPath: join(tempDir, "memory.db"),
@@ -54,7 +55,7 @@ const createHarness = async (): Promise<TestHarness> => {
     similarityThreshold: 0.85,
     backupRetentionDays: 7,
     apiPort: 0,
-    apiKey: undefined,
+    apiKey,
     mode: "server",
     serverUrl: undefined,
     cacheDbPath: join(tempDir, "cache.db"),
@@ -95,6 +96,9 @@ const createHarness = async (): Promise<TestHarness> => {
     request(path: string, init?: RequestInit): Promise<Response> {
       const headers = new Headers(init?.headers);
 
+      if (apiKey) {
+        headers.set("authorization", `Bearer ${apiKey}`);
+      }
       if (init?.body !== undefined && !headers.has("content-type")) {
         headers.set("content-type", "application/json");
       }
@@ -209,6 +213,25 @@ test("VegaSyncClient forwards store to server", async () => {
   }
 });
 
+test("VegaSyncClient returns an error when the API key is invalid", async () => {
+  const harness = await createHarness("top-secret");
+  const client = new VegaSyncClient(harness.baseUrl, "wrong-secret");
+
+  try {
+    await assert.rejects(
+      () =>
+        client.store({
+          content: "This should be rejected",
+          type: "decision",
+          project: "vega"
+        }),
+      /unauthorized/
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("VegaSyncClient falls back to queue when server offline", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-sync-offline-"));
   const queue = new PendingQueue(join(tempDir, "pending"));
@@ -318,5 +341,43 @@ test("VegaSyncClient reads sessionStart state from the cache when offline", asyn
   } finally {
     cacheRepo.close();
     rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("SyncManager.syncPending replays queued operations to the server", async () => {
+  const harness = await createHarness();
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-sync-pending-"));
+  const queue = new PendingQueue(join(tempDir, "pending"));
+  const cacheRepo = new Repository(join(tempDir, "cache.db"));
+  const client = new VegaSyncClient(harness.baseUrl, undefined);
+  const syncManager = new SyncManager(client, queue, cacheRepo);
+
+  client.setPendingQueue(queue);
+  client.setCacheRepository(cacheRepo);
+
+  try {
+    queue.enqueue({
+      type: "store",
+      params: {
+        content: "Replay this queued operation to the server",
+        type: "decision",
+        project: "vega"
+      },
+      timestamp: "2026-04-04T00:00:00.000Z"
+    });
+
+    const synced = await syncManager.syncPending();
+    const listed = await readJson<Array<{ content: string }>>(
+      await harness.request("/api/list?project=vega&limit=10")
+    );
+
+    assert.equal(synced, 1);
+    assert.equal(queue.count(), 0);
+    assert.equal(listed.length, 1);
+    assert.match(listed[0]?.content ?? "", /Replay this queued operation/);
+  } finally {
+    cacheRepo.close();
+    rmSync(tempDir, { recursive: true, force: true });
+    await harness.cleanup();
   }
 });

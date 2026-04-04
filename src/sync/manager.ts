@@ -1,6 +1,7 @@
 import { rmSync } from "node:fs";
 
 import type { Memory } from "../core/types.js";
+import { CRDTMerger } from "../db/crdt.js";
 import { Repository } from "../db/repository.js";
 import { VegaSyncClient } from "./client.js";
 import { PendingQueue } from "./queue.js";
@@ -24,6 +25,8 @@ const memoriesEqual = (left: Memory, right: Memory): boolean =>
   JSON.stringify(left.accessed_projects) === JSON.stringify(right.accessed_projects);
 
 export class SyncManager {
+  private readonly merger = new CRDTMerger();
+
   constructor(
     private readonly client: VegaSyncClient,
     private readonly queue: PendingQueue,
@@ -51,8 +54,36 @@ export class SyncManager {
     }
 
     try {
-      const memories = await this.client.fetchRemoteMemories();
-      await this.refreshCache(memories);
+      const localMemories = this.cacheRepo.listMemories({
+        limit: 1_000_000
+      });
+      const remoteMemories = await this.client.fetchRemoteMemories();
+      const remoteById = new Map(remoteMemories.map((memory) => [memory.id, memory]));
+      const merged = this.merger.mergeMemories(
+        localMemories.filter((memory) => remoteById.has(memory.id)),
+        remoteMemories
+      );
+
+      for (const memory of merged.merged) {
+        const remoteMemory = remoteById.get(memory.id);
+
+        if (!remoteMemory || memoriesEqual(remoteMemory, memory)) {
+          continue;
+        }
+
+        await this.client.replay({
+          type: "update",
+          params: {
+            id: memory.id,
+            content: memory.content,
+            importance: memory.importance,
+            tags: memory.tags
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      await this.refreshCache(await this.client.fetchRemoteMemories());
       this.queue.clear();
     } catch {
       return synced;

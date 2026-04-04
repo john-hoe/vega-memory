@@ -5,6 +5,7 @@ import { Repository } from "../db/repository.js";
 import type {
   CompactResult,
   HealthInfo,
+  HealthReport,
   Memory,
   MemoryListFilters,
   MemoryUpdateParams,
@@ -45,11 +46,7 @@ interface RemoteRecallResult {
   similarity: number;
 }
 
-interface HealthPayload {
-  memory_count: number;
-  db_size_bytes: number;
-  ollama_available: boolean;
-}
+type HealthPayload = HealthReport;
 
 class HttpResponseError extends Error {
   constructor(
@@ -391,18 +388,13 @@ export class VegaSyncClient {
 
   async health(): Promise<HealthInfo> {
     try {
-      const result = await this.requestJson<HealthPayload>(
+      return await this.requestJson<HealthPayload>(
         "/api/health",
         {
           method: "GET"
         },
         DEFAULT_REQUEST_TIMEOUT_MS
       );
-
-      return {
-        status: "online",
-        ...result
-      };
     } catch {
       return {
         status: "offline"

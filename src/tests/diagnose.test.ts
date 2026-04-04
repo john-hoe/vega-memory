@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
@@ -88,7 +88,10 @@ test("diagnose returns valid report structure", async () => {
     assert.equal(typeof report.summary, "string");
     assert.equal(Array.isArray(report.suggested_fixes), true);
     assert.equal(Array.isArray(report.issues_found), true);
+    assert.equal(typeof report.handoff_prompt, "string");
+    assert.equal(typeof report.can_auto_fix, "boolean");
     assert.match(report.summary, /Diagnose completed/);
+    assert.match(report.handoff_prompt, /## Issue Description/);
   } finally {
     harness.cleanup();
   }
@@ -132,6 +135,48 @@ test("diagnose writes report file", async () => {
     assert.equal(existsSync(report.report_path), true);
     assert.match(readFileSync(report.report_path, "utf8"), /# Memory Diagnose Report/);
   } finally {
+    harness.cleanup();
+  }
+});
+
+test("diagnose sets can_auto_fix=true when only null embeddings are present", async () => {
+  const harness = createHarness();
+  const originalFetch = globalThis.fetch;
+  const backupDir = join(dirname(harness.config.dbPath), "backups");
+
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ version: "mock" }), {
+      status: 200,
+      headers: {
+        "content-type": "application/json"
+      }
+    });
+
+  try {
+    harness.repository.createMemory(
+      createMemory({
+        id: "memory-auto-fix"
+      })
+    );
+    harness.repository.logPerformance({
+      timestamp: new Date().toISOString(),
+      operation: "memory_store",
+      latency_ms: 25,
+      memory_count: 1,
+      result_count: 1
+    });
+    mkdirSync(backupDir, { recursive: true });
+    writeFileSync(
+      join(backupDir, `memory-${new Date().toISOString().slice(0, 10)}.db`),
+      "backup",
+      "utf8"
+    );
+
+    const report = await harness.diagnoseService.diagnose();
+
+    assert.equal(report.can_auto_fix, true);
+  } finally {
+    globalThis.fetch = originalFetch;
     harness.cleanup();
   }
 });
