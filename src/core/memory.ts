@@ -6,6 +6,7 @@ import { Repository } from "../db/repository.js";
 import { generateEmbedding, cosineSimilarity } from "../embedding/ollama.js";
 import { shouldExclude } from "../security/exclusion.js";
 import { redactSensitiveData } from "../security/redactor.js";
+import { KnowledgeGraphService } from "./knowledge-graph.js";
 
 const DEFAULT_IMPORTANCE: Record<MemoryType, number> = {
   preference: 0.95,
@@ -141,8 +142,14 @@ const contradicts = (existingContent: string, incomingContent: string): boolean 
 export class MemoryService {
   constructor(
     private readonly repository: Repository,
-    private readonly config: VegaConfig
+    private readonly config: VegaConfig,
+    private readonly knowledgeGraphService = new KnowledgeGraphService(repository)
   ) {}
+
+  private linkKnowledgeGraph(memoryId: string, content: string, tags: string[]): void {
+    const entities = this.knowledgeGraphService.extractEntities(content, tags);
+    this.knowledgeGraphService.linkMemory(memoryId, entities);
+  }
 
   private findMatch(
     project: string | undefined,
@@ -274,6 +281,8 @@ export class MemoryService {
         ip: null
       });
 
+      this.linkKnowledgeGraph(id, redacted, tags);
+
       return { id, action: "conflict", title };
     }
 
@@ -319,6 +328,8 @@ export class MemoryService {
         ip: null
       });
 
+      this.linkKnowledgeGraph(matched.memory.id, mergedContent, mergedTags);
+
       return { id: matched.memory.id, action: "updated", title: nextTitle };
     }
 
@@ -356,6 +367,8 @@ export class MemoryService {
       detail: `Created ${params.type} memory from store pipeline${wasRedacted ? " after redaction" : ""}`,
       ip: null
     });
+
+    this.linkKnowledgeGraph(id, redacted, tags);
 
     return { id, action: "created", title };
   }

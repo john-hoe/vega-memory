@@ -6,6 +6,15 @@ export type MemoryType =
   | "pitfall"
   | "insight";
 
+export type EntityType = "person" | "project" | "tool" | "concept" | "file";
+
+export type RelationType =
+  | "uses"
+  | "depends_on"
+  | "related_to"
+  | "part_of"
+  | "caused_by";
+
 export type MemorySource = "auto" | "explicit";
 
 export type MemoryStatus = "active" | "archived";
@@ -32,6 +41,49 @@ export interface Memory {
   verified: VerifiedStatus;
   scope: MemoryScope;
   accessed_projects: string[];
+}
+
+export interface Entity {
+  id: string;
+  name: string;
+  type: EntityType;
+  created_at: string;
+}
+
+export interface ExtractedEntity {
+  name: string;
+  type: EntityType;
+}
+
+export interface EntityRelation {
+  id: string;
+  source_entity_id: string;
+  target_entity_id: string;
+  relation_type: RelationType;
+  memory_id: string;
+  created_at: string;
+  source_entity_name: string;
+  source_entity_type: EntityType;
+  target_entity_name: string;
+  target_entity_type: EntityType;
+}
+
+export interface GraphTraversal {
+  entities: Entity[];
+  relations: EntityRelation[];
+}
+
+export interface GraphQueryResult {
+  entity: Entity | null;
+  relations: EntityRelation[];
+  memories: Memory[];
+}
+
+export interface CodeSymbol {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
 }
 
 export interface GracefulDeletionStatus {

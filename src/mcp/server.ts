@@ -11,6 +11,7 @@ import { getHealthReport } from "../core/health.js";
 import { Repository } from "../db/repository.js";
 import type {
   CompactResult,
+  GraphQueryResult,
   HealthInfo,
   Memory,
   MemoryListFilters,
@@ -128,6 +129,9 @@ const runTool = async <T>(
 
 export interface CreateMCPServerOptions {
   repository: Repository;
+  graphService: {
+    query(entityName: string, depth?: number): GraphQueryResult | Promise<GraphQueryResult>;
+  };
   memoryService: {
     store(params: StoreParams): Promise<StoreResult>;
     update(id: string, updates: MemoryUpdateParams): Promise<void>;
@@ -153,6 +157,7 @@ export interface CreateMCPServerOptions {
 
 export function createMCPServer({
   repository,
+  graphService,
   memoryService,
   recallService,
   sessionService,
@@ -165,6 +170,24 @@ export function createMCPServer({
     version: "0.1.0"
   });
   const diagnoseService = new DiagnoseService(repository, config);
+
+  server.tool(
+    "memory_graph",
+    "Query entity relations and connected memories from Vega Memory.",
+    {
+      entity: z.string().trim().min(1),
+      depth: z.number().int().min(0).default(1)
+    },
+    async (args) =>
+      runTool(repository, "memory_graph", async () => {
+        const result = await Promise.resolve(graphService.query(args.entity, args.depth));
+
+        return {
+          result,
+          resultCount: result.relations.length + result.memories.length
+        };
+      })
+  );
 
   server.tool(
     "memory_store",

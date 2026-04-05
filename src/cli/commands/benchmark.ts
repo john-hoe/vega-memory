@@ -9,6 +9,7 @@ import { Command } from "commander";
 
 import type { VegaConfig } from "../../config.js";
 import { getDataDir } from "../../core/health.js";
+import { KnowledgeGraphService } from "../../core/knowledge-graph.js";
 import { MemoryService } from "../../core/memory.js";
 import { RecallService } from "../../core/recall.js";
 import { SessionService } from "../../core/session.js";
@@ -245,6 +246,7 @@ const runConcurrentBenchmark = async (config: VegaConfig): Promise<BenchmarkResu
   const mcpRuntime = createBenchmarkRuntime(config, dbPath);
   const server = createMCPServer({
     repository: mcpRuntime.repository,
+    graphService: new KnowledgeGraphService(mcpRuntime.repository),
     memoryService: mcpRuntime.memoryService,
     recallService: mcpRuntime.recallService,
     sessionService: mcpRuntime.sessionService,

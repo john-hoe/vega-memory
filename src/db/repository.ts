@@ -6,10 +6,14 @@ import { v4 as uuidv4 } from "uuid";
 
 import type {
   AuditEntry,
+  Entity,
+  EntityRelation,
+  GraphTraversal,
   Memory,
   MemoryListFilters,
   MemoryVersion,
   PerformanceLog,
+  RelationType,
   Session
 } from "../core/types.js";
 import { initializeDatabase } from "./schema.js";
@@ -59,6 +63,26 @@ interface MetadataRow {
   updated_at: string;
 }
 
+interface EntityRow {
+  id: string;
+  name: string;
+  type: Entity["type"];
+  created_at: string;
+}
+
+interface EntityRelationRow {
+  id: string;
+  source_entity_id: string;
+  target_entity_id: string;
+  relation_type: RelationType;
+  memory_id: string;
+  created_at: string;
+  source_entity_name: string;
+  source_entity_type: Entity["type"];
+  target_entity_name: string;
+  target_entity_type: Entity["type"];
+}
+
 const SORT_COLUMNS = new Set([
   "id",
   "type",
@@ -89,6 +113,14 @@ function mapMemory(row: MemoryRow): Memory {
     tags: parseJsonArray(row.tags),
     accessed_projects: parseJsonArray(row.accessed_projects)
   };
+}
+
+function mapEntity(row: EntityRow): Entity {
+  return row;
+}
+
+function mapEntityRelation(row: EntityRelationRow): EntityRelation {
+  return row;
 }
 
 function normalizeSort(sort?: string): string {
@@ -205,6 +237,21 @@ export class Repository {
       .get(id);
 
     return row ? mapMemory(row) : null;
+  }
+
+  getMemoriesByIds(ids: string[]): Memory[] {
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const placeholders = ids.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare<unknown[], MemoryRow>(
+        `SELECT * FROM memories WHERE id IN (${placeholders}) ORDER BY updated_at DESC`
+      )
+      .all(...ids);
+
+    return rows.map(mapMemory);
   }
 
   updateMemory(id: string, updates: Partial<Memory>, options?: { skipVersion?: boolean }): void {
@@ -477,6 +524,160 @@ export class Repository {
         session.ended_at,
         serializeJsonArray(session.memories_created)
       );
+  }
+
+  createEntity(name: string, type: Entity["type"]): Entity {
+    const normalizedName = name.trim();
+    if (normalizedName.length === 0) {
+      throw new Error("Entity name cannot be empty");
+    }
+
+    const existing = this.findEntity(normalizedName);
+    if (existing) {
+      if (existing.type !== type) {
+        this.db
+          .prepare<[Entity["type"], string]>("UPDATE entities SET type = ? WHERE id = ?")
+          .run(type, existing.id);
+
+        return {
+          ...existing,
+          type
+        };
+      }
+
+      return existing;
+    }
+
+    const entity: Entity = {
+      id: uuidv4(),
+      name: normalizedName,
+      type,
+      created_at: timestamp()
+    };
+
+    this.db
+      .prepare<[string, string, Entity["type"], string]>(
+        "INSERT INTO entities (id, name, type, created_at) VALUES (?, ?, ?, ?)"
+      )
+      .run(entity.id, entity.name, entity.type, entity.created_at);
+
+    return entity;
+  }
+
+  createRelation(
+    sourceId: string,
+    targetId: string,
+    relationType: RelationType,
+    memoryId: string
+  ): void {
+    this.db
+      .prepare<[string, string, string, RelationType, string, string]>(
+        `INSERT OR IGNORE INTO relations (
+          id, source_entity_id, target_entity_id, relation_type, memory_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(uuidv4(), sourceId, targetId, relationType, memoryId, timestamp());
+  }
+
+  deleteRelationsForMemory(memoryId: string): void {
+    this.db.prepare<[string]>("DELETE FROM relations WHERE memory_id = ?").run(memoryId);
+  }
+
+  getEntityRelations(entityId: string): EntityRelation[] {
+    const rows = this.db
+      .prepare<[string, string], EntityRelationRow>(
+        `SELECT
+           relations.id,
+           relations.source_entity_id,
+           relations.target_entity_id,
+           relations.relation_type,
+           relations.memory_id,
+           relations.created_at,
+           source.name AS source_entity_name,
+           source.type AS source_entity_type,
+           target.name AS target_entity_name,
+           target.type AS target_entity_type
+         FROM relations
+         JOIN entities AS source ON source.id = relations.source_entity_id
+         JOIN entities AS target ON target.id = relations.target_entity_id
+         WHERE relations.source_entity_id = ? OR relations.target_entity_id = ?
+         ORDER BY relations.created_at ASC`
+      )
+      .all(entityId, entityId);
+
+    return rows.map(mapEntityRelation);
+  }
+
+  findEntity(name: string): Entity | null {
+    const normalizedName = name.trim();
+    if (normalizedName.length === 0) {
+      return null;
+    }
+
+    const row = this.db
+      .prepare<[string], EntityRow>("SELECT * FROM entities WHERE lower(name) = lower(?)")
+      .get(normalizedName);
+
+    return row ? mapEntity(row) : null;
+  }
+
+  private getEntitiesByIds(ids: string[]): Entity[] {
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const placeholders = ids.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare<unknown[], EntityRow>(
+        `SELECT * FROM entities WHERE id IN (${placeholders}) ORDER BY name ASC`
+      )
+      .all(...ids);
+
+    return rows.map(mapEntity);
+  }
+
+  traverseGraph(entityId: string, depth: number): GraphTraversal {
+    if (depth <= 0) {
+      return {
+        entities: this.getEntitiesByIds([entityId]),
+        relations: []
+      };
+    }
+
+    const visitedEntityIds = new Set<string>([entityId]);
+    const relationById = new Map<string, EntityRelation>();
+    let frontier = [entityId];
+
+    for (let level = 0; level < depth; level += 1) {
+      const nextFrontier: string[] = [];
+
+      for (const currentEntityId of frontier) {
+        for (const relation of this.getEntityRelations(currentEntityId)) {
+          relationById.set(relation.id, relation);
+
+          const relatedEntityId =
+            relation.source_entity_id === currentEntityId
+              ? relation.target_entity_id
+              : relation.source_entity_id;
+
+          if (!visitedEntityIds.has(relatedEntityId)) {
+            visitedEntityIds.add(relatedEntityId);
+            nextFrontier.push(relatedEntityId);
+          }
+        }
+      }
+
+      if (nextFrontier.length === 0) {
+        break;
+      }
+
+      frontier = nextFrontier;
+    }
+
+    return {
+      entities: this.getEntitiesByIds([...visitedEntityIds]),
+      relations: [...relationById.values()]
+    };
   }
 
   logAudit(entry: Omit<AuditEntry, "id">): void {

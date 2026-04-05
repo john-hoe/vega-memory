@@ -68,6 +68,35 @@ export function initializeDatabase(db: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS entities (
+      id TEXT PRIMARY KEY,
+      name TEXT UNIQUE,
+      type TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS relations (
+      id TEXT PRIMARY KEY,
+      source_entity_id TEXT NOT NULL,
+      target_entity_id TEXT NOT NULL,
+      relation_type TEXT NOT NULL,
+      memory_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(source_entity_id, target_entity_id, relation_type, memory_id),
+      FOREIGN KEY (source_entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+      FOREIGN KEY (target_entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+      FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_relations_source_entity
+      ON relations(source_entity_id);
+
+    CREATE INDEX IF NOT EXISTS idx_relations_target_entity
+      ON relations(target_entity_id);
+
+    CREATE INDEX IF NOT EXISTS idx_relations_memory
+      ON relations(memory_id);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
     USING fts5(title, content, tags, content=memories, content_rowid=rowid);
   `);

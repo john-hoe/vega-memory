@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { loadConfig } from "./config.js";
 import { CompactService } from "./core/compact.js";
+import { KnowledgeGraphService } from "./core/knowledge-graph.js";
 import { MemoryService } from "./core/memory.js";
 import { RecallService } from "./core/recall.js";
 import { SessionService } from "./core/session.js";
@@ -51,9 +52,11 @@ async function main(): Promise<void> {
           client.setCacheRepository(repository);
 
           await syncManager.syncPending();
+          const graphService = new KnowledgeGraphService(repository);
 
           return {
             repository,
+            graphService,
             memoryService: {
               store: (params: Parameters<VegaSyncClient["store"]>[0]) => client.store(params),
               update: (id: string, updates: Parameters<VegaSyncClient["update"]>[1]) =>
@@ -88,7 +91,8 @@ async function main(): Promise<void> {
       : (() => {
           const repository = new Repository(config.dbPath);
           const searchEngine = new SearchEngine(repository, config);
-          const memoryService = new MemoryService(repository, config);
+          const graphService = new KnowledgeGraphService(repository);
+          const memoryService = new MemoryService(repository, config, graphService);
           const recallService = new RecallService(repository, searchEngine, config);
           const sessionService = new SessionService(
             repository,
@@ -100,6 +104,7 @@ async function main(): Promise<void> {
 
           return {
             repository,
+            graphService,
             memoryService,
             recallService,
             sessionService,

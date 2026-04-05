@@ -9,16 +9,26 @@ import { registerAuditCommand } from "./commands/audit.js";
 import { registerBenchmarkCommand } from "./commands/benchmark.js";
 import { registerDiagnoseCommand } from "./commands/diagnose.js";
 import { registerEncryptionCommand } from "./commands/encryption.js";
+import { registerGitImportCommand } from "./commands/git-import.js";
+import { registerGraphCommand } from "./commands/graph.js";
 import { registerHealthCommand } from "./commands/health.js";
+import { registerCodeIndexCommand } from "./commands/index-code.js";
+import { registerDocIndexCommand } from "./commands/index-docs.js";
 import { registerImportExportCommands } from "./commands/import-export.js";
 import { registerListCommand } from "./commands/list.js";
 import { registerMaintenanceCommands } from "./commands/maintenance.js";
 import { registerMigrateCommand } from "./commands/migrate.js";
 import { registerRecallCommand } from "./commands/recall.js";
+import { registerScreenshotCommand } from "./commands/screenshot.js";
 import { registerSessionCommands } from "./commands/session.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerStoreCommand } from "./commands/store.js";
 import { CompactService } from "../core/compact.js";
+import { CodeIndexService } from "../core/code-index.js";
+import { DocIndexService } from "../core/doc-index.js";
+import { GitHistoryService } from "../core/git-history.js";
+import { ImageMemoryService } from "../core/image-memory.js";
+import { KnowledgeGraphService } from "../core/knowledge-graph.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
@@ -62,7 +72,8 @@ async function main(): Promise<void> {
 
   const repository = new Repository(config.dbPath);
   const searchEngine = new SearchEngine(repository, config);
-  const memoryService = new MemoryService(repository, config);
+  const knowledgeGraphService = new KnowledgeGraphService(repository);
+  const memoryService = new MemoryService(repository, config, knowledgeGraphService);
   const recallService = new RecallService(repository, searchEngine, config);
   const sessionService = new SessionService(
     repository,
@@ -71,10 +82,19 @@ async function main(): Promise<void> {
     config
   );
   const compactService = new CompactService(repository, config);
+  const codeIndexService = new CodeIndexService(repository);
+  const gitHistoryService = new GitHistoryService(repository, memoryService);
+  const imageMemoryService = new ImageMemoryService(repository, memoryService);
+  const docIndexService = new DocIndexService(repository, memoryService);
 
   registerStoreCommand(program, memoryService);
   registerRecallCommand(program, recallService);
   registerListCommand(program, recallService);
+  registerGraphCommand(program, knowledgeGraphService);
+  registerCodeIndexCommand(program, codeIndexService);
+  registerGitImportCommand(program, gitHistoryService);
+  registerScreenshotCommand(program, imageMemoryService);
+  registerDocIndexCommand(program, docIndexService);
   registerSessionCommands(program, sessionService);
   registerHealthCommand(program, repository, config);
   registerDiagnoseCommand(program, repository, config);
