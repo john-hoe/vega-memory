@@ -2,7 +2,7 @@
 
 ## Base URL
 
-The API is served by the scheduler process:
+The scheduler hosts the API on:
 
 ```text
 http://127.0.0.1:<VEGA_API_PORT>
@@ -17,19 +17,19 @@ http://127.0.0.1:3271
 ## Authentication
 
 - `GET /` is public and serves the dashboard.
-- All `/api/*` routes require `Authorization: Bearer <VEGA_API_KEY>` when `VEGA_API_KEY` is configured.
-- If no API key is configured, the API is open to local callers.
+- Requests to `/api/*` require `Authorization: Bearer <VEGA_API_KEY>` when `VEGA_API_KEY` is configured.
+- If no API key is configured, `/api/*` is open.
 
-Example header:
+Example headers:
 
 ```http
 Authorization: Bearer change-me
 Content-Type: application/json
 ```
 
-## Error Model
+## Error Format
 
-Most JSON errors return:
+Most failures return JSON like:
 
 ```json
 {
@@ -37,36 +37,43 @@ Most JSON errors return:
 }
 ```
 
-Typical status codes:
+Common status codes:
 
-- `400` invalid request body, invalid query parameter, or unsupported sort
+- `400` invalid JSON, invalid request body, or invalid query parameter
 - `401` missing or invalid bearer token
 - `500` internal server error
 
-## Dashboard
+## `GET /`
 
-### `GET /`
+Serve the Vega Memory dashboard.
 
-Serve the single-page Vega Memory dashboard.
+Example request:
 
-Response:
+```http
+GET /
+```
+
+Example response:
 
 - `200 text/html`
 
 Notes:
 
-- The page loads stats from `/api/health`.
-- The page loads table rows from `/api/list`.
-- The page submits searches to `/api/recall`.
-- If the API is protected, the dashboard prompts for an API key and stores it in browser local storage.
+- The dashboard fetches stats from `GET /api/health`.
+- It fetches memory rows from `GET /api/list`.
+- It submits searches to `POST /api/recall`.
 
-## Memory Endpoints
-
-### `POST /api/store`
+## `POST /api/store`
 
 Store a memory entry.
 
-Request body:
+Example request:
+
+```http
+POST /api/store
+Content-Type: application/json
+Authorization: Bearer change-me
+```
 
 ```json
 {
@@ -80,17 +87,17 @@ Request body:
 }
 ```
 
-Fields:
+Request fields:
 
 - `content` required string
 - `type` required one of `task_state`, `preference`, `project_context`, `decision`, `pitfall`, `insight`
 - `project` optional string, defaults to `global`
 - `title` optional string
 - `tags` optional string array
-- `importance` optional number between `0` and `1`
+- `importance` optional number from `0` to `1`
 - `source` optional `auto` or `explicit`
 
-Response:
+Example response:
 
 ```json
 {
@@ -100,19 +107,19 @@ Response:
 }
 ```
 
-`action` can be:
+`action` may be `created`, `updated`, `conflict`, `queued`, or `excluded`.
 
-- `created`
-- `updated`
-- `conflict`
-- `queued`
-- `excluded`
+## `POST /api/recall`
 
-### `POST /api/recall`
+Recall relevant memories.
 
-Search relevant memories with hybrid recall.
+Example request:
 
-Request body:
+```http
+POST /api/recall
+Content-Type: application/json
+Authorization: Bearer change-me
+```
 
 ```json
 {
@@ -124,15 +131,15 @@ Request body:
 }
 ```
 
-Fields:
+Request fields:
 
 - `query` required string
 - `project` optional string
 - `type` optional memory type
-- `limit` optional positive integer, default `5`
-- `min_similarity` optional number between `0` and `1`, default `0.3`
+- `limit` optional positive integer, defaults to `5`
+- `min_similarity` optional number from `0` to `1`, defaults to `0.3`
 
-Response:
+Example response:
 
 ```json
 [
@@ -159,24 +166,25 @@ Response:
 ]
 ```
 
-### `GET /api/list`
+## `GET /api/list`
 
 List memories.
+
+Example request:
+
+```http
+GET /api/list?project=vega&limit=20&sort=updated_at%20DESC
+Authorization: Bearer change-me
+```
 
 Query parameters:
 
 - `project` optional string
 - `type` optional memory type
-- `limit` optional positive integer, default `20`
-- `sort` optional SQL-safe sort string such as `updated_at DESC` or `importance DESC`
+- `limit` optional positive integer, defaults to `20`
+- `sort` optional SQL-safe sort expression such as `updated_at DESC` or `importance DESC`
 
-Example:
-
-```text
-GET /api/list?project=vega&limit=50&sort=updated_at%20DESC
-```
-
-Response:
+Example response:
 
 ```json
 [
@@ -201,29 +209,33 @@ Response:
 ]
 ```
 
-### `PATCH /api/memory/:id`
+## `PATCH /api/memory/:id`
 
 Update an existing memory.
 
-Request body:
+Example request:
+
+```http
+PATCH /api/memory/memory-id
+Content-Type: application/json
+Authorization: Bearer change-me
+```
 
 ```json
 {
-  "title": "SQLite and backups",
   "content": "Checkpoint WAL before copying backups.",
   "importance": 0.8,
   "tags": ["sqlite", "backup"]
 }
 ```
 
-All fields are optional. Supported fields:
+Supported fields:
 
-- `title`
 - `content`
 - `importance`
 - `tags`
 
-Response:
+Example response:
 
 ```json
 {
@@ -232,11 +244,18 @@ Response:
 }
 ```
 
-### `DELETE /api/memory/:id`
+## `DELETE /api/memory/:id`
 
 Delete a memory.
 
-Response:
+Example request:
+
+```http
+DELETE /api/memory/memory-id
+Authorization: Bearer change-me
+```
+
+Example response:
 
 ```json
 {
@@ -245,13 +264,17 @@ Response:
 }
 ```
 
-## Session Endpoints
-
-### `POST /api/session/start`
+## `POST /api/session/start`
 
 Load the session bundle for a working directory.
 
-Request body:
+Example request:
+
+```http
+POST /api/session/start
+Content-Type: application/json
+Authorization: Bearer change-me
+```
 
 ```json
 {
@@ -260,7 +283,7 @@ Request body:
 }
 ```
 
-Response:
+Example response:
 
 ```json
 {
@@ -276,21 +299,27 @@ Response:
 }
 ```
 
-### `POST /api/session/end`
+## `POST /api/session/end`
 
 Store a session summary and extract durable memories.
 
-Request body:
+Example request:
+
+```http
+POST /api/session/end
+Content-Type: application/json
+Authorization: Bearer change-me
+```
 
 ```json
 {
   "project": "vega-memory",
-  "summary": "Decided to expose the dashboard at / and keep API auth on /api/* only.",
+  "summary": "Decided to expose the dashboard at / and keep API auth on /api only.",
   "completed_tasks": ["task-id-1"]
 }
 ```
 
-Response:
+Example response:
 
 ```json
 {
@@ -299,13 +328,18 @@ Response:
 }
 ```
 
-## Health and Maintenance
+## `GET /api/health`
 
-### `GET /api/health`
+Return the health payload used by the dashboard.
 
-Return the expanded health payload used by the dashboard.
+Example request:
 
-Response:
+```http
+GET /api/health
+Authorization: Bearer change-me
+```
+
+Example response:
 
 ```json
 {
@@ -321,11 +355,19 @@ Response:
 }
 ```
 
-### `POST /api/compact`
+`status` is one of `healthy`, `degraded`, or `unhealthy`.
 
-Run compaction and return merge/archive counts.
+## `POST /api/compact`
 
-Request body:
+Run memory compaction.
+
+Example request:
+
+```http
+POST /api/compact
+Content-Type: application/json
+Authorization: Bearer change-me
+```
 
 ```json
 {
@@ -333,9 +375,9 @@ Request body:
 }
 ```
 
-The request body is optional. When omitted, compaction runs across all projects.
+The request body is optional. If omitted, compaction runs across all projects.
 
-Response:
+Example response:
 
 ```json
 {
