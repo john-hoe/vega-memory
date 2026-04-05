@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,6 +10,8 @@ import {
   isAuthorizedRequest,
   matchesConfiguredApiKey
 } from "../api/auth.js";
+import type { WhiteLabelSettings } from "../core/types.js";
+import { WhiteLabelConfig } from "../core/whitelabel.js";
 import { Repository } from "../db/repository.js";
 
 const DASHBOARD_CSP = [
@@ -17,11 +19,12 @@ const DASHBOARD_CSP = [
   "base-uri 'none'",
   "frame-ancestors 'none'",
   "form-action 'self'",
-  "img-src 'self' data:",
+  "img-src 'self' data: http: https:",
   "object-src 'none'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'"
 ].join("; ");
+const DEFAULT_PRIMARY_COLOR = "#48c4b6";
 
 const resolvePublicDir = (): string => {
   const sourceDir = resolve(process.cwd(), "src", "web", "public");
@@ -41,12 +44,90 @@ const setDashboardHeaders = (res: Response): void => {
   res.setHeader("X-Frame-Options", "DENY");
 };
 
-const renderLoginPage = (): string => `<!doctype html>
+const escapeHtml = (value: string): string =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
+const escapeStyleContent = (value: string): string => value.replaceAll(/<\/style/giu, "<\\/style");
+
+const normalizeHexColor = (value: string): string => {
+  const normalized = value.trim();
+
+  if (/^#[0-9a-f]{6}$/iu.test(normalized)) {
+    return normalized.toLowerCase();
+  }
+
+  if (/^#[0-9a-f]{3}$/iu.test(normalized)) {
+    return `#${normalized
+      .slice(1)
+      .split("")
+      .map((part) => `${part}${part}`)
+      .join("")}`.toLowerCase();
+  }
+
+  return DEFAULT_PRIMARY_COLOR;
+};
+
+const hexToRgba = (hex: string, alpha: number): string => {
+  const normalized = normalizeHexColor(hex).slice(1);
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+};
+
+const getBrandInitials = (brandName: string): string => {
+  const normalized = brandName.replace(/[^a-z0-9]/giu, "").slice(0, 2).toUpperCase();
+  return normalized.length > 0 ? normalized : "VM";
+};
+
+const renderBrandMark = (settings: WhiteLabelSettings): string =>
+  settings.logoUrl
+    ? `<img class="brand-logo" src="${escapeHtml(settings.logoUrl)}" alt="${escapeHtml(settings.brandName)} logo" />`
+    : `<div class="brand-mark" aria-hidden="true">${escapeHtml(getBrandInitials(settings.brandName))}</div>`;
+
+const renderCustomCss = (settings: WhiteLabelSettings): string =>
+  settings.customCss === null ? "" : `<style>${escapeStyleContent(settings.customCss)}</style>`;
+
+const renderDashboardPage = (template: string, settings: WhiteLabelSettings): string => {
+  const primaryColor = normalizeHexColor(settings.primaryColor);
+  const replacements: Array<[string, string]> = [
+    ["__VEGA_BRAND_NAME_ATTR__", escapeHtml(settings.brandName)],
+    ["__VEGA_FOOTER_TEXT_ATTR__", escapeHtml(settings.footerText)],
+    ["__VEGA_PRIMARY_COLOR_SOFT__", hexToRgba(primaryColor, 0.14)],
+    ["__VEGA_PRIMARY_COLOR__", primaryColor],
+    ["__VEGA_DASHBOARD_TITLE__", escapeHtml(settings.dashboardTitle)],
+    ["__VEGA_BRAND_NAME__", escapeHtml(settings.brandName)],
+    ["__VEGA_FOOTER_TEXT__", escapeHtml(settings.footerText)],
+    ["__VEGA_BRAND_MARK__", renderBrandMark(settings)],
+    ["__VEGA_CUSTOM_CSS__", renderCustomCss(settings)]
+  ];
+  let page = template;
+
+  for (const [token, value] of replacements) {
+    page = page.replaceAll(token, value);
+  }
+
+  return page;
+};
+
+const renderLoginPage = (settings: WhiteLabelSettings, errorMessage?: string): string => {
+  const primaryColor = normalizeHexColor(settings.primaryColor);
+  const accentSoft = hexToRgba(primaryColor, 0.14);
+  const errorMarkup =
+    errorMessage === undefined ? "" : `<div class="error">${escapeHtml(errorMessage)}</div>`;
+
+  return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Vega Memory Dashboard Login</title>
+    <title>${escapeHtml(settings.dashboardTitle)} Login</title>
     <style>
       :root {
         color-scheme: dark;
@@ -55,7 +136,8 @@ const renderLoginPage = (): string => `<!doctype html>
         --border: rgba(127, 180, 198, 0.18);
         --text: #edf4f7;
         --muted: #8ba0ac;
-        --accent: #48c4b6;
+        --accent: ${primaryColor};
+        --accent-soft: ${accentSoft};
         --danger: #ff8574;
       }
 
@@ -82,6 +164,36 @@ const renderLoginPage = (): string => `<!doctype html>
         border: 1px solid var(--border);
         border-radius: 22px;
         background: var(--panel);
+      }
+
+      .brand-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+
+      .brand-logo,
+      .brand-mark {
+        width: 52px;
+        height: 52px;
+        border-radius: 16px;
+      }
+
+      .brand-logo {
+        object-fit: cover;
+        border: 1px solid var(--border);
+      }
+
+      .brand-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border);
+        background: var(--accent-soft);
+        color: var(--text);
+        font-weight: 700;
+        letter-spacing: 0.08em;
       }
 
       h1 {
@@ -118,7 +230,7 @@ const renderLoginPage = (): string => `<!doctype html>
         padding: 12px 14px;
         border-radius: 12px;
         border: 1px solid var(--border);
-        background: rgba(72, 196, 182, 0.14);
+        background: var(--accent-soft);
         color: var(--text);
         font: inherit;
         cursor: pointer;
@@ -128,20 +240,35 @@ const renderLoginPage = (): string => `<!doctype html>
         margin-bottom: 16px;
         color: var(--danger);
       }
+
+      .footer {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
     </style>
+    ${renderCustomCss(settings)}
   </head>
   <body>
     <main class="card">
-      <h1>Vega Memory Dashboard</h1>
-      <p>Enter the scheduler API key to access the dashboard and JSON API.</p>
+      <div class="brand-row">
+        ${renderBrandMark(settings)}
+        <div>
+          <h1>${escapeHtml(settings.dashboardTitle)}</h1>
+          <p>Access ${escapeHtml(settings.brandName)} using the configured scheduler API key.</p>
+        </div>
+      </div>
+      ${errorMarkup}
       <form action="/dashboard/login" method="post">
         <label for="api-key">API Key</label>
         <input id="api-key" name="apiKey" type="password" autocomplete="current-password" required />
         <button type="submit">Unlock Dashboard</button>
       </form>
+      <div class="footer">${escapeHtml(settings.footerText)}</div>
     </main>
   </body>
 </html>`;
+};
 
 const requireDashboardAuth =
   (config: VegaConfig, sendLoginPage: boolean): RequestHandler =>
@@ -154,7 +281,7 @@ const requireDashboardAuth =
     setDashboardHeaders(res);
 
     if (sendLoginPage) {
-      res.status(401).type("html").send(renderLoginPage());
+      res.status(401).type("html").send(renderLoginPage(new WhiteLabelConfig().load()));
       return;
     }
 
@@ -167,10 +294,17 @@ export function mountDashboard(
   config: VegaConfig
 ): void {
   const publicDir = resolvePublicDir();
+  const dashboardTemplate = readFileSync(join(publicDir, "index.html"), "utf8");
+  const whiteLabelConfig = new WhiteLabelConfig();
   const dashboardAuth = requireDashboardAuth(config, true);
   const assetAuth = requireDashboardAuth(config, false);
+  const renderDashboard: RequestHandler = (_req, res) => {
+    setDashboardHeaders(res);
+    res.type("html").send(renderDashboardPage(dashboardTemplate, whiteLabelConfig.load()));
+  };
 
   app.post("/dashboard/login", express.urlencoded({ extended: false }), (req, res) => {
+    const settings = whiteLabelConfig.load();
     const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
 
     if (
@@ -178,7 +312,7 @@ export function mountDashboard(
       !matchesConfiguredApiKey(apiKey, config.apiKey)
     ) {
       setDashboardHeaders(res);
-      res.status(401).type("html").send(renderLoginPage());
+      res.status(401).type("html").send(renderLoginPage(settings, "Invalid API key."));
       return;
     }
 
@@ -200,10 +334,8 @@ export function mountDashboard(
     res.redirect("/");
   });
 
-  app.get("/", dashboardAuth, (_req, res) => {
-    setDashboardHeaders(res);
-    res.sendFile(join(publicDir, "index.html"));
-  });
+  app.get("/", dashboardAuth, renderDashboard);
+  app.get("/index.html", dashboardAuth, renderDashboard);
   app.use(
     assetAuth,
     express.static(publicDir, {

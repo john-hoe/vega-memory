@@ -106,6 +106,27 @@ export function initializeDatabase(db: Database.Database): void {
       FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS tenants (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      plan TEXT NOT NULL DEFAULT 'free',
+      api_key TEXT UNIQUE NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      memory_limit INTEGER NOT NULL DEFAULT 1000,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS usage_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id TEXT,
+      month TEXT NOT NULL,
+      memory_count INTEGER DEFAULT 0,
+      api_calls INTEGER DEFAULT 0,
+      storage_bytes INTEGER DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS entities (
       id TEXT PRIMARY KEY,
       name TEXT UNIQUE,
@@ -140,6 +161,12 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_team_members_user
       ON team_members(user_id);
+
+    CREATE INDEX IF NOT EXISTS idx_tenants_active
+      ON tenants(active);
+
+    CREATE INDEX IF NOT EXISTS idx_usage_log_tenant_month
+      ON usage_log(tenant_id, month);
 
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
     USING fts5(title, content, tags, content=memories, content_rowid=rowid);

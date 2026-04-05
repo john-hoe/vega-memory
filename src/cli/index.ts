@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { Command } from "commander";
 
 import { loadConfig } from "../config.js";
+import { registerAnalyticsCommand } from "./commands/analytics.js";
 import { registerAuditCommand } from "./commands/audit.js";
 import { registerBenchmarkCommand } from "./commands/benchmark.js";
 import { registerCompressionCommand } from "./commands/compress.js";
@@ -28,8 +29,11 @@ import { registerSessionCommands } from "./commands/session.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerStoreCommand } from "./commands/store.js";
 import { registerPluginCommands } from "./commands/plugins.js";
+import { registerTenantCommands } from "./commands/tenant.js";
 import { registerTemplateCommands } from "./commands/templates.js";
 import { registerTuneCommand } from "./commands/tune.js";
+import { registerWhiteLabelCommand } from "./commands/whitelabel.js";
+import { AnalyticsService } from "../core/analytics.js";
 import { CompactService } from "../core/compact.js";
 import { CodeIndexService } from "../core/code-index.js";
 import { CompressionService } from "../core/compression.js";
@@ -42,6 +46,8 @@ import { MemoryService } from "../core/memory.js";
 import { QualityService } from "../core/quality.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
+import { TenantService } from "../core/tenant.js";
+import { WhiteLabelConfig } from "../core/whitelabel.js";
 import { Repository } from "../db/repository.js";
 import { PluginLoader } from "../plugins/loader.js";
 import { TemplateMarketplace } from "../plugins/marketplace.js";
@@ -105,6 +111,9 @@ async function main(): Promise<void> {
   const pluginLoader = new PluginLoader();
   const templateMarketplace = new TemplateMarketplace(config);
   const relevanceTuner = new RelevanceTuner(repository);
+  const analyticsService = new AnalyticsService(repository);
+  const tenantService = new TenantService(repository);
+  const whiteLabelConfig = new WhiteLabelConfig();
 
   registerStoreCommand(program, memoryService);
   registerRecallCommand(program, recallService);
@@ -129,6 +138,9 @@ async function main(): Promise<void> {
   registerPluginCommands(program, pluginLoader);
   registerTemplateCommands(program, templateMarketplace, repository);
   registerTuneCommand(program, relevanceTuner);
+  registerAnalyticsCommand(program, analyticsService);
+  registerTenantCommands(program, tenantService);
+  registerWhiteLabelCommand(program, whiteLabelConfig);
 
   try {
     await program.parseAsync(process.argv);

@@ -1,6 +1,7 @@
 import { Router, type RequestHandler, type Response } from "express";
 
 import type { VegaConfig } from "../config.js";
+import { AnalyticsService } from "../core/analytics.js";
 import { CompactService } from "../core/compact.js";
 import { getHealthReport } from "../core/health.js";
 import { MemoryService } from "../core/memory.js";
@@ -272,6 +273,7 @@ const parseIntegerString = (value: unknown, field: string): number | undefined =
 
 export function createRouter(services: APIRouterServices): Router {
   const router = Router();
+  const analyticsService = new AnalyticsService(services.repository);
 
   router.post(
     "/api/store",
@@ -466,6 +468,18 @@ export function createRouter(services: APIRouterServices): Router {
         project,
         action: "ended"
       });
+    })
+  );
+
+  router.get(
+    "/api/analytics",
+    handleRoute((req, res) => {
+      res.status(200).json(
+        analyticsService.getUsageStats(
+          parseSingleValue(req.query.tenant_id, "tenant_id"),
+          parseSingleValue(req.query.since, "since")
+        )
+      );
     })
   );
 

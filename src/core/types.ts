@@ -249,3 +249,66 @@ export interface SearchQualityReport {
   type_distribution: Partial<Record<MemoryType, number>>;
   recommendations: string[];
 }
+
+export type TenantPlan = "free" | "pro" | "enterprise";
+
+export interface Tenant {
+  id: string;
+  name: string;
+  plan: TenantPlan;
+  api_key: string;
+  active: boolean;
+  created_at: string;
+  memory_limit: number;
+  updated_at: string;
+}
+
+export interface SSOUser {
+  id: string;
+  email: string;
+  name: string;
+  provider: string;
+}
+
+export interface UsageStats {
+  api_calls_total: number;
+  api_calls_by_operation: Record<string, number>;
+  memories_total: number;
+  memories_by_type: Partial<Record<MemoryType, number>>;
+  memories_by_project: Record<string, number>;
+  storage_bytes: number;
+  avg_latency_ms: number;
+  active_projects: number;
+  peak_hour: string | null;
+}
+
+export interface GrowthPoint {
+  date: string;
+  count: number;
+}
+
+export interface BillingUsage {
+  tenant_id: string;
+  month: string;
+  memory_count: number;
+  api_calls: number;
+  storage_bytes: number;
+}
+
+export interface QuotaStatus {
+  plan: TenantPlan;
+  memory_usage: number;
+  memory_limit: number;
+  api_usage: number;
+  api_limit: number;
+  over_quota: boolean;
+}
+
+export interface WhiteLabelSettings {
+  brandName: string;
+  logoUrl: string | null;
+  primaryColor: string;
+  dashboardTitle: string;
+  footerText: string;
+  customCss: string | null;
+}

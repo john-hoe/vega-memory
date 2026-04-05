@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Vega Memory Dashboard</title>
+    <title>__VEGA_DASHBOARD_TITLE__</title>
     <style>
       :root {
         color-scheme: dark;
@@ -13,8 +13,8 @@
         --border: rgba(127, 180, 198, 0.18);
         --text: #edf4f7;
         --muted: #8ba0ac;
-        --accent: #48c4b6;
-        --accent-soft: rgba(72, 196, 182, 0.14);
+        --accent: __VEGA_PRIMARY_COLOR__;
+        --accent-soft: __VEGA_PRIMARY_COLOR_SOFT__;
         --danger: #ff8574;
         --shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
       }
@@ -66,6 +66,45 @@
           linear-gradient(135deg, rgba(72, 196, 182, 0.12), rgba(12, 17, 23, 0.92)),
           var(--panel);
         box-shadow: var(--shadow);
+      }
+
+      .hero-copy {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+      }
+
+      .hero-kicker {
+        margin: 0 0 6px;
+        color: var(--muted);
+        font-size: 0.82rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .brand-logo,
+      .brand-mark {
+        width: 56px;
+        height: 56px;
+        border-radius: 18px;
+      }
+
+      .brand-logo {
+        object-fit: cover;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .brand-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border);
+        background: var(--accent-soft);
+        color: var(--text);
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        flex-shrink: 0;
       }
 
       .hero h1 {
@@ -318,6 +357,13 @@
         color: var(--danger);
       }
 
+      .footer {
+        margin-top: 20px;
+        padding: 0 4px;
+        color: var(--muted);
+        text-align: right;
+      }
+
       @media (max-width: 980px) {
         .stats,
         .workspace {
@@ -358,16 +404,25 @@
         }
       }
     </style>
+    __VEGA_CUSTOM_CSS__
   </head>
-  <body>
+  <body
+    data-brand-name="__VEGA_BRAND_NAME_ATTR__"
+    data-primary-color="__VEGA_PRIMARY_COLOR__"
+    data-footer-text="__VEGA_FOOTER_TEXT_ATTR__"
+  >
     <div class="page">
       <section class="hero">
-        <div>
-          <h1>Vega Memory Dashboard</h1>
+        <div class="hero-copy">
+          __VEGA_BRAND_MARK__
+          <div>
+            <p class="hero-kicker">__VEGA_BRAND_NAME__</p>
+            <h1>__VEGA_DASHBOARD_TITLE__</h1>
           <p>
             Inspect health, browse stored memories, and search recall results from the
-            running Vega Memory API.
+            running __VEGA_BRAND_NAME__ API.
           </p>
+          </div>
         </div>
         <div class="hero-actions">
           <div class="status-pill" id="refresh-status">Connecting</div>
@@ -443,6 +498,8 @@
           </div>
         </aside>
       </section>
+
+      <footer class="footer">__VEGA_FOOTER_TEXT__</footer>
     </div>
 
     <script type="module" src="/dashboard.js"></script>
