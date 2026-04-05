@@ -26,6 +26,7 @@ export function initializeDatabase(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS memories (
       id TEXT PRIMARY KEY,
+      tenant_id TEXT,
       type TEXT NOT NULL,
       project TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -75,6 +76,7 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS performance_log (
       timestamp TEXT NOT NULL,
+      tenant_id TEXT,
       operation TEXT NOT NULL,
       latency_ms REAL NOT NULL,
       memory_count INTEGER NOT NULL,
@@ -165,14 +167,24 @@ export function initializeDatabase(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_tenants_active
       ON tenants(active);
 
-    CREATE INDEX IF NOT EXISTS idx_usage_log_tenant_month
-      ON usage_log(tenant_id, month);
-
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
     USING fts5(title, content, tags, content=memories, content_rowid=rowid);
   `);
 
+  ensureColumn(db, "memories", "tenant_id", "TEXT");
   ensureColumn(db, "performance_log", "avg_similarity", "REAL");
+  ensureColumn(db, "performance_log", "tenant_id", "TEXT");
   ensureColumn(db, "performance_log", "result_types", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, "performance_log", "bm25_result_count", "INTEGER NOT NULL DEFAULT 0");
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_memories_tenant_status
+      ON memories(tenant_id, status);
+
+    CREATE INDEX IF NOT EXISTS idx_performance_log_tenant_timestamp
+      ON performance_log(tenant_id, timestamp);
+
+    CREATE INDEX IF NOT EXISTS idx_usage_log_tenant_month
+      ON usage_log(tenant_id, month);
+  `);
 }

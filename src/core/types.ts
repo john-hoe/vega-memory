@@ -25,6 +25,7 @@ export type MemoryScope = "project" | "global";
 
 export interface Memory {
   id: string;
+  tenant_id?: string | null;
   type: MemoryType;
   project: string;
   title: string;
@@ -122,6 +123,7 @@ export interface AuditEntry {
 
 export interface PerformanceLog {
   timestamp: string;
+  tenant_id?: string | null;
   operation: string;
   latency_ms: number;
   memory_count: number;

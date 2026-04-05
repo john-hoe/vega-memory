@@ -271,6 +271,19 @@ const parseIntegerString = (value: unknown, field: string): number | undefined =
   });
 };
 
+const parseDateString = (value: unknown, field: string): string | undefined => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  if (Number.isNaN(new Date(parsed).getTime())) {
+    throw new ApiError(400, `${field} must be a valid date`);
+  }
+
+  return parsed;
+};
+
 export function createRouter(services: APIRouterServices): Router {
   const router = Router();
   const analyticsService = new AnalyticsService(services.repository);
@@ -477,7 +490,7 @@ export function createRouter(services: APIRouterServices): Router {
       res.status(200).json(
         analyticsService.getUsageStats(
           parseSingleValue(req.query.tenant_id, "tenant_id"),
-          parseSingleValue(req.query.since, "since")
+          parseDateString(req.query.since, "since")
         )
       );
     })

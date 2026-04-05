@@ -94,9 +94,9 @@ const renderBrandMark = (settings: WhiteLabelSettings): string =>
 const renderCustomCss = (settings: WhiteLabelSettings): string =>
   settings.customCss === null ? "" : `<style>${escapeStyleContent(settings.customCss)}</style>`;
 
-const renderDashboardPage = (template: string, settings: WhiteLabelSettings): string => {
+export const renderDashboardPage = (template: string, settings: WhiteLabelSettings): string => {
   const primaryColor = normalizeHexColor(settings.primaryColor);
-  const replacements: Array<[string, string]> = [
+  const replacements = new Map<string, string>([
     ["__VEGA_BRAND_NAME_ATTR__", escapeHtml(settings.brandName)],
     ["__VEGA_FOOTER_TEXT_ATTR__", escapeHtml(settings.footerText)],
     ["__VEGA_PRIMARY_COLOR_SOFT__", hexToRgba(primaryColor, 0.14)],
@@ -106,14 +106,9 @@ const renderDashboardPage = (template: string, settings: WhiteLabelSettings): st
     ["__VEGA_FOOTER_TEXT__", escapeHtml(settings.footerText)],
     ["__VEGA_BRAND_MARK__", renderBrandMark(settings)],
     ["__VEGA_CUSTOM_CSS__", renderCustomCss(settings)]
-  ];
-  let page = template;
+  ]);
 
-  for (const [token, value] of replacements) {
-    page = page.replaceAll(token, value);
-  }
-
-  return page;
+  return template.replace(/__VEGA_[A-Z_]+__/gu, (token) => replacements.get(token) ?? token);
 };
 
 const renderLoginPage = (settings: WhiteLabelSettings, errorMessage?: string): string => {

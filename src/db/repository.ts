@@ -20,6 +20,7 @@ import { initializeDatabase } from "./schema.js";
 
 interface MemoryRow {
   id: string;
+  tenant_id: string | null;
   type: Memory["type"];
   project: string;
   title: string;
@@ -75,6 +76,7 @@ interface EmbeddingIndexSnapshotRow {
 
 interface PerformanceLogRow {
   timestamp: string;
+  tenant_id: string | null;
   operation: string;
   latency_ms: number;
   memory_count: number;
@@ -147,6 +149,7 @@ function mapEntityRelation(row: EntityRelationRow): EntityRelation {
 function mapPerformanceLog(row: PerformanceLogRow): PerformanceLog {
   return {
     timestamp: row.timestamp,
+    tenant_id: row.tenant_id,
     operation: row.operation,
     latency_ms: row.latency_ms,
     memory_count: row.memory_count,
@@ -237,6 +240,7 @@ export class Repository {
     const insertMemory = this.db.prepare<
       [
         string,
+        string | null,
         Memory["type"],
         string,
         string,
@@ -255,9 +259,9 @@ export class Repository {
       ]
     >(
       `INSERT INTO memories (
-        id, type, project, title, content, embedding, importance, source, tags,
+        id, tenant_id, type, project, title, content, embedding, importance, source, tags,
         created_at, updated_at, accessed_at, status, verified, scope, accessed_projects
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertFts = this.db.prepare<[number, string, string, string]>(
       "INSERT INTO memories_fts(rowid, title, content, tags) VALUES (?, ?, ?, ?)"
@@ -266,6 +270,7 @@ export class Repository {
     const transaction = this.db.transaction(() => {
       const result = insertMemory.run(
         memory.id,
+        memory.tenant_id ?? null,
         memory.type,
         memory.project,
         memory.title,
@@ -357,6 +362,7 @@ export class Repository {
     const updateStatement = this.db.prepare<
       [
         Memory["type"],
+        string | null,
         string,
         string,
         string,
@@ -375,7 +381,7 @@ export class Repository {
       ]
     >(
       `UPDATE memories
-       SET type = ?, project = ?, title = ?, content = ?, embedding = ?, importance = ?,
+       SET type = ?, tenant_id = ?, project = ?, title = ?, content = ?, embedding = ?, importance = ?,
            source = ?, tags = ?, updated_at = ?, accessed_at = ?, access_count = ?,
            status = ?, verified = ?, scope = ?, accessed_projects = ?
        WHERE id = ?`
@@ -394,6 +400,7 @@ export class Repository {
 
       updateStatement.run(
         nextMemory.type,
+        nextMemory.tenant_id ?? null,
         nextMemory.project,
         nextMemory.title,
         nextMemory.content,
@@ -834,9 +841,10 @@ export class Repository {
 
   logPerformance(entry: PerformanceLog): void {
     this.db
-      .prepare<[string, string, number, number, number, number | null, string, number]>(
+      .prepare<[string, string | null, string, number, number, number, number | null, string, number]>(
         `INSERT INTO performance_log (
            timestamp,
+           tenant_id,
            operation,
            latency_ms,
            memory_count,
@@ -845,10 +853,11 @@ export class Repository {
            result_types,
            bm25_result_count
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         entry.timestamp,
+        entry.tenant_id ?? null,
         entry.operation,
         entry.latency_ms,
         entry.memory_count,

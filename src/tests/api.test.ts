@@ -124,6 +124,20 @@ test("GET /api/health returns the expanded health payload", async () => {
   }
 });
 
+test("GET /api/analytics returns 400 for an invalid since value", async () => {
+  const harness = await createHarness();
+
+  try {
+    const response = await harness.request("/api/analytics?since=not-a-date");
+    const body = await readJson<{ error: string }>(response);
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error, "since must be a valid date");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("POST /api/store creates a memory and GET /api/list returns it", async () => {
   const harness = await createHarness();
 

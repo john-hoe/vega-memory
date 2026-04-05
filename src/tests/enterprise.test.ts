@@ -12,6 +12,7 @@ import type { Memory } from "../core/types.js";
 import { WhiteLabelConfig } from "../core/whitelabel.js";
 import { Repository } from "../db/repository.js";
 import { RBACService } from "../security/rbac.js";
+import { renderDashboardPage } from "../web/dashboard.js";
 
 const timestamp = "2026-04-05T12:00:00.000Z";
 
@@ -139,11 +140,16 @@ test("RBACService.checkPermission returns false for readonly on store", () => {
 test("AnalyticsService.getUsageStats returns valid stats", () => {
   const harness = createRepositoryHarness();
   const analyticsService = new AnalyticsService(harness.repository);
+  const tenantService = new TenantService(harness.repository);
 
   try {
+    const primaryTenant = tenantService.createTenant("Analytics", "pro");
+    const secondaryTenant = tenantService.createTenant("Other", "free");
+
     harness.repository.createMemory(createStoredMemory("analytics-1"));
     harness.repository.createMemory(
       createStoredMemory("analytics-2", {
+        tenant_id: primaryTenant.id,
         type: "insight",
         project: "alpha",
         created_at: "2026-04-05T13:00:00.000Z",
@@ -153,11 +159,24 @@ test("AnalyticsService.getUsageStats returns valid stats", () => {
     );
     harness.repository.createMemory(
       createStoredMemory("analytics-archived", {
+        tenant_id: primaryTenant.id,
         status: "archived"
+      })
+    );
+    harness.repository.createMemory(
+      createStoredMemory("analytics-tenant-1", {
+        tenant_id: primaryTenant.id
+      })
+    );
+    harness.repository.createMemory(
+      createStoredMemory("analytics-tenant-2", {
+        tenant_id: secondaryTenant.id,
+        project: "beta"
       })
     );
     harness.repository.logPerformance({
       timestamp: "2026-04-05T10:15:00.000Z",
+      tenant_id: primaryTenant.id,
       operation: "store",
       latency_ms: 24,
       memory_count: 2,
@@ -168,6 +187,7 @@ test("AnalyticsService.getUsageStats returns valid stats", () => {
     });
     harness.repository.logPerformance({
       timestamp: "2026-04-05T10:45:00.000Z",
+      tenant_id: primaryTenant.id,
       operation: "recall",
       latency_ms: 36,
       memory_count: 2,
@@ -176,8 +196,19 @@ test("AnalyticsService.getUsageStats returns valid stats", () => {
       result_types: ["decision", "insight"],
       bm25_result_count: 1
     });
+    harness.repository.logPerformance({
+      timestamp: "2026-04-05T11:15:00.000Z",
+      tenant_id: secondaryTenant.id,
+      operation: "store",
+      latency_ms: 20,
+      memory_count: 1,
+      result_count: 1,
+      avg_similarity: null,
+      result_types: ["decision"],
+      bm25_result_count: 0
+    });
 
-    const stats = analyticsService.getUsageStats();
+    const stats = analyticsService.getUsageStats(primaryTenant.id);
 
     assert.equal(stats.api_calls_total, 2);
     assert.equal(stats.api_calls_by_operation.store, 1);
@@ -203,10 +234,31 @@ test("BillingService.checkQuota returns correct limits for free plan", () => {
 
   try {
     const tenant = tenantService.createTenant("Starter", "free");
+    const otherTenant = tenantService.createTenant("Busy Neighbor", "pro");
+
+    harness.repository.createMemory(
+      createStoredMemory("foreign-quota-memory", {
+        tenant_id: otherTenant.id
+      })
+    );
+    harness.repository.logPerformance({
+      timestamp,
+      tenant_id: otherTenant.id,
+      operation: "store",
+      latency_ms: 12,
+      memory_count: 1,
+      result_count: 1,
+      avg_similarity: null,
+      result_types: ["decision"],
+      bm25_result_count: 0
+    });
+
     const quota = billingService.checkQuota(tenant.id);
 
     assert.equal(quota.plan, "free");
+    assert.equal(quota.memory_usage, 0);
     assert.equal(quota.memory_limit, 1000);
+    assert.equal(quota.api_usage, 0);
     assert.equal(quota.api_limit, 10000);
     assert.equal(quota.over_quota, false);
   } finally {
@@ -225,6 +277,7 @@ test("BillingService.isOverQuota returns true when over limit", () => {
     for (let index = 0; index < 1001; index += 1) {
       harness.repository.createMemory(
         createStoredMemory(`quota-${index}`, {
+          tenant_id: tenant.id,
           created_at: `2026-04-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`,
           updated_at: `2026-04-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`,
           accessed_at: `2026-04-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`
@@ -247,4 +300,19 @@ test("WhiteLabelConfig.load returns defaults when no config file", () => {
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("renderDashboardPage does not reprocess white-label values as template tokens", () => {
+  const rendered = renderDashboardPage("brand=__VEGA_BRAND_NAME__|css=__VEGA_CUSTOM_CSS__", {
+    brandName: "__VEGA_CUSTOM_CSS__",
+    logoUrl: null,
+    primaryColor: "#48c4b6",
+    dashboardTitle: "Dashboard",
+    footerText: "Footer",
+    customCss: 'body { color: "#fff"; }'
+  });
+
+  assert.match(rendered, /brand=__VEGA_CUSTOM_CSS__/);
+  assert.match(rendered, /css=<style>body \{ color: "#fff"; \}<\/style>/);
+  assert.equal(rendered.includes("brand=<style>"), false);
 });

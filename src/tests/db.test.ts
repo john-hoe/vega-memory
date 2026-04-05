@@ -25,6 +25,7 @@ const now = "2026-04-03T12:00:00.000Z";
 function createMemory(overrides: Partial<Memory> = {}): Memory {
   return {
     id: "mem-1",
+    tenant_id: null,
     type: "decision",
     project: "vega",
     title: "Choose SQLite",
