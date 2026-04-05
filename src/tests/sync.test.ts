@@ -60,7 +60,8 @@ const createHarness = async (apiKey?: string): Promise<TestHarness> => {
     serverUrl: undefined,
     cacheDbPath: join(tempDir, "cache.db"),
     telegramBotToken: undefined,
-    telegramChatId: undefined
+    telegramChatId: undefined,
+    observerEnabled: false,
   };
   const repository = new Repository(config.dbPath);
   const searchEngine = new SearchEngine(repository, config);

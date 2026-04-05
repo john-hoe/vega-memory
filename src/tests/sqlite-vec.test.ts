@@ -21,6 +21,7 @@ const baseConfig: VegaConfig = {
   cacheDbPath: "./data/cache.db",
   telegramBotToken: undefined,
   telegramChatId: undefined,
+  observerEnabled: false,
   cloudBackup: undefined
 };
 

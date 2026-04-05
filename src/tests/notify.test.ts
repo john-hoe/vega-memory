@@ -27,7 +27,8 @@ const createConfig = (overrides: Partial<VegaConfig> = {}): VegaConfig => ({
   cacheDbPath: "./data/cache.db",
   telegramBotToken: undefined,
   telegramChatId: undefined,
-  ...overrides
+  ...overrides,
+  observerEnabled: overrides.observerEnabled ?? false
 });
 
 const createMemory = (overrides: Partial<Memory> = {}): Memory => ({

@@ -14,6 +14,7 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
+    VEGA_OBSERVER_ENABLED: process.env.VEGA_OBSERVER_ENABLED,
     VEGA_API_PORT: process.env.VEGA_API_PORT,
     VEGA_API_KEY: process.env.VEGA_API_KEY,
     VEGA_MODE: process.env.VEGA_MODE,
@@ -31,6 +32,7 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_TOKEN_BUDGET;
   delete process.env.VEGA_SIMILARITY_THRESHOLD;
   delete process.env.VEGA_BACKUP_RETENTION_DAYS;
+  delete process.env.VEGA_OBSERVER_ENABLED;
   delete process.env.VEGA_API_PORT;
   delete process.env.VEGA_API_KEY;
   delete process.env.VEGA_MODE;
@@ -55,6 +57,7 @@ test("loadConfig returns the documented defaults", () => {
     cacheDbPath: join(homedir(), ".vega", "cache.db"),
     telegramBotToken: undefined,
     telegramChatId: undefined,
+    observerEnabled: false,
     cloudBackup: undefined
   });
 
@@ -69,6 +72,7 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
+    VEGA_OBSERVER_ENABLED: process.env.VEGA_OBSERVER_ENABLED,
     VEGA_API_PORT: process.env.VEGA_API_PORT,
     VEGA_API_KEY: process.env.VEGA_API_KEY,
     VEGA_MODE: process.env.VEGA_MODE,
@@ -86,6 +90,7 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_TOKEN_BUDGET = "4096";
   process.env.VEGA_SIMILARITY_THRESHOLD = "0.91";
   process.env.VEGA_BACKUP_RETENTION_DAYS = "14";
+  process.env.VEGA_OBSERVER_ENABLED = "true";
   process.env.VEGA_API_PORT = "4321";
   process.env.VEGA_API_KEY = "super-secret";
   process.env.VEGA_MODE = "client";
@@ -111,6 +116,7 @@ test("loadConfig reads overrides from process.env", () => {
     cacheDbPath: "/tmp/vega-cache.db",
     telegramBotToken: "bot-token",
     telegramChatId: "chat-id",
+    observerEnabled: true,
     encryptionKey:
       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     cloudBackup: {
@@ -128,12 +134,14 @@ test("loadConfig clamps invalid numeric values", () => {
     VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
+    VEGA_OBSERVER_ENABLED: process.env.VEGA_OBSERVER_ENABLED,
     VEGA_API_PORT: process.env.VEGA_API_PORT
   };
 
   process.env.VEGA_TOKEN_BUDGET = "100";
   process.env.VEGA_SIMILARITY_THRESHOLD = "1.5";
   process.env.VEGA_BACKUP_RETENTION_DAYS = "999";
+  process.env.VEGA_OBSERVER_ENABLED = "not-a-bool";
   process.env.VEGA_API_PORT = "not-a-number";
 
   const config = loadConfig();

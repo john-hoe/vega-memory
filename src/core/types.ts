@@ -161,6 +161,13 @@ export interface DiagnoseReport {
   can_auto_fix: boolean;
 }
 
+export interface ExtractionCandidate {
+  type: MemoryType;
+  title: string;
+  content: string;
+  tags: string[];
+}
+
 export interface StoreParams {
   content: string;
   type: MemoryType;
@@ -220,4 +227,12 @@ export type HealthInfo = HealthReport | { status: "offline" };
 export interface CompactResult {
   merged: number;
   archived: number;
+}
+
+export interface QualityScore {
+  accuracy: number;
+  freshness: number;
+  usefulness: number;
+  completeness: number;
+  overall: number;
 }

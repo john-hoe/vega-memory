@@ -1,4 +1,5 @@
 import { appendFileSync } from "node:fs";
+import { basename, resolve } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -35,6 +36,9 @@ const MEMORY_TYPES = [
 ] as const satisfies readonly MemoryType[];
 
 const MEMORY_SOURCES = ["auto", "explicit"] as const satisfies readonly MemorySource[];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const countMemories = (repository: Repository): number =>
   repository.listMemories({
@@ -100,9 +104,41 @@ const dbg = (msg: string) => {
   appendFileSync("/tmp/vega-mcp-debug.log", `${new Date().toISOString()} [server] ${msg}\n`);
 };
 
+const inferProjectFromInput = (input: unknown): string => {
+  if (!isRecord(input)) {
+    return "global";
+  }
+
+  if (typeof input.project === "string" && input.project.trim().length > 0) {
+    return input.project.trim();
+  }
+
+  if (
+    typeof input.working_directory === "string" &&
+    input.working_directory.trim().length > 0
+  ) {
+    return basename(resolve(input.working_directory));
+  }
+
+  return "global";
+};
+
 const runTool = async <T>(
   repository: Repository,
   operation: string,
+  input: unknown,
+  observer: {
+    enabled: boolean;
+    service?: {
+      shouldObserve(toolName: string): boolean;
+      observeToolOutput(
+        toolName: string,
+        input: unknown,
+        output: unknown,
+        project: string
+      ): Promise<string | null>;
+    };
+  },
   execute: () => Promise<{ result: T; resultCount: number }>
 ): Promise<CallToolResult> => {
   dbg(`runTool called: ${operation}`);
@@ -112,9 +148,39 @@ const runTool = async <T>(
   try {
     const executed = await execute();
     resultCount = executed.resultCount;
+    if (
+      observer.enabled &&
+      observer.service !== undefined &&
+      observer.service.shouldObserve(operation)
+    ) {
+      await observer.service.observeToolOutput(
+        operation,
+        input,
+        executed.result,
+        inferProjectFromInput(input)
+      );
+    }
     dbg(`runTool ${operation} OK in ${Date.now() - startedAt}ms`);
     return toTextResult(executed.result);
   } catch (error) {
+    if (
+      observer.enabled &&
+      observer.service !== undefined &&
+      observer.service.shouldObserve(operation)
+    ) {
+      await observer.service.observeToolOutput(
+        operation,
+        input,
+        error instanceof Error
+          ? {
+              error: error.message
+            }
+          : {
+              error: String(error)
+            },
+        inferProjectFromInput(input)
+      );
+    }
     dbg(`runTool ${operation} ERROR: ${error}`);
     return toTextResult(
       {
@@ -157,6 +223,24 @@ export interface CreateMCPServerOptions {
   compactService: {
     compact(project?: string): CompactResult | Promise<CompactResult>;
   };
+  compressionService?: {
+    compressMemory(
+      memoryId: string
+    ): Promise<{ original_length: number; compressed_length: number }>;
+    compressBatch(
+      project?: string,
+      minLength?: number
+    ): Promise<{ processed: number; compressed: number; saved_chars: number }>;
+  };
+  observerService?: {
+    shouldObserve(toolName: string): boolean;
+    observeToolOutput(
+      toolName: string,
+      input: unknown,
+      output: unknown,
+      project: string
+    ): Promise<string | null>;
+  };
   config: VegaConfig;
   healthProvider?: () => Promise<HealthInfo>;
 }
@@ -168,6 +252,8 @@ export function createMCPServer({
   recallService,
   sessionService,
   compactService,
+  compressionService,
+  observerService,
   config,
   healthProvider
 }: CreateMCPServerOptions): McpServer {
@@ -176,6 +262,10 @@ export function createMCPServer({
     version: "0.1.0"
   });
   const diagnoseService = new DiagnoseService(repository, config);
+  const observer = {
+    enabled: config.observerEnabled,
+    service: observerService
+  };
 
   server.tool(
     "memory_graph",
@@ -185,7 +275,7 @@ export function createMCPServer({
       depth: z.number().int().min(0).default(1)
     },
     async (args) =>
-      runTool(repository, "memory_graph", async () => {
+      runTool(repository, "memory_graph", args, observer, async () => {
         const result = await Promise.resolve(graphService.query(args.entity, args.depth));
 
         return {
@@ -208,7 +298,7 @@ export function createMCPServer({
       source: z.enum(MEMORY_SOURCES).default("auto")
     },
     async (args) =>
-      runTool(repository, "memory_store", async () => {
+      runTool(repository, "memory_store", args, observer, async () => {
         const result = await memoryService.store({
           ...args,
           project: args.project ?? "global"
@@ -232,7 +322,7 @@ export function createMCPServer({
       min_similarity: z.number().min(0).max(1).default(0.3)
     },
     async (args) =>
-      runTool(repository, "memory_recall", async () => {
+      runTool(repository, "memory_recall", args, observer, async () => {
         const result = await recallService.recall(args.query, {
           project: args.project,
           type: args.type,
@@ -264,7 +354,7 @@ export function createMCPServer({
       sort: z.string().trim().min(1).optional()
     },
     async (args) =>
-      runTool(repository, "memory_list", async () => {
+      runTool(repository, "memory_list", args, observer, async () => {
         const result = await Promise.resolve(recallService.listMemories({
           project: args.project,
           type: args.type,
@@ -289,7 +379,7 @@ export function createMCPServer({
       tags: z.array(z.string().trim().min(1)).optional()
     },
     async (args) =>
-      runTool(repository, "memory_update", async () => {
+      runTool(repository, "memory_update", args, observer, async () => {
         await memoryService.update(args.id, {
           content: args.content,
           importance: args.importance,
@@ -313,7 +403,7 @@ export function createMCPServer({
       id: z.string().trim().min(1)
     },
     async (args) =>
-      runTool(repository, "memory_delete", async () => {
+      runTool(repository, "memory_delete", args, observer, async () => {
         await memoryService.delete(args.id);
 
         return {
@@ -334,7 +424,7 @@ export function createMCPServer({
       task_hint: z.string().trim().min(1).optional()
     },
     async (args) =>
-      runTool(repository, "session_start", async () => {
+      runTool(repository, "session_start", args, observer, async () => {
         const result = await sessionService.sessionStart(
           args.working_directory,
           args.task_hint
@@ -356,7 +446,7 @@ export function createMCPServer({
       completed_tasks: z.array(z.string().trim().min(1)).optional()
     },
     async (args) =>
-      runTool(repository, "session_end", async () => {
+      runTool(repository, "session_end", args, observer, async () => {
         await sessionService.sessionEnd(args.project, args.summary, args.completed_tasks);
 
         return {
@@ -374,7 +464,7 @@ export function createMCPServer({
     "Return basic Vega Memory health information.",
     {},
     async () =>
-      runTool(repository, "memory_health", async () => {
+      runTool(repository, "memory_health", {}, observer, async () => {
         const result =
           healthProvider === undefined
             ? await getHealthReport(repository, config)
@@ -394,7 +484,7 @@ export function createMCPServer({
       issue: z.string().trim().min(1).optional()
     },
     async (args) =>
-      runTool(repository, "memory_diagnose", async () => {
+      runTool(repository, "memory_diagnose", args, observer, async () => {
         const result = await diagnoseService.diagnose(args.issue);
 
         return {
@@ -411,7 +501,7 @@ export function createMCPServer({
       project: z.string().trim().min(1).optional()
     },
     async (args) =>
-      runTool(repository, "memory_compact", async () => {
+      runTool(repository, "memory_compact", args, observer, async () => {
         const result = await Promise.resolve(compactService.compact(args.project));
 
         return {
@@ -420,6 +510,35 @@ export function createMCPServer({
         };
       })
   );
+
+  if (compressionService !== undefined) {
+    server.tool(
+      "memory_compress",
+      "Compress one memory or a batch of long memories with Ollama.",
+      {
+        memory_id: z.string().trim().min(1).optional(),
+        project: z.string().trim().min(1).optional()
+      },
+      async (args) =>
+        runTool(repository, "memory_compress", args, observer, async () => {
+          if (args.memory_id) {
+            const result = await compressionService.compressMemory(args.memory_id);
+
+            return {
+              result: result as Record<string, unknown>,
+              resultCount: result.compressed_length < result.original_length ? 1 : 0
+            };
+          }
+
+          const result = await compressionService.compressBatch(args.project);
+
+          return {
+            result: result as Record<string, unknown>,
+            resultCount: result.compressed
+          };
+        })
+    );
+  }
 
   return server;
 }

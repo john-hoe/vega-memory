@@ -47,7 +47,8 @@ const createHarness = () => {
     serverUrl: undefined,
     cacheDbPath: join(tempDir, "cache.db"),
     telegramBotToken: undefined,
-    telegramChatId: undefined
+    telegramChatId: undefined,
+    observerEnabled: false,
   };
   const repository = new Repository(dbPath);
   const diagnoseService = new DiagnoseService(repository, config);

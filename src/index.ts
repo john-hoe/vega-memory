@@ -5,8 +5,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { loadConfig } from "./config.js";
 import { CompactService } from "./core/compact.js";
+import { CompressionService } from "./core/compression.js";
 import { KnowledgeGraphService } from "./core/knowledge-graph.js";
 import { MemoryService } from "./core/memory.js";
+import { ObserverService } from "./core/observer.js";
 import { RecallService } from "./core/recall.js";
 import { SessionService } from "./core/session.js";
 import { Repository } from "./db/repository.js";
@@ -101,6 +103,8 @@ async function main(): Promise<void> {
             config
           );
           const compactService = new CompactService(repository, config);
+          const compressionService = new CompressionService(repository, config);
+          const observerService = new ObserverService(memoryService, config);
 
           return {
             repository,
@@ -108,7 +112,9 @@ async function main(): Promise<void> {
             memoryService,
             recallService,
             sessionService,
-            compactService
+            compactService,
+            compressionService,
+            observerService
           };
         })();
   const server = createMCPServer({

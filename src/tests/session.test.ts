@@ -27,7 +27,8 @@ const baseConfig: VegaConfig = {
   serverUrl: undefined,
   cacheDbPath: "./data/cache.db",
   telegramBotToken: undefined,
-  telegramChatId: undefined
+  telegramChatId: undefined,
+  observerEnabled: false,
 };
 
 const createStoredMemory = (

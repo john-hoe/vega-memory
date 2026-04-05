@@ -88,7 +88,8 @@ const createSchedulerApiHarness = (apiKey?: string) => {
     serverUrl: undefined,
     cacheDbPath: join(tempDir, "cache.db"),
     telegramBotToken: undefined,
-    telegramChatId: undefined
+    telegramChatId: undefined,
+    observerEnabled: false,
   };
   const repository = new Repository(config.dbPath);
   const searchEngine = new SearchEngine(repository, config);
@@ -196,7 +197,8 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
     serverUrl: undefined,
     cacheDbPath: "./data/cache.db",
     telegramBotToken: undefined,
-    telegramChatId: undefined
+    telegramChatId: undefined,
+    observerEnabled: false,
   };
   const repository = new Repository(dbPath);
   const compactService = new CompactService(repository, config);
@@ -249,7 +251,8 @@ test(
       serverUrl: undefined,
       cacheDbPath: "./data/cache.db",
       telegramBotToken: undefined,
-      telegramChatId: undefined
+      telegramChatId: undefined,
+      observerEnabled: false,
     };
     const repository = new Repository(dbPath);
     const compactService = new CompactService(repository, config);
@@ -295,7 +298,8 @@ test("weeklyHealthReport writes integrity and memory count details", async () =>
     serverUrl: undefined,
     cacheDbPath: "./data/cache.db",
     telegramBotToken: undefined,
-    telegramChatId: undefined
+    telegramChatId: undefined,
+    observerEnabled: false,
   };
   const repository = new Repository(dbPath);
 

@@ -15,6 +15,7 @@ export interface VegaConfig {
   tokenBudget: number;
   similarityThreshold: number;
   backupRetentionDays: number;
+  observerEnabled: boolean;
   apiPort: number;
   apiKey: string | undefined;
   mode: "server" | "client";
@@ -63,6 +64,15 @@ const parseOptionalString = (value: unknown): string | undefined => {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 };
 
 const getConfigFilePath = (): string => join(homedir(), ".vega", "config.json");
@@ -123,6 +133,7 @@ export const loadConfig = (): VegaConfig => {
       1,
       365
     ),
+    observerEnabled: parseBoolean(process.env.VEGA_OBSERVER_ENABLED, false),
     apiPort: parseNumber(process.env.VEGA_API_PORT, 3271),
     apiKey: process.env.VEGA_API_KEY || fileConfig.apiKey || undefined,
     mode: parseMode(process.env.VEGA_MODE ?? fileConfig.mode),

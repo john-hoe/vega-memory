@@ -54,7 +54,8 @@ const baseConfig: VegaConfig = {
   serverUrl: undefined,
   cacheDbPath: "./data/cache.db",
   telegramBotToken: undefined,
-  telegramChatId: undefined
+  telegramChatId: undefined,
+  observerEnabled: false,
 };
 
 test("BruteForceEngine returns results sorted by similarity", () => {

@@ -5,8 +5,20 @@ const AVAILABILITY_TIMEOUT_MS = 3_000;
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 1_000;
 
+export interface OllamaChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
 interface OllamaEmbedResponse {
   embeddings?: unknown;
+}
+
+interface OllamaChatResponse {
+  message?: {
+    content?: unknown;
+  };
+  response?: unknown;
 }
 
 const sleep = async (delayMs: number): Promise<void> =>
@@ -108,6 +120,48 @@ export const isOllamaAvailable = async (config: VegaConfig): Promise<boolean> =>
     return response.status === 200;
   } catch {
     return false;
+  }
+};
+
+export const chatWithOllama = async (
+  messages: OllamaChatMessage[],
+  config: VegaConfig,
+  timeoutMs = 30_000
+): Promise<string | null> => {
+  const url = `${config.ollamaBaseUrl.replace(/\/+$/, "")}/api/chat`;
+
+  try {
+    const response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          model: config.ollamaModel,
+          stream: false,
+          messages
+        })
+      },
+      timeoutMs
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const body = (await response.json()) as OllamaChatResponse;
+    const content =
+      typeof body.message?.content === "string"
+        ? body.message.content
+        : typeof body.response === "string"
+          ? body.response
+          : null;
+
+    return content?.trim() || null;
+  } catch {
+    return null;
   }
 };
 

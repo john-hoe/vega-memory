@@ -5,6 +5,8 @@ import { v4 as uuidv4 } from "uuid";
 
 import type { VegaConfig } from "../config.js";
 import { Repository } from "../db/repository.js";
+import { isOllamaAvailable } from "../embedding/ollama.js";
+import { ExtractionService } from "./extraction.js";
 import { MemoryService } from "./memory.js";
 import { RecallService } from "./recall.js";
 import { exportSnapshot } from "./snapshot.js";
@@ -66,13 +68,16 @@ const dedupeRelevantResults = (results: SearchResult[]): SearchResult[] => {
 
 export class SessionService {
   private readonly sessionStartTimes = new Map<string, string>();
+  private readonly extractionService: ExtractionService;
 
   constructor(
     private readonly repository: Repository,
     private readonly memoryService: MemoryService,
     private readonly recallService: RecallService,
     private readonly config: VegaConfig
-  ) {}
+  ) {
+    this.extractionService = new ExtractionService(config);
+  }
 
   async sessionStart(workingDirectory: string, taskHint?: string): Promise<SessionStartResult> {
     const project = this.inferProject(workingDirectory);
@@ -231,20 +236,44 @@ export class SessionService {
     }
 
     const memories_created: string[] = [];
+    const ollamaAvailable = await isOllamaAvailable(this.config);
+    const extracted = ollamaAvailable
+      ? await this.extractionService.extractMemories(summary, project)
+      : [];
 
-    for (const sentence of splitSentences(summary)) {
-      for (const { type, pattern } of AUTO_EXTRACT_PATTERNS) {
-        if (!pattern.test(sentence)) {
-          continue;
-        }
-
+    if (extracted.length > 0) {
+      for (const candidate of extracted) {
         const stored = await this.memoryService.store({
-          content: sentence,
-          type,
+          content: candidate.content,
+          type: candidate.type,
           project,
+          title: candidate.title,
+          tags: candidate.tags,
           source: "auto"
         });
-        memories_created.push(stored.id);
+
+        if (stored.id) {
+          memories_created.push(stored.id);
+        }
+      }
+    } else {
+      for (const sentence of splitSentences(summary)) {
+        for (const { type, pattern } of AUTO_EXTRACT_PATTERNS) {
+          if (!pattern.test(sentence)) {
+            continue;
+          }
+
+          const stored = await this.memoryService.store({
+            content: sentence,
+            type,
+            project,
+            source: "auto"
+          });
+
+          if (stored.id) {
+            memories_created.push(stored.id);
+          }
+        }
       }
     }
 
