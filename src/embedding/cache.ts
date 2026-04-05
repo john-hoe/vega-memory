@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
-const hashText = (text: string): string => createHash("sha256").update(text).digest("hex");
+const createKey = (text: string, namespace: string): string =>
+  createHash("sha256")
+    .update(namespace)
+    .update("\u0000")
+    .update(text)
+    .digest("hex");
 
 export class EmbeddingCache {
   private readonly entries = new Map<string, Float32Array>();
@@ -9,8 +14,8 @@ export class EmbeddingCache {
 
   constructor(private readonly maxSize = 1000) {}
 
-  get(text: string): Float32Array | undefined {
-    const key = hashText(text);
+  get(text: string, namespace = ""): Float32Array | undefined {
+    const key = createKey(text, namespace);
     const cached = this.entries.get(key);
 
     if (!cached) {
@@ -24,8 +29,8 @@ export class EmbeddingCache {
     return new Float32Array(cached);
   }
 
-  set(text: string, embedding: Float32Array): void {
-    const key = hashText(text);
+  set(text: string, embedding: Float32Array, namespace = ""): void {
+    const key = createKey(text, namespace);
     const nextValue = new Float32Array(embedding);
 
     if (this.entries.has(key)) {

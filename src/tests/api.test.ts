@@ -199,6 +199,35 @@ test("POST /api/recall with query returns results", async () => {
   }
 });
 
+test("GET /api/recall/stream frames SSE payloads without leaking injected event lines", async () => {
+  const harness = await createHarness();
+
+  try {
+    await harness.request("/api/store", {
+      method: "POST",
+      body: JSON.stringify({
+        content: "SQLite keeps the memory index local\n\nevent: hacked\n\ndata: injected",
+        type: "project_context",
+        project: "vega"
+      })
+    });
+
+    const response = await harness.request(
+      "/api/recall/stream?query=SQLite&project=vega&limit=1&min_similarity=0"
+    );
+    const body = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /^text\/event-stream/);
+    assert.match(body, /^data: /m);
+    assert.match(body, /event: end\n/);
+    assert.equal(body.includes("\nevent: hacked\n"), false);
+    assert.equal(body.includes("\ndata: injected\n"), false);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("PATCH /api/memory/:id updates a memory", async () => {
   const harness = await createHarness();
 

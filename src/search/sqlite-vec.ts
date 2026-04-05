@@ -9,6 +9,44 @@ const toFloat32Array = (embedding: Buffer): Float32Array =>
 
 const toVectorJson = (values: Float32Array): string => JSON.stringify(Array.from(values));
 
+const supportsOptions = (result: SearchResult, options: SearchOptions): boolean => {
+  if (
+    options.project &&
+    result.memory.project !== options.project &&
+    result.memory.scope !== "global"
+  ) {
+    return false;
+  }
+
+  if (options.type && result.memory.type !== options.type) {
+    return false;
+  }
+
+  return result.similarity >= options.minSimilarity;
+};
+
+const getDominantDimension = (vectors: Float32Array[]): number | null => {
+  const counts = new Map<number, number>();
+  let dominantDimension: number | null = null;
+  let dominantCount = 0;
+
+  for (const vector of vectors) {
+    if (vector.length === 0) {
+      continue;
+    }
+
+    const nextCount = (counts.get(vector.length) ?? 0) + 1;
+    counts.set(vector.length, nextCount);
+
+    if (dominantDimension === null || nextCount > dominantCount) {
+      dominantDimension = vector.length;
+      dominantCount = nextCount;
+    }
+  }
+
+  return dominantDimension;
+};
+
 const getExtensionCandidates = (): string[] => {
   const suffix = process.platform === "win32" ? ".dll" : process.platform === "darwin" ? ".dylib" : ".so";
 
@@ -98,7 +136,7 @@ export class SqliteVecEngine {
         ...entry,
         vector: toFloat32Array(entry.embedding)
       }));
-    const dimension = candidates[0]?.vector.length ?? null;
+    const dimension = getDominantDimension(candidates.map((entry) => entry.vector));
     const usableCandidates =
       dimension === null
         ? []
@@ -107,7 +145,7 @@ export class SqliteVecEngine {
     this.repository.db.exec(`DROP TABLE IF EXISTS temp.${this.indexTableName}`);
     this.indexSignature = signature;
     this.indexedCandidates = usableCandidates;
-    this.indexDimension = usableCandidates[0]?.vector.length ?? null;
+    this.indexDimension = dimension;
     this.indexedCount = usableCandidates.length;
 
     if (usableCandidates.length === 0 || dimension === null) {
@@ -151,47 +189,44 @@ export class SqliteVecEngine {
     if (this.createIndex() === 0 || this.indexDimension !== queryEmbedding.length) {
       return [];
     }
-    const queryStatement = this.repository.db.prepare<[string, number], { rowid: number; distance: number }>(
+    const queryStatement = this.repository.db.prepare<[string, number, number], { rowid: number; distance: number }>(
       `SELECT rowid, distance
        FROM temp.${this.indexTableName}
        WHERE embedding MATCH ?
        ORDER BY distance
-       LIMIT ?`
+       LIMIT ? OFFSET ?`
     );
-    const queryLimit = Math.max(options.limit * 4, options.limit);
+    const batchSize = Math.max(options.limit * 4, 32);
+    const results: SearchResult[] = [];
 
-    return queryStatement
-      .all(toVectorJson(queryEmbedding), queryLimit)
-      .map(({ rowid }) => {
+    for (let offset = 0; offset < this.indexedCount; offset += batchSize) {
+      const batch = queryStatement.all(toVectorJson(queryEmbedding), batchSize, offset);
+
+      if (batch.length === 0) {
+        break;
+      }
+
+      for (const { rowid } of batch) {
         const candidate = this.indexedCandidates[rowid - 1];
 
         if (!candidate) {
-          return null;
+          continue;
         }
 
-        return {
+        const result: SearchResult = {
           memory: candidate.memory,
           similarity: cosineSimilarity(queryEmbedding, candidate.vector),
           finalScore: 0
         };
-      })
-      .filter((result): result is SearchResult => result !== null)
-      .filter((result) => {
-        if (
-          options.project &&
-          result.memory.project !== options.project &&
-          result.memory.scope !== "global"
-        ) {
-          return false;
+
+        if (!supportsOptions(result, options)) {
+          continue;
         }
 
-        if (options.type && result.memory.type !== options.type) {
-          return false;
-        }
+        results.push(result);
+      }
+    }
 
-        return result.similarity >= options.minSimilarity;
-      })
-      .sort((left, right) => right.similarity - left.similarity)
-      .slice(0, options.limit);
+    return results.sort((left, right) => right.similarity - left.similarity).slice(0, options.limit);
   }
 }

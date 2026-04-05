@@ -46,13 +46,12 @@ export class StreamingSearch {
   ): AsyncGenerator<SearchResult> {
     const bm25Results = this.repository.searchFTS(query, options.project, options.type, true);
     this.lastBm25ResultCount = bm25Results.length;
-    const emittedIds = new Set<string>();
-    let emittedCount = 0;
+    const vectorResults: SearchResult[] = [];
 
     if (queryEmbedding !== null) {
       const totalEmbeddings = this.repository.countEmbeddings(options.project, options.type, true);
 
-      for (let offset = 0; offset < totalEmbeddings && emittedCount < options.limit; offset += CHUNK_SIZE) {
+      for (let offset = 0; offset < totalEmbeddings; offset += CHUNK_SIZE) {
         const chunk = this.repository.getEmbeddingChunk(
           offset,
           CHUNK_SIZE,
@@ -60,44 +59,22 @@ export class StreamingSearch {
           options.type,
           true
         );
-        const vectorResults = chunk
+        const chunkResults = chunk
           .map(({ embedding, memory }) => ({
             memory,
             similarity: cosineSimilarity(queryEmbedding, toFloat32Array(embedding)),
             finalScore: 0
           }))
           .filter((result) => result.similarity >= options.minSimilarity);
-        const chunkBm25Results = bm25Results.filter((result) =>
-          vectorResults.some((candidate) => candidate.memory.id === result.memory.id)
-        );
-        const rankedChunk = rankResults(hybridSearch(vectorResults, chunkBm25Results));
-
-        for (const result of rankedChunk) {
-          if (emittedIds.has(result.memory.id)) {
-            continue;
-          }
-
-          emittedIds.add(result.memory.id);
-          emittedCount += 1;
-          yield result;
-
-          if (emittedCount >= options.limit) {
-            return;
-          }
-        }
+        vectorResults.push(...chunkResults);
 
         await Promise.resolve();
       }
     }
 
-    const remainingBm25Results = bm25Results.filter((result) => !emittedIds.has(result.memory.id));
-    for (const result of rankResults(hybridSearch([], remainingBm25Results))) {
-      emittedCount += 1;
+    const rankedResults = rankResults(hybridSearch(vectorResults, bm25Results)).slice(0, options.limit);
+    for (const result of rankedResults) {
       yield result;
-
-      if (emittedCount >= options.limit) {
-        return;
-      }
     }
   }
 }

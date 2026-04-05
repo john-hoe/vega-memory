@@ -25,8 +25,13 @@ export class RelevanceTuner {
     const totalLatency = recallLogs.reduce((sum, entry) => sum + entry.latency_ms, 0);
     const totalResults = recallLogs.reduce((sum, entry) => sum + entry.result_count, 0);
     const zeroResultCount = recallLogs.filter((entry) => entry.result_count === 0).length;
+    const similarityLogs = recallLogs.filter(
+      (entry): entry is typeof entry & { avg_similarity: number } => typeof entry.avg_similarity === "number"
+    );
     const avgSimilarity =
-      recallLogs.reduce((sum, entry) => sum + (entry.avg_similarity ?? 0), 0) / recallLogs.length;
+      similarityLogs.length === 0
+        ? 0
+        : similarityLogs.reduce((sum, entry) => sum + entry.avg_similarity, 0) / similarityLogs.length;
     const typeDistribution = recallLogs.reduce<SearchQualityReport["type_distribution"]>(
       (distribution, entry) => {
         for (const type of entry.result_types ?? []) {
@@ -42,7 +47,7 @@ export class RelevanceTuner {
     if (zeroResultCount / recallLogs.length >= 0.25) {
       recommendations.push("Zero-result recalls are high. Lower the similarity threshold.");
     }
-    if (avgSimilarity < 0.35) {
+    if (similarityLogs.length > 0 && avgSimilarity < 0.35) {
       recommendations.push("Average recall similarity is low. Increase BM25 influence or improve embeddings.");
     }
     if (Object.keys(typeDistribution).length <= 1) {

@@ -213,6 +213,14 @@ function arraysEqual(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function normalizePositiveInteger(value: number, fallback: number): number {
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function normalizeNonNegativeInteger(value: number): number {
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
 export class Repository {
   readonly db: BetterSqlite3.Database;
 
@@ -568,6 +576,12 @@ export class Repository {
     type?: string,
     includeGlobal = false
   ): { id: string; embedding: Buffer; memory: Memory }[] {
+    const safeOffset = normalizeNonNegativeInteger(offset);
+    const safeLimit = normalizePositiveInteger(limit, 0);
+    if (safeLimit === 0) {
+      return [];
+    }
+
     const clauses: string[] = [];
     const params: unknown[] = [];
     appendScopedClauses(clauses, params, project, type, includeGlobal, true);
@@ -579,7 +593,7 @@ export class Repository {
          ORDER BY updated_at DESC
          LIMIT ? OFFSET ?`
       )
-      .all(...params, limit, offset);
+      .all(...params, safeLimit, safeOffset);
 
     return rows.map((row) => ({
       id: row.id,
@@ -847,7 +861,10 @@ export class Repository {
 
   getRecentPerformanceLogs(limit = 100, operations?: string | string[]): PerformanceLog[] {
     const operationList =
-      operations === undefined ? [] : Array.isArray(operations) ? operations : [operations];
+      (operations === undefined ? [] : Array.isArray(operations) ? operations : [operations])
+        .map((operation) => operation.trim())
+        .filter((operation) => operation.length > 0);
+    const safeLimit = normalizePositiveInteger(limit, 100);
     const params: unknown[] = [];
     const where =
       operationList.length === 0
@@ -862,7 +879,7 @@ export class Repository {
          ORDER BY timestamp DESC
          LIMIT ?`
       )
-      .all(...operationList, limit);
+      .all(...operationList, safeLimit);
 
     return rows.map(mapPerformanceLog);
   }

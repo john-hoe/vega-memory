@@ -111,6 +111,19 @@ test("ShardManager.getOrCreateShard creates and caches shard repositories", () =
   }
 });
 
+test("ShardManager rejects shard path traversal attempts", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-shards-validate-"));
+  const shardManager = new ShardManager(tempDir);
+
+  try {
+    assert.throws(() => shardManager.getShardPath("../escape"), /Invalid project shard name/);
+    assert.throws(() => shardManager.getOrCreateShard("nested/escape"), /Invalid project shard name/);
+  } finally {
+    shardManager.closeAll();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("ShardManager.listShards returns shard file names", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-shards-list-"));
   const shardManager = new ShardManager(tempDir);
@@ -168,6 +181,49 @@ test("StreamingSearch yields results progressively", async () => {
   }
 });
 
+test("StreamingSearch ranks across all chunks before applying limit", async () => {
+  const repository = new Repository(":memory:");
+  const streamingSearch = new StreamingSearch(repository, baseConfig);
+
+  try {
+    for (let index = 0; index < 120; index += 1) {
+      repository.createMemory(
+        createMemory(`recent-${index}`, {
+          embedding: createEmbeddingBuffer([0, 1]),
+          updated_at: `2026-04-05T${String(index % 10).padStart(2, "0")}:00:00.000Z`,
+          accessed_at: "2026-04-05T00:00:00.000Z"
+        })
+      );
+    }
+
+    repository.createMemory(
+      createMemory("older-exact-match", {
+        embedding: createEmbeddingBuffer([1, 0]),
+        updated_at: "2026-04-01T00:00:00.000Z",
+        accessed_at: "2026-04-01T00:00:00.000Z"
+      })
+    );
+
+    const results: string[] = [];
+
+    for await (const result of streamingSearch.searchStream(
+      "semantic query",
+      new Float32Array([1, 0]),
+      {
+        project: "vega",
+        limit: 1,
+        minSimilarity: 0
+      }
+    )) {
+      results.push(result.memory.id);
+    }
+
+    assert.deepEqual(results, ["older-exact-match"]);
+  } finally {
+    repository.close();
+  }
+});
+
 test("RelevanceTuner.analyzeSearchQuality returns a populated report", () => {
   const repository = new Repository(":memory:");
   const tuner = new RelevanceTuner(repository);
@@ -212,6 +268,45 @@ test("RelevanceTuner.analyzeSearchQuality returns a populated report", () => {
     assert.equal(report.type_distribution.decision, 2);
     assert.equal(report.type_distribution.insight, 1);
     assert.ok(report.recommendations.length > 0);
+  } finally {
+    repository.close();
+  }
+});
+
+test("RelevanceTuner ignores missing similarity samples for low-similarity guidance", () => {
+  const repository = new Repository(":memory:");
+  const tuner = new RelevanceTuner(repository);
+
+  try {
+    repository.logPerformance({
+      timestamp: "2026-04-05T00:00:00.000Z",
+      operation: "recall",
+      latency_ms: 50,
+      memory_count: 10,
+      result_count: 0,
+      avg_similarity: null,
+      result_types: [],
+      bm25_result_count: 0
+    });
+    repository.logPerformance({
+      timestamp: "2026-04-05T00:01:00.000Z",
+      operation: "recall",
+      latency_ms: 75,
+      memory_count: 10,
+      result_count: 2,
+      avg_similarity: 0.92,
+      result_types: ["decision", "insight"],
+      bm25_result_count: 1
+    });
+
+    const report = tuner.analyzeSearchQuality();
+
+    assert.equal(
+      report.recommendations.includes(
+        "Average recall similarity is low. Increase BM25 influence or improve embeddings."
+      ),
+      false
+    );
   } finally {
     repository.close();
   }

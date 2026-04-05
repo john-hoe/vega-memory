@@ -6,6 +6,11 @@ const AVAILABILITY_TIMEOUT_MS = 3_000;
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 1_000;
 
+const normalizeBaseUrl = (value: string): string => value.replace(/\/+$/, "");
+
+const getEmbeddingCacheNamespace = (config: VegaConfig): string =>
+  `${normalizeBaseUrl(config.ollamaBaseUrl)}\u0000${config.ollamaModel}`;
+
 export interface OllamaChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -65,12 +70,13 @@ export const generateEmbedding = async (
   text: string,
   config: VegaConfig
 ): Promise<Float32Array | null> => {
-  const cached = embeddingCache.get(text);
+  const cacheNamespace = getEmbeddingCacheNamespace(config);
+  const cached = embeddingCache.get(text, cacheNamespace);
   if (cached !== undefined) {
     return cached;
   }
 
-  const url = `${config.ollamaBaseUrl.replace(/\/+$/, "")}/api/embed`;
+  const url = `${normalizeBaseUrl(config.ollamaBaseUrl)}/api/embed`;
 
   for (let attempt = 0; attempt < RETRY_ATTEMPTS; attempt += 1) {
     try {
@@ -97,7 +103,7 @@ export const generateEmbedding = async (
       const embedding = parseEmbedding(body.embeddings);
 
       if (embedding !== null) {
-        embeddingCache.set(text, embedding);
+        embeddingCache.set(text, embedding, cacheNamespace);
         return embedding;
       }
 
@@ -113,7 +119,7 @@ export const generateEmbedding = async (
 };
 
 export const isOllamaAvailable = async (config: VegaConfig): Promise<boolean> => {
-  const url = `${config.ollamaBaseUrl.replace(/\/+$/, "")}/api/version`;
+  const url = `${normalizeBaseUrl(config.ollamaBaseUrl)}/api/version`;
 
   try {
     const response = await fetchWithTimeout(
@@ -135,7 +141,7 @@ export const chatWithOllama = async (
   config: VegaConfig,
   timeoutMs = 30_000
 ): Promise<string | null> => {
-  const url = `${config.ollamaBaseUrl.replace(/\/+$/, "")}/api/chat`;
+  const url = `${normalizeBaseUrl(config.ollamaBaseUrl)}/api/chat`;
 
   try {
     const response = await fetchWithTimeout(

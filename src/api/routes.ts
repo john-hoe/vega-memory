@@ -1,4 +1,4 @@
-import { Router, type RequestHandler } from "express";
+import { Router, type RequestHandler, type Response } from "express";
 
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
@@ -83,6 +83,24 @@ const serializeSearchResult = (result: SearchResult) => ({
   similarity: result.similarity,
   finalScore: result.finalScore
 });
+
+const flushResponse = (res: Response): void => {
+  (res as Response & { flush?: () => void }).flush?.();
+};
+
+const writeSseEvent = (res: Response, data: unknown, event?: "end" | "error"): void => {
+  if (event) {
+    res.write(`event: ${event}\n`);
+  }
+
+  const lines = JSON.stringify(data).split(/\r\n|\r|\n/u);
+  for (const line of lines) {
+    res.write(`data: ${line}\n`);
+  }
+
+  res.write("\n");
+  flushResponse(res);
+};
 
 const getErrorResponse = (error: unknown): { status: number; message: string } => {
   if (error instanceof ApiError) {
@@ -322,38 +340,45 @@ export function createRouter(services: APIRouterServices): Router {
           ) ?? 0.3
       };
       let closed = false;
-
-      req.on("close", () => {
+      const markClosed = (): void => {
         closed = true;
-      });
+      };
+
+      req.on("close", markClosed);
+      res.on("close", markClosed);
 
       res.status(200);
       res.setHeader("content-type", "text/event-stream; charset=utf-8");
-      res.setHeader("cache-control", "no-cache");
+      res.setHeader("cache-control", "no-cache, no-transform");
       res.setHeader("connection", "keep-alive");
+      res.setHeader("x-accel-buffering", "no");
       res.flushHeaders();
+      flushResponse(res);
 
       void (async () => {
         try {
           for await (const result of services.recallService.recallStream(query, options)) {
-            if (closed) {
+            if (closed || res.writableEnded) {
               break;
             }
 
-            res.write(`data: ${JSON.stringify(serializeSearchResult(result))}\n\n`);
+            writeSseEvent(res, serializeSearchResult(result));
           }
 
-          if (!closed) {
-            res.write('event: end\ndata: {"done":true}\n\n');
+          if (!closed && !res.writableEnded) {
+            writeSseEvent(res, { done: true }, "end");
             res.end();
           }
         } catch (error: unknown) {
           const { message } = getErrorResponse(error);
 
-          if (!closed) {
-            res.write(`event: error\ndata: ${JSON.stringify({ error: message })}\n\n`);
+          if (!closed && !res.writableEnded) {
+            writeSseEvent(res, { error: message }, "error");
             res.end();
           }
+        } finally {
+          req.off("close", markClosed);
+          res.off("close", markClosed);
         }
       })();
     } catch (error: unknown) {

@@ -1,39 +1,61 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 import { Repository } from "./repository.js";
 
 export class ShardManager {
   private readonly shardDir: string;
+  private readonly shardRoot: string;
   private readonly repositories = new Map<string, Repository>();
 
   constructor(private readonly baseDir: string) {
     this.shardDir = join(baseDir, "shards");
-    mkdirSync(this.shardDir, { recursive: true });
+    this.shardRoot = resolve(this.shardDir);
+    mkdirSync(this.shardRoot, { recursive: true });
+  }
+
+  private resolveShardPath(project: string): string {
+    const normalizedProject = project.trim();
+
+    if (
+      normalizedProject.length === 0 ||
+      normalizedProject === "." ||
+      normalizedProject === ".." ||
+      /[\/\\\u0000]/u.test(normalizedProject)
+    ) {
+      throw new Error("Invalid project shard name");
+    }
+
+    const shardPath = resolve(this.shardRoot, `${normalizedProject}.db`);
+    if (!shardPath.startsWith(`${this.shardRoot}${sep}`)) {
+      throw new Error("Invalid project shard name");
+    }
+
+    return shardPath;
   }
 
   getShardPath(project: string): string {
-    return join(this.shardDir, `${project}.db`);
+    return this.resolveShardPath(project);
   }
 
   getOrCreateShard(project: string): Repository {
-    const cached = this.repositories.get(project);
+    const shardPath = this.resolveShardPath(project);
+    const cached = this.repositories.get(shardPath);
     if (cached) {
       return cached;
     }
 
-    const shardPath = this.getShardPath(project);
     if (!existsSync(shardPath)) {
-      mkdirSync(this.shardDir, { recursive: true });
+      mkdirSync(this.shardRoot, { recursive: true });
     }
 
     const repository = new Repository(shardPath);
-    this.repositories.set(project, repository);
+    this.repositories.set(shardPath, repository);
     return repository;
   }
 
   listShards(): string[] {
-    return readdirSync(this.shardDir)
+    return readdirSync(this.shardRoot)
       .filter((entry) => entry.endsWith(".db"))
       .sort((left, right) => left.localeCompare(right));
   }

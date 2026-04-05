@@ -106,3 +106,104 @@ test("SearchEngine falls back to BruteForceEngine when sqlite-vec unavailable", 
     repository.close();
   }
 });
+
+test("SqliteVecEngine.createIndex keeps the dominant embedding dimension", () => {
+  const vectors = [
+    createEmbeddingBuffer([1, 0, 0]),
+    createEmbeddingBuffer([1, 0]),
+    createEmbeddingBuffer([0.8, 0.2])
+  ];
+  const insertedEmbeddings: string[] = [];
+  const repository = {
+    db: {
+      loadExtension: () => undefined,
+      exec: () => undefined,
+      prepare: () => ({
+        run: (_rowid: number, embedding: string) => {
+          insertedEmbeddings.push(embedding);
+        }
+      }),
+      transaction: (callback: () => void) => () => callback()
+    },
+    getEmbeddingIndexSnapshot: () => ({
+      count: vectors.length,
+      latestUpdatedAt: "2026-04-05T00:00:00.000Z",
+      totalBytes: vectors.reduce((sum, vector) => sum + vector.byteLength, 0)
+    }),
+    getAllEmbeddings: () =>
+      vectors.map((embedding, index) => ({
+        id: `memory-${index + 1}`,
+        embedding,
+        memory: createMemory({
+          id: `memory-${index + 1}`,
+          embedding
+        })
+      }))
+  } as unknown as Repository;
+  const engine = new SqliteVecEngine(repository);
+  const state = engine as unknown as {
+    availabilityChecked: boolean;
+    available: boolean;
+    indexDimension: number | null;
+  };
+
+  state.availabilityChecked = true;
+  state.available = true;
+
+  assert.equal(engine.createIndex(), 2);
+  assert.equal(state.indexDimension, 2);
+  assert.equal(insertedEmbeddings.length, 2);
+});
+
+test("SqliteVecEngine.search continues scanning batches until scoped matches are found", () => {
+  const rowids = Array.from({ length: 40 }, (_, index) => ({
+    rowid: index + 1,
+    distance: index
+  }));
+  const repository = {
+    db: {
+      loadExtension: () => undefined,
+      prepare: () => ({
+        all: (_query: string, limit: number, offset: number) => rowids.slice(offset, offset + limit)
+      })
+    }
+  } as unknown as Repository;
+  const engine = new SqliteVecEngine(repository);
+  const state = engine as unknown as {
+    availabilityChecked: boolean;
+    available: boolean;
+    createIndex: () => number;
+    indexDimension: number | null;
+    indexedCount: number;
+    indexedCandidates: Array<{
+      id: string;
+      memory: Memory;
+      vector: Float32Array;
+    }>;
+  };
+
+  state.availabilityChecked = true;
+  state.available = true;
+  state.createIndex = () => 40;
+  state.indexDimension = 2;
+  state.indexedCount = 40;
+  state.indexedCandidates = Array.from({ length: 40 }, (_, index) => ({
+    id: `memory-${index + 1}`,
+    memory: createMemory({
+      id: `memory-${index + 1}`,
+      project: index === 39 ? "vega" : "other"
+    }),
+    vector: new Float32Array([1, 0])
+  }));
+
+  const results = engine.search(new Float32Array([1, 0]), {
+    project: "vega",
+    limit: 1,
+    minSimilarity: 0
+  });
+
+  assert.deepEqual(
+    results.map((result) => result.memory.id),
+    ["memory-40"]
+  );
+});
