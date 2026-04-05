@@ -10,6 +10,7 @@ import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import type { Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
+import { embeddingCache } from "../embedding/cache.js";
 import { InsightGenerator } from "../insights/generator.js";
 import {
   detectDecisionPatterns,
@@ -62,6 +63,7 @@ const createStoredMemory = (
 
 const installEmbeddingMock = (): (() => void) => {
   const originalFetch = globalThis.fetch;
+  embeddingCache.clear();
 
   globalThis.fetch = async (_input, init) => {
     const method = init?.method ?? "GET";
@@ -84,6 +86,7 @@ const installEmbeddingMock = (): (() => void) => {
   };
 
   return () => {
+    embeddingCache.clear();
     globalThis.fetch = originalFetch;
   };
 };

@@ -12,6 +12,7 @@ import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import type { Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
+import { embeddingCache } from "../embedding/cache.js";
 import { SearchEngine } from "../search/engine.js";
 
 const baseConfig: VegaConfig = {
@@ -56,6 +57,7 @@ const createStoredMemory = (
 
 const installEmbeddingMock = (vector: number[]): (() => void) => {
   const originalFetch = globalThis.fetch;
+  embeddingCache.clear();
 
   globalThis.fetch = async () =>
     new Response(JSON.stringify({ embeddings: [vector] }), {
@@ -66,6 +68,7 @@ const installEmbeddingMock = (vector: number[]): (() => void) => {
     });
 
   return () => {
+    embeddingCache.clear();
     globalThis.fetch = originalFetch;
   };
 };

@@ -20,6 +20,7 @@ import { KnowledgeGraphService } from "../core/knowledge-graph.js";
 import { MemoryService } from "../core/memory.js";
 import { Repository } from "../db/repository.js";
 import type { Memory } from "../core/types.js";
+import { embeddingCache } from "../embedding/cache.js";
 import { createMCPServer } from "../mcp/server.js";
 
 const baseConfig: VegaConfig = {
@@ -64,6 +65,7 @@ const createMemory = (
 
 const installEmbeddingMock = (): (() => void) => {
   const originalFetch = globalThis.fetch;
+  embeddingCache.clear();
 
   globalThis.fetch = async (_input, init) => {
     if ((init?.method ?? "GET") === "POST") {
@@ -89,6 +91,7 @@ const installEmbeddingMock = (): (() => void) => {
   };
 
   return () => {
+    embeddingCache.clear();
     globalThis.fetch = originalFetch;
   };
 };

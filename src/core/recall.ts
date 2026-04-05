@@ -13,6 +13,11 @@ const logRecallInfo = (message: string): void => {
   process.stderr.write(`${message}\n`);
 };
 
+interface SearchEngineExecution {
+  results: SearchResult[];
+  bm25ResultCount: number;
+}
+
 export class RecallService {
   constructor(
     private readonly repository: Repository,
@@ -68,10 +73,33 @@ export class RecallService {
     }
   }
 
+  private executeSearch(
+    query: string,
+    embedding: Float32Array | null,
+    options: SearchOptions
+  ): SearchEngineExecution {
+    const searchEngine = this.searchEngine as SearchEngine & {
+      searchDetailed?: (
+        queryText: string,
+        queryEmbedding: Float32Array | null,
+        searchOptions: SearchOptions
+      ) => SearchEngineExecution;
+    };
+
+    if (typeof searchEngine.searchDetailed === "function") {
+      return searchEngine.searchDetailed(query, embedding, options);
+    }
+
+    return {
+      results: this.searchEngine.search(query, embedding, options),
+      bm25ResultCount: 0
+    };
+  }
+
   async recall(query: string, options: SearchOptions): Promise<SearchResult[]> {
     const startedAt = Date.now();
     const embedding = await generateEmbedding(query, this.config);
-    const execution = this.searchEngine.searchDetailed(query, embedding, options);
+    const execution = this.executeSearch(query, embedding, options);
     const results = execution.results;
     const accessedAt = now();
 
