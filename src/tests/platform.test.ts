@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -46,6 +46,47 @@ test("PluginLoader.listPlugins returns empty for empty dir", () => {
   }
 });
 
+test("PluginLoader ignores plugin entries that escape the plugin directory", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-plugins-traversal-"));
+  const pluginDir = join(tempDir, "unsafe-plugin");
+  const escapeEntryPath = join(tempDir, "escape.js");
+  const loader = new PluginLoader(tempDir);
+  const repository = new Repository(":memory:");
+
+  mkdirSync(pluginDir, { recursive: true });
+  writeFileSync(
+    join(pluginDir, "plugin.json"),
+    JSON.stringify({
+      main: "../escape.js",
+      name: "unsafe-plugin",
+      version: "0.1.0"
+    }),
+    "utf8"
+  );
+  writeFileSync(
+    escapeEntryPath,
+    "export default { name: 'unsafe-plugin', version: '0.1.0', init() {} };",
+    "utf8"
+  );
+
+  try {
+    assert.deepEqual(loader.listPlugins(), []);
+    assert.deepEqual(
+      await loader.loadPlugins({
+        config: createConfig(":memory:"),
+        memoryService: {} as MemoryService,
+        recallService: {} as RecallService,
+        registerTool: () => {},
+        repository
+      }),
+      []
+    );
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("TemplateMarketplace.listTemplates returns starter templates", async () => {
   const marketplace = new TemplateMarketplace(createConfig(":memory:"));
   const templates = await marketplace.listTemplates();
@@ -76,7 +117,26 @@ test("TeamService.createTeam and listMembers", () => {
   }
 });
 
-test("Dashboard HTML is served", async () => {
+test("TeamService.checkPermission denies unknown actions and restricts readonly members", () => {
+  const repository = new Repository(":memory:");
+  const teamService = new TeamService(repository);
+
+  try {
+    const team = teamService.createTeam("beta-team", "owner-1");
+    teamService.addMember(team.id, "member-1", "member");
+    teamService.addMember(team.id, "readonly-1", "readonly");
+
+    assert.equal(teamService.checkPermission("member-1", team.id, "update_memory"), true);
+    assert.equal(teamService.checkPermission("member-1", team.id, "transfer_ownership"), false);
+    assert.equal(teamService.checkPermission("member-1", team.id, "unknown_future_action"), false);
+    assert.equal(teamService.checkPermission("readonly-1", team.id, "list_memories"), true);
+    assert.equal(teamService.checkPermission("readonly-1", team.id, "delete_memory"), false);
+  } finally {
+    repository.close();
+  }
+});
+
+test("Dashboard requires login and serves HTML after authentication", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-dashboard-"));
   const dbPath = join(tempDir, "memory.db");
   const config = createConfig(dbPath, {
@@ -102,11 +162,40 @@ test("Dashboard HTML is served", async () => {
   try {
     mountDashboard(server.app, repository, config);
     const port = await server.start(0);
-    const response = await fetch(`http://127.0.0.1:${port}/`);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const unauthorizedResponse = await fetch(`${baseUrl}/`);
+    const unauthorizedHtml = await unauthorizedResponse.text();
+    const loginResponse = await fetch(`${baseUrl}/dashboard/login`, {
+      method: "POST",
+      body: new URLSearchParams({
+        apiKey: "top-secret"
+      }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      redirect: "manual"
+    });
+    const cookie = loginResponse.headers.get("set-cookie");
+    const response = await fetch(`${baseUrl}/`, {
+      headers: {
+        cookie: cookie ?? ""
+      }
+    });
     const html = await response.text();
+    const apiResponse = await fetch(`${baseUrl}/api/health`, {
+      headers: {
+        cookie: cookie ?? ""
+      }
+    });
 
+    assert.equal(unauthorizedResponse.status, 401);
+    assert.match(unauthorizedHtml, /Unlock Dashboard/);
+    assert.equal(loginResponse.status, 302);
+    assert.ok(cookie);
     assert.equal(response.status, 200);
     assert.match(html, /Vega Memory Dashboard/);
+    assert.equal(response.headers.get("content-security-policy")?.includes("script-src 'self'"), true);
+    assert.equal(apiResponse.status, 200);
   } finally {
     await server.stop();
     repository.close();

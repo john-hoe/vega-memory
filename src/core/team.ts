@@ -24,12 +24,35 @@ interface TeamRow extends Team {}
 interface TeamMemberRow extends TeamMember {}
 
 const TEAM_METADATA_PREFIX = "team.";
-const ADMIN_ACTIONS = new Set(["admin", "manage_team", "add_member", "remove_member"]);
+const ADMIN_ACTIONS = new Set([
+  "admin",
+  "manage_team",
+  "add_member",
+  "remove_member",
+  "delete_team",
+  "update_team",
+  "set_role",
+  "grant_admin",
+  "revoke_admin",
+  "transfer_ownership"
+]);
+const MEMBER_WRITE_ACTIONS = new Set([
+  "write",
+  "store",
+  "create",
+  "update",
+  "delete",
+  "edit",
+  "archive",
+  "compact"
+]);
 
 const now = (): string => new Date().toISOString();
 
+const normalizeAction = (action: string): string => action.trim().toLowerCase();
+
 const isReadAction = (action: string): boolean => {
-  const normalized = action.trim().toLowerCase();
+  const normalized = normalizeAction(action);
 
   return (
     normalized === "read" ||
@@ -42,6 +65,21 @@ const isReadAction = (action: string): boolean => {
     normalized.startsWith("list_") ||
     normalized.startsWith("recall_") ||
     normalized.startsWith("search_")
+  );
+};
+
+const isWriteAction = (action: string): boolean => {
+  const normalized = normalizeAction(action);
+
+  return (
+    MEMBER_WRITE_ACTIONS.has(normalized) ||
+    normalized.startsWith("write_") ||
+    normalized.startsWith("store_") ||
+    normalized.startsWith("create_") ||
+    normalized.startsWith("update_") ||
+    normalized.startsWith("delete_") ||
+    normalized.startsWith("edit_") ||
+    normalized.startsWith("archive_")
   );
 };
 
@@ -58,15 +96,20 @@ export class TeamService {
 
   createTeam(name: string, ownerId: string): Team {
     const normalizedName = name.trim();
+    const normalizedOwnerId = ownerId.trim();
 
     if (normalizedName.length === 0) {
       throw new Error("Team name is required");
     }
 
+    if (normalizedOwnerId.length === 0) {
+      throw new Error("Owner ID is required");
+    }
+
     const team: Team = {
       id: randomUUID(),
       name: normalizedName,
-      owner_id: ownerId,
+      owner_id: normalizedOwnerId,
       created_at: now()
     };
 
@@ -82,7 +125,7 @@ export class TeamService {
 
     this.repository.db.transaction(() => {
       insertTeam.run(team.id, team.name, team.owner_id, team.created_at);
-      upsertMember.run(team.id, ownerId, "admin", team.created_at);
+      upsertMember.run(team.id, normalizedOwnerId, "admin", team.created_at);
       this.repository.setMetadata(`${TEAM_METADATA_PREFIX}${team.id}`, JSON.stringify(team));
     })();
 
@@ -90,6 +133,16 @@ export class TeamService {
   }
 
   addMember(teamId: string, userId: string, role: TeamRole): void {
+    if (this.getTeam(teamId) === null) {
+      throw new Error(`Team not found: ${teamId}`);
+    }
+
+    const normalizedUserId = userId.trim();
+
+    if (normalizedUserId.length === 0) {
+      throw new Error("User ID is required");
+    }
+
     const joinedAt = now();
 
     this.repository.db
@@ -99,7 +152,7 @@ export class TeamService {
          ON CONFLICT(team_id, user_id)
          DO UPDATE SET role = excluded.role`
       )
-      .run(teamId, userId, role, joinedAt);
+      .run(teamId, normalizedUserId, role, joinedAt);
   }
 
   listMembers(teamId: string): TeamMember[] {
@@ -152,10 +205,16 @@ export class TeamService {
       return true;
     }
 
-    if (member.role === "member") {
-      return !ADMIN_ACTIONS.has(action.trim().toLowerCase());
+    const normalizedAction = normalizeAction(action);
+
+    if (ADMIN_ACTIONS.has(normalizedAction)) {
+      return false;
     }
 
-    return isReadAction(action);
+    if (member.role === "member") {
+      return isReadAction(normalizedAction) || isWriteAction(normalizedAction);
+    }
+
+    return isReadAction(normalizedAction);
   }
 }

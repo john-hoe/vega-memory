@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { extname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { PluginContext, VegaPlugin } from "./sdk.js";
@@ -13,7 +13,6 @@ interface PluginManifest {
 interface PluginDescriptor {
   directory: string;
   entryPath: string;
-  manifest: PluginManifest;
   name: string;
 }
 
@@ -29,6 +28,8 @@ const DEFAULT_PLUGIN_DIR = resolve(process.cwd(), "data", "plugins");
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const PLUGIN_ENTRY_EXTENSIONS = new Set([".js", ".mjs", ".cjs"]);
+
 const readManifest = (manifestPath: string): PluginManifest => {
   const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
 
@@ -41,6 +42,30 @@ const readManifest = (manifestPath: string): PluginManifest => {
     version: typeof parsed.version === "string" ? parsed.version.trim() : undefined,
     main: typeof parsed.main === "string" ? parsed.main.trim() : undefined
   };
+};
+
+const resolveEntryPath = (directory: string, entry: string | undefined): string => {
+  const resolvedEntryPath = resolve(directory, entry ?? "index.js");
+  const relativeEntryPath = relative(directory, resolvedEntryPath);
+
+  if (
+    relativeEntryPath.length === 0 ||
+    relativeEntryPath === ".." ||
+    relativeEntryPath.startsWith(`..${"/"}`) ||
+    relativeEntryPath.startsWith(`..${"\\"}`)
+  ) {
+    throw new Error("Plugin entry must stay within the plugin directory");
+  }
+
+  if (!PLUGIN_ENTRY_EXTENSIONS.has(extname(resolvedEntryPath))) {
+    throw new Error("Plugin entry must be a JavaScript module");
+  }
+
+  if (!existsSync(resolvedEntryPath) || !statSync(resolvedEntryPath).isFile()) {
+    throw new Error("Plugin entry file is missing");
+  }
+
+  return resolvedEntryPath;
 };
 
 const resolvePluginExport = (moduleExports: Record<string, unknown>): VegaPlugin => {
@@ -80,17 +105,20 @@ export class PluginLoader {
           return [];
         }
 
-        const manifest = readManifest(manifestPath);
-        const name = manifest.name && manifest.name.length > 0 ? manifest.name : entry.name;
+        try {
+          const manifest = readManifest(manifestPath);
+          const name = manifest.name && manifest.name.length > 0 ? manifest.name : entry.name;
 
-        return [
-          {
-            directory,
-            entryPath: resolve(directory, manifest.main ?? "index.js"),
-            manifest,
-            name
-          }
-        ];
+          return [
+            {
+              directory,
+              entryPath: resolveEntryPath(directory, manifest.main),
+              name
+            }
+          ];
+        } catch {
+          return [];
+        }
       })
       .sort((left, right) => left.name.localeCompare(right.name));
   }

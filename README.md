@@ -68,7 +68,7 @@ export VEGA_API_PORT=3271
 node dist/scheduler/index.js
 ```
 
-With `VEGA_API_KEY` set, Vega exposes the authenticated HTTP API under `/api/*` and serves the dashboard at `http://127.0.0.1:3271/`.
+With `VEGA_API_KEY` set, Vega exposes the authenticated HTTP API under `/api/*` and serves the dashboard at `http://127.0.0.1:3271/`. Open `/`, enter the same API key once, and Vega stores an HttpOnly dashboard session cookie for the browser.
 
 ### 4. Use the CLI
 
@@ -204,7 +204,9 @@ When the scheduler runs with `VEGA_API_KEY` configured, it serves the dashboard 
 
 | Route | Method | Purpose |
 | --- | --- | --- |
-| `/` | `GET` | Serve the dashboard |
+| `/` | `GET` | Serve the dashboard after login, or return the login form |
+| `/dashboard/login` | `POST` | Exchange the API key for a dashboard session cookie |
+| `/dashboard/logout` | `POST` | Clear the dashboard session cookie |
 | `/api/store` | `POST` | Store a memory |
 | `/api/recall` | `POST` | Recall memories |
 | `/api/list` | `GET` | List memories |
@@ -245,8 +247,9 @@ Detailed request and response examples are in [`docs/API.md`](docs/API.md).
 ### Build and test
 
 ```bash
-npm run build
-npm test
+rm -rf dist
+npx tsc
+node --test dist/tests/*.test.js
 ```
 
 ### Plugin foundation
@@ -260,6 +263,8 @@ Plugins are discovered from `data/plugins/<plugin-name>/plugin.json`. A minimal 
   "main": "index.js"
 }
 ```
+
+Plugin entry files must stay inside their plugin directory and should only be used for trusted local code.
 
 Starter templates are available through `vega templates list`, and plugin discovery is available through `vega plugins list`.
 

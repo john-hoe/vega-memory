@@ -16,9 +16,11 @@ http://127.0.0.1:3271
 
 ## Authentication
 
-- `GET /` is public and serves the dashboard.
-- Requests to `/api/*` require `Authorization: Bearer <VEGA_API_KEY>` when `VEGA_API_KEY` is configured.
-- If no API key is configured, `/api/*` is open.
+- The scheduler only starts the HTTP API when `VEGA_API_KEY` is configured.
+- `GET /` returns the dashboard when the request is authenticated, or a login form when it is not.
+- Requests to `/api/*` accept either `Authorization: Bearer <VEGA_API_KEY>` or the authenticated dashboard session cookie.
+- `POST /dashboard/login` exchanges the API key for an HttpOnly dashboard session cookie.
+- `POST /dashboard/logout` clears the dashboard session cookie.
 
 Example headers:
 
@@ -45,7 +47,7 @@ Common status codes:
 
 ## `GET /`
 
-Serve the Vega Memory dashboard.
+Serve the Vega Memory dashboard after authentication, or return the login form with `401 text/html` when the browser has not authenticated yet.
 
 Example request:
 
@@ -62,6 +64,41 @@ Notes:
 - The dashboard fetches stats from `GET /api/health`.
 - It fetches memory rows from `GET /api/list`.
 - It submits searches to `POST /api/recall`.
+- Successful login sets an HttpOnly cookie, so the dashboard does not store the API key in `localStorage`.
+
+## `POST /dashboard/login`
+
+Authenticate the dashboard and set the session cookie used by browser requests.
+
+Example request:
+
+```http
+POST /dashboard/login
+Content-Type: application/x-www-form-urlencoded
+```
+
+```text
+apiKey=change-me
+```
+
+Example response:
+
+- `302` redirect to `/` on success
+- `401 text/html` with the login page on failure
+
+## `POST /dashboard/logout`
+
+Clear the dashboard session cookie and redirect back to the login page.
+
+Example request:
+
+```http
+POST /dashboard/logout
+```
+
+Example response:
+
+- `302` redirect to `/`
 
 ## `POST /api/store`
 
@@ -314,7 +351,7 @@ Authorization: Bearer change-me
 ```json
 {
   "project": "vega-memory",
-  "summary": "Decided to expose the dashboard at / and keep API auth on /api only.",
+  "summary": "Moved the dashboard to cookie-backed auth and removed unsafe HTML rendering.",
   "completed_tasks": ["task-id-1"]
 }
 ```

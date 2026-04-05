@@ -64,10 +64,11 @@ export class TemplateMarketplace {
   }
 
   async installTemplate(name: string, repository: Repository): Promise<number> {
-    const template = STARTER_TEMPLATES.find((candidate) => candidate.name === name);
+    const normalizedName = name.trim();
+    const template = STARTER_TEMPLATES.find((candidate) => candidate.name === normalizedName);
 
     if (!template) {
-      throw new Error(`Unknown template: ${name}`);
+      throw new Error(`Unknown template: ${normalizedName}`);
     }
 
     const existing = repository.listMemories({

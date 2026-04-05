@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import { createAPIServer } from "../api/server.js";
+import { DASHBOARD_AUTH_COOKIE } from "../api/auth.js";
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
 import { MemoryService } from "../core/memory.js";
@@ -367,6 +368,22 @@ test("unauthorized request without API key returns 401 when apiKey is set", asyn
 
     assert.equal(response.status, 401);
     assert.equal(body.error, "unauthorized");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("dashboard session cookie authorizes API requests when apiKey is set", async () => {
+  const harness = await createHarness("top-secret");
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/health`, {
+      headers: {
+        cookie: `${DASHBOARD_AUTH_COOKIE}=top-secret`
+      }
+    });
+
+    assert.equal(response.status, 200);
   } finally {
     await harness.cleanup();
   }

@@ -28,7 +28,7 @@ jobs:
         run: npm ci
 
       - name: Type check
-        run: npx tsc
+        run: rm -rf dist && npx tsc
 
       - name: Run tests
-        run: npm test
+        run: node --test dist/tests/*.test.js
