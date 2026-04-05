@@ -6,7 +6,13 @@ import { getHealthReport } from "../core/health.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
-import type { Memory, MemorySource, MemoryType, SessionStartResult } from "../core/types.js";
+import type {
+  Memory,
+  MemorySource,
+  MemoryType,
+  SearchResult,
+  SessionStartResult
+} from "../core/types.js";
 import { Repository } from "../db/repository.js";
 
 const MEMORY_TYPES = new Set<MemoryType>([
@@ -70,6 +76,12 @@ const serializeSessionStartResult = (result: SessionStartResult) => ({
   conflicts: result.conflicts.map(serializeMemory),
   proactive_warnings: result.proactive_warnings,
   token_estimate: result.token_estimate
+});
+
+const serializeSearchResult = (result: SearchResult) => ({
+  ...serializeMemory(result.memory),
+  similarity: result.similarity,
+  finalScore: result.finalScore
 });
 
 const getErrorResponse = (error: unknown): { status: number; message: string } => {
@@ -287,14 +299,70 @@ export function createRouter(services: APIRouterServices): Router {
       });
 
       res.status(200).json(
-        result.map((entry) => ({
-          ...serializeMemory(entry.memory),
-          similarity: entry.similarity,
-          finalScore: entry.finalScore
-        }))
+        result.map(serializeSearchResult)
       );
     })
   );
+
+  router.get("/api/recall/stream", (req, res) => {
+    try {
+      const query = requireString(req.query.query, "query");
+      const options = {
+        project: parseSingleValue(req.query.project, "project"),
+        type: parseMemoryType(req.query.type, "type"),
+        limit: parseIntegerString(req.query.limit, "limit") ?? 5,
+        minSimilarity:
+          parseNumber(
+            Number.parseFloat(parseSingleValue(req.query.min_similarity, "min_similarity") ?? "0.3"),
+            "min_similarity",
+            {
+              min: 0,
+              max: 1
+            }
+          ) ?? 0.3
+      };
+      let closed = false;
+
+      req.on("close", () => {
+        closed = true;
+      });
+
+      res.status(200);
+      res.setHeader("content-type", "text/event-stream; charset=utf-8");
+      res.setHeader("cache-control", "no-cache");
+      res.setHeader("connection", "keep-alive");
+      res.flushHeaders();
+
+      void (async () => {
+        try {
+          for await (const result of services.recallService.recallStream(query, options)) {
+            if (closed) {
+              break;
+            }
+
+            res.write(`data: ${JSON.stringify(serializeSearchResult(result))}\n\n`);
+          }
+
+          if (!closed) {
+            res.write('event: end\ndata: {"done":true}\n\n');
+            res.end();
+          }
+        } catch (error: unknown) {
+          const { message } = getErrorResponse(error);
+
+          if (!closed) {
+            res.write(`event: error\ndata: ${JSON.stringify({ error: message })}\n\n`);
+            res.end();
+          }
+        }
+      })();
+    } catch (error: unknown) {
+      const { status, message } = getErrorResponse(error);
+      res.status(status).json({
+        error: message
+      });
+    }
+  });
 
   router.get(
     "/api/list",

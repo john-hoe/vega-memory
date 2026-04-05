@@ -13,6 +13,7 @@ test("loadConfig returns the documented defaults", () => {
     OLLAMA_MODEL: process.env.OLLAMA_MODEL,
     VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
+    VEGA_SHARDING_ENABLED: process.env.VEGA_SHARDING_ENABLED,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
     VEGA_OBSERVER_ENABLED: process.env.VEGA_OBSERVER_ENABLED,
     VEGA_API_PORT: process.env.VEGA_API_PORT,
@@ -31,6 +32,7 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.OLLAMA_MODEL;
   delete process.env.VEGA_TOKEN_BUDGET;
   delete process.env.VEGA_SIMILARITY_THRESHOLD;
+  delete process.env.VEGA_SHARDING_ENABLED;
   delete process.env.VEGA_BACKUP_RETENTION_DAYS;
   delete process.env.VEGA_OBSERVER_ENABLED;
   delete process.env.VEGA_API_PORT;
@@ -49,6 +51,7 @@ test("loadConfig returns the documented defaults", () => {
     ollamaModel: "bge-m3",
     tokenBudget: 2000,
     similarityThreshold: 0.85,
+    shardingEnabled: false,
     backupRetentionDays: 7,
     apiPort: 3271,
     apiKey: undefined,
@@ -71,6 +74,7 @@ test("loadConfig reads overrides from process.env", () => {
     OLLAMA_MODEL: process.env.OLLAMA_MODEL,
     VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
+    VEGA_SHARDING_ENABLED: process.env.VEGA_SHARDING_ENABLED,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
     VEGA_OBSERVER_ENABLED: process.env.VEGA_OBSERVER_ENABLED,
     VEGA_API_PORT: process.env.VEGA_API_PORT,
@@ -89,6 +93,7 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.OLLAMA_MODEL = "nomic-embed-text";
   process.env.VEGA_TOKEN_BUDGET = "4096";
   process.env.VEGA_SIMILARITY_THRESHOLD = "0.91";
+  process.env.VEGA_SHARDING_ENABLED = "true";
   process.env.VEGA_BACKUP_RETENTION_DAYS = "14";
   process.env.VEGA_OBSERVER_ENABLED = "true";
   process.env.VEGA_API_PORT = "4321";
@@ -108,6 +113,7 @@ test("loadConfig reads overrides from process.env", () => {
     ollamaModel: "nomic-embed-text",
     tokenBudget: 4096,
     similarityThreshold: 0.91,
+    shardingEnabled: true,
     backupRetentionDays: 14,
     apiPort: 4321,
     apiKey: "super-secret",
@@ -133,6 +139,7 @@ test("loadConfig clamps invalid numeric values", () => {
   const previous = {
     VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
+    VEGA_SHARDING_ENABLED: process.env.VEGA_SHARDING_ENABLED,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
     VEGA_OBSERVER_ENABLED: process.env.VEGA_OBSERVER_ENABLED,
     VEGA_API_PORT: process.env.VEGA_API_PORT
@@ -140,6 +147,7 @@ test("loadConfig clamps invalid numeric values", () => {
 
   process.env.VEGA_TOKEN_BUDGET = "100";
   process.env.VEGA_SIMILARITY_THRESHOLD = "1.5";
+  process.env.VEGA_SHARDING_ENABLED = "not-a-bool";
   process.env.VEGA_BACKUP_RETENTION_DAYS = "999";
   process.env.VEGA_OBSERVER_ENABLED = "not-a-bool";
   process.env.VEGA_API_PORT = "not-a-number";
@@ -148,6 +156,7 @@ test("loadConfig clamps invalid numeric values", () => {
 
   assert.equal(config.tokenBudget, 500);
   assert.equal(config.similarityThreshold, 1);
+  assert.equal(config.shardingEnabled, false);
   assert.equal(config.backupRetentionDays, 365);
   assert.equal(config.apiPort, 3271);
 

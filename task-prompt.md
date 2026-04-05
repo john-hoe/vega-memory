@@ -1,135 +1,93 @@
-Task 37-41: Phase 5 — AI Intelligence (all 5 tasks).
+Task 48-52: Phase 7 — Performance + Scale (all 5 tasks).
 
 Read AGENTS.md for rules. Read ALL src/ files to understand the current codebase.
 
-## Task 37: LLM Memory Compression
-File: src/core/compression.ts
+## Task 48: sqlite-vec Production Deployment
+Files: src/search/sqlite-vec.ts, src/search/engine.ts
+- Improve SqliteVecEngine.createIndex() to build a persistent in-memory index from all embeddings
+- Add rebuildIndex() method that forces a full re-index
+- SearchEngine should log when switching from brute-force to sqlite-vec
+- Add CLI command: vega reindex (force rebuild vector index)
+- If sqlite-vec extension is available, auto-build index on first search
 
-Export class CompressionService:
+## Task 49: Memory Sharding
+File: src/db/shard.ts
+Export class ShardManager:
+  - constructor(baseDir: string)
+  - getShardPath(project: string): string
+    Return path: baseDir/shards/<project>.db
+  - getOrCreateShard(project: string): Repository
+    If shard exists, open it. Otherwise create new shard db.
+    Cache open connections.
+  - listShards(): string[]
+    List all project shard files
+  - closeAll(): void
+    Close all cached connections
+
+This is foundation — the main repository stays as primary, sharding is opt-in for large-scale use.
+Add config: shardingEnabled: boolean (default false, from VEGA_SHARDING_ENABLED)
+
+## Task 50: Streaming Search
+File: src/search/streaming.ts
+Export class StreamingSearch:
   - constructor(repository: Repository, config: VegaConfig)
+  - async *searchStream(query: string, queryEmbedding: Float32Array | null, options: SearchOptions): AsyncGenerator<SearchResult>
+    Yield results one at a time instead of collecting all in memory
+    Process in chunks of 100 memories
+    Apply ranking as results are yielded
   
-  - async compressMemory(memoryId: string): Promise<{original_length: number, compressed_length: number}>
-    1. Get memory by ID
-    2. If content length < 500 chars, skip (too short to compress)
-    3. Call Ollama chat API: POST {ollamaBaseUrl}/api/chat with model=config.ollamaModel
-       System prompt: "Summarize the following technical note into a concise version. Keep all key facts, decisions, error messages, and solutions. Remove redundancy and filler. Output ONLY the summary, no preamble."
-       User message: memory.content
-    4. If compressed version is shorter: update memory content with compressed version, regenerate embedding
-    5. Save original as version history before updating
-    6. Return lengths
+This is useful for very large memory sets. Regular search stays as default.
+Add to API: GET /api/recall/stream (SSE endpoint, optional)
 
-  - async compressBatch(project?: string, minLength?: number): Promise<{processed: number, compressed: number, saved_chars: number}>
-    Find all active memories with content.length > (minLength || 1000)
-    Compress each, track stats
+## Task 51: Embedding Cache
+File: src/embedding/cache.ts
+Export class EmbeddingCache:
+  - constructor(maxSize: number = 1000)
+  - get(text: string): Float32Array | undefined
+    LRU cache lookup by content hash
+  - set(text: string, embedding: Float32Array): void
+    Store with LRU eviction
+  - clear(): void
+  - size(): number
+  - hitRate(): { hits: number, misses: number, rate: number }
 
-  Note: Use native fetch to call Ollama /api/chat. Handle timeouts (30s). If Ollama unavailable, skip gracefully.
+Integrate into src/embedding/ollama.ts generateEmbedding():
+  Before calling Ollama, check cache. On cache hit, return cached. On miss, call Ollama and cache result.
 
-Add CLI command: vega compress [--project p] [--min-length 1000] [--dry-run]
-Add MCP tool: memory_compress — params: memory_id?(string), project?(string)
-
-## Task 38: Smart Memory Extraction
-File: src/core/extraction.ts
-
-Export class ExtractionService:
-  - constructor(config: VegaConfig)
-  
-  - async extractMemories(text: string, project: string): Promise<ExtractionCandidate[]>
-    Use Ollama chat to analyze text and extract structured memories.
-    System prompt: "Analyze the following conversation/text and extract distinct pieces of knowledge worth remembering. For each, provide: type (decision/pitfall/preference/task_state/project_context), title (short), content (the knowledge), and tags (keywords). Output as JSON array. Only extract actionable, durable knowledge — skip emotions, one-time queries, and common knowledge."
-    User message: text
-    Parse response as JSON array of ExtractionCandidate
-    Fallback to empty array on parse failure
-
-  ExtractionCandidate = { type: MemoryType, title: string, content: string, tags: string[] }
-
-Integrate into session.ts sessionEnd():
-  If Ollama available, use ExtractionService instead of keyword regex matching.
-  Keep regex as fallback when Ollama unavailable.
-
-## Task 39: Auto Project Documentation
-File: src/core/doc-generator.ts
-
-Export class DocGenerator:
+## Task 52: Search Relevance Tuning
+File: src/search/tuning.ts
+Export class RelevanceTuner:
   - constructor(repository: Repository)
-  
-  - generateProjectReadme(project: string): string
-    Query all memories for project, organize by type:
-    - Architecture decisions (type=decision)
-    - Known pitfalls (type=pitfall)
-    - Active tasks (type=task_state, status=active)
-    - Project context (type=project_context)
-    - Preferences (type=preference, scope=global)
-    Format as markdown README with sections
-  
-  - generateDecisionLog(project: string): string
-    List all decision memories chronologically with reasoning
+  - analyzeSearchQuality(): SearchQualityReport
+    1. Get last 100 recall operations from performance_log
+    2. Calculate: avg latency, avg result count, % of recalls returning 0 results
+    3. Analyze: avg similarity scores, distribution of memory types in results
+    Return report with recommendations
 
-  - generatePitfallGuide(project: string): string
-    List all pitfalls grouped by tag with solutions
+  - suggestWeightAdjustments(): { vectorWeight: number, bm25Weight: number, similarityThreshold: number }
+    Based on analysis: if too many zero-result recalls, suggest lowering threshold
+    If BM25 results rarely appear, suggest increasing bm25Weight
 
-Add CLI command: vega generate-docs --project <p> [--output <dir>] [--type readme|decisions|pitfalls|all]
+Add CLI: vega tune (print tuning analysis and suggestions)
 
-## Task 40: Memory Quality Scoring
-File: src/core/quality.ts
-
-Export class QualityService:
-  - constructor(repository: Repository, config: VegaConfig)
-  
-  - scoreMemory(memory: Memory): QualityScore
-    Score on 4 dimensions (0-1 each):
-    - accuracy: verified=1.0, unverified=0.5, conflict=0.3, rejected=0.0
-    - freshness: 1/(1 + daysSinceUpdate * 0.01)
-    - usefulness: min(1, access_count / 10)
-    - completeness: min(1, content.length / 200)
-    Overall = accuracy*0.4 + freshness*0.2 + usefulness*0.2 + completeness*0.2
-  
-  - async scoreBatch(project?: string): Promise<{total: number, avg_score: number, low_quality: Memory[]}>
-    Score all active memories, return stats and memories scoring < 0.3
-  
-  - async degradeLowQuality(threshold?: number): Promise<number>
-    Find memories with score < (threshold || 0.3), reduce importance by 0.1
-    Return count degraded
-
-  QualityScore = { accuracy: number, freshness: number, usefulness: number, completeness: number, overall: number }
-
-Add to types.ts. Add CLI: vega quality [--project p] [--degrade]
-
-## Task 41: Conversation Context Learning (Passive Observation)
-File: src/core/observer.ts
-
-Export class ObserverService:
-  - constructor(memoryService: MemoryService, config: VegaConfig)
-  
-  - async observeToolOutput(toolName: string, input: unknown, output: unknown, project: string): Promise<string | null>
-    Analyze tool execution results for memorable patterns:
-    - If tool is a shell command that failed (exit code != 0): extract as pitfall candidate
-    - If tool output contains error messages: extract error pattern
-    - If tool is a file write: note the file and its purpose
-    Return memory ID if stored, null if not worth storing
-  
-  - shouldObserve(toolName: string): boolean
-    Return true for: Shell, file write/edit tools
-    Return false for: read-only tools, navigation
-
-Register as optional hook in MCP server: after each tool call, if observer is enabled, call observeToolOutput.
-Add config: observerEnabled: boolean (default false, opt-in)
+SearchQualityReport = { avg_latency_ms, avg_results, zero_result_pct, type_distribution, recommendations: string[] }
 
 ## Tests:
-File: src/tests/ai-intelligence.test.ts
-- Test: CompressionService skips short memories (< 500 chars)
-- Test: ExtractionService returns empty array when Ollama unavailable
-- Test: DocGenerator.generateProjectReadme produces valid markdown with sections
-- Test: DocGenerator.generateDecisionLog lists decisions chronologically
-- Test: QualityService.scoreMemory returns correct score for verified memory
-- Test: QualityService.scoreMemory returns low score for rejected memory
-- Test: QualityService.degradeLowQuality reduces importance
-- Test: ObserverService.shouldObserve returns true for Shell
+File: src/tests/performance.test.ts
+- Test: EmbeddingCache get/set/eviction cycle
+- Test: EmbeddingCache.hitRate tracks hits and misses
+- Test: ShardManager.getShardPath returns correct path
+- Test: ShardManager.getOrCreateShard creates new shard
+- Test: ShardManager.listShards returns shard names
+- Test: StreamingSearch yields results progressively (use mock data)
+- Test: RelevanceTuner.analyzeSearchQuality returns valid report
 
 After all:
-  npx tsc
-  node --test dist/tests/ai-intelligence.test.js
+  rm -rf dist && npx tsc
+  node --test dist/tests/performance.test.js
   node --test dist/tests/*.test.js
 
 Then commit:
-  git add -A && git commit -m "feat: Phase 5 — LLM compression, smart extraction, doc generation, quality scoring, passive observer"
-  git push origin main
+  git add -A && git commit -m "feat: Phase 7 — sqlite-vec production, sharding, streaming search, embedding cache, relevance tuning"
+  git tag v0.9.0-phase7
+  git push origin main --tags

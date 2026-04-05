@@ -29,6 +29,7 @@ const baseConfig: VegaConfig = {
   ollamaModel: "bge-m3",
   tokenBudget: 2000,
   similarityThreshold: 0.85,
+  shardingEnabled: false,
   backupRetentionDays: 7,
   apiPort: 3271,
   apiKey: undefined,
@@ -67,7 +68,8 @@ const createLifecycleHarness = () => {
   const config: VegaConfig = {
     ...baseConfig,
     dbPath: join(tempDir, "memory.db"),
-    cacheDbPath: join(tempDir, "cache.db")
+    cacheDbPath: join(tempDir, "cache.db"),
+    shardingEnabled: false
   };
   const repository = new Repository(config.dbPath);
   const notificationManager = new NotificationManager(config, join(tempDir, "alerts"));
@@ -256,14 +258,19 @@ test("cross-project auto-promotion triggers at 2 projects", async () => {
     accessed_projects: ["project-a"]
   });
   const searchEngine = {
-    search(): SearchResult[] {
-      return [
-        {
-          memory: repository.getMemory("shared-memory") as Memory,
-          similarity: 0.9,
-          finalScore: 0.9
-        }
-      ];
+    searchDetailed() {
+      return {
+        results: [
+          {
+            memory: repository.getMemory("shared-memory") as Memory,
+            similarity: 0.9,
+            finalScore: 0.9
+          }
+        ] satisfies SearchResult[],
+        bm25ResultCount: 0,
+        vectorResultCount: 1,
+        vectorEngine: "brute-force" as const
+      };
     }
   } as unknown as SearchEngine;
   const recallService = new RecallService(repository, searchEngine, baseConfig);

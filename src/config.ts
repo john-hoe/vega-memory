@@ -14,6 +14,7 @@ export interface VegaConfig {
   ollamaModel: string;
   tokenBudget: number;
   similarityThreshold: number;
+  shardingEnabled: boolean;
   backupRetentionDays: number;
   observerEnabled: boolean;
   apiPort: number;
@@ -128,6 +129,7 @@ export const loadConfig = (): VegaConfig => {
     ollamaModel: process.env.OLLAMA_MODEL ?? "bge-m3",
     tokenBudget: clamp(parseNumber(process.env.VEGA_TOKEN_BUDGET, 2000), 500, 10_000),
     similarityThreshold: clamp(parseNumber(process.env.VEGA_SIMILARITY_THRESHOLD, 0.85), 0, 1),
+    shardingEnabled: parseBoolean(process.env.VEGA_SHARDING_ENABLED, false),
     backupRetentionDays: clamp(
       parseNumber(process.env.VEGA_BACKUP_RETENTION_DAYS, 7),
       1,

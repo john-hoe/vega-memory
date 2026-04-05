@@ -1,5 +1,24 @@
 import type Database from "better-sqlite3";
 
+interface TableColumnRow {
+  name: string;
+}
+
+const ensureColumn = (
+  db: Database.Database,
+  tableName: string,
+  columnName: string,
+  definition: string
+): void => {
+  const columns = db
+    .prepare<[], TableColumnRow>(`PRAGMA table_info(${tableName})`)
+    .all();
+
+  if (!columns.some((column) => column.name === columnName)) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+};
+
 export function initializeDatabase(db: Database.Database): void {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
@@ -59,7 +78,10 @@ export function initializeDatabase(db: Database.Database): void {
       operation TEXT NOT NULL,
       latency_ms REAL NOT NULL,
       memory_count INTEGER NOT NULL,
-      result_count INTEGER NOT NULL
+      result_count INTEGER NOT NULL,
+      avg_similarity REAL,
+      result_types TEXT NOT NULL DEFAULT '[]',
+      bm25_result_count INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS metadata (
@@ -122,4 +144,8 @@ export function initializeDatabase(db: Database.Database): void {
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
     USING fts5(title, content, tags, content=memories, content_rowid=rowid);
   `);
+
+  ensureColumn(db, "performance_log", "avg_similarity", "REAL");
+  ensureColumn(db, "performance_log", "result_types", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "performance_log", "bm25_result_count", "INTEGER NOT NULL DEFAULT 0");
 }

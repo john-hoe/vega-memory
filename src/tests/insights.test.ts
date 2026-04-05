@@ -26,6 +26,7 @@ const baseConfig: VegaConfig = {
   ollamaModel: "bge-m3",
   tokenBudget: 2000,
   similarityThreshold: 1.1,
+  shardingEnabled: false,
   backupRetentionDays: 7,
   apiPort: 3271,
   apiKey: undefined,
@@ -333,7 +334,8 @@ test("InsightGenerator runs through weeklyHealthReport", async () => {
   const config: VegaConfig = {
     ...baseConfig,
     dbPath: join(tempDir, "memory.db"),
-    cacheDbPath: join(tempDir, "cache.db")
+    cacheDbPath: join(tempDir, "cache.db"),
+    shardingEnabled: false
   };
   const repository = new Repository(config.dbPath);
   const memoryService = new MemoryService(repository, config);

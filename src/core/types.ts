@@ -126,6 +126,9 @@ export interface PerformanceLog {
   latency_ms: number;
   memory_count: number;
   result_count: number;
+  avg_similarity?: number | null;
+  result_types?: MemoryType[];
+  bm25_result_count?: number;
 }
 
 export interface SessionStartResult {
@@ -237,4 +240,12 @@ export interface QualityScore {
   usefulness: number;
   completeness: number;
   overall: number;
+}
+
+export interface SearchQualityReport {
+  avg_latency_ms: number;
+  avg_results: number;
+  zero_result_pct: number;
+  type_distribution: Partial<Record<MemoryType, number>>;
+  recommendations: string[];
 }

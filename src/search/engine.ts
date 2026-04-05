@@ -9,10 +9,17 @@ const logSearchInfo = (message: string): void => {
   process.stderr.write(`${message}\n`);
 };
 
+interface SearchExecution {
+  results: SearchResult[];
+  bm25ResultCount: number;
+  vectorResultCount: number;
+  vectorEngine: "brute-force" | "sqlite-vec";
+}
+
 export class SearchEngine {
   private readonly bruteForceEngine: BruteForceEngine;
   private readonly sqliteVecEngine: SqliteVecEngine;
-  private readonly activeVectorEngine: "brute-force" | "sqlite-vec";
+  private activeVectorEngine: "brute-force" | "sqlite-vec" = "brute-force";
   private slowQueryCount = 0;
 
   constructor(
@@ -21,21 +28,29 @@ export class SearchEngine {
   ) {
     this.bruteForceEngine = new BruteForceEngine();
     this.sqliteVecEngine = new SqliteVecEngine(repository);
-    this.activeVectorEngine = this.sqliteVecEngine.isAvailable() ? "sqlite-vec" : "brute-force";
+    logSearchInfo("Vector search engine: brute-force");
+  }
 
-    logSearchInfo(`Vector search engine: ${this.activeVectorEngine}`);
-
+  private ensureSqliteVecReady(): boolean {
     if (this.activeVectorEngine === "sqlite-vec") {
-      const indexed = this.sqliteVecEngine.createIndex();
-      logSearchInfo(`Vector search auto-upgraded to sqlite-vec with ${indexed} indexed embeddings.`);
+      return true;
     }
+
+    if (!this.sqliteVecEngine.isAvailable()) {
+      return false;
+    }
+
+    const indexed = this.sqliteVecEngine.createIndex();
+    this.activeVectorEngine = "sqlite-vec";
+    logSearchInfo(`Vector search switched from brute-force to sqlite-vec with ${indexed} indexed embeddings.`);
+    return true;
   }
 
   private searchVectors(
     queryEmbedding: Float32Array,
     options: SearchOptions
   ): SearchResult[] {
-    if (this.activeVectorEngine === "sqlite-vec") {
+    if (this.ensureSqliteVecReady()) {
       return this.sqliteVecEngine.search(queryEmbedding, options);
     }
 
@@ -53,7 +68,7 @@ export class SearchEngine {
       if (this.slowQueryCount === 10) {
         logSearchInfo(
           this.activeVectorEngine === "sqlite-vec"
-            ? "Search is slow for 10 consecutive queries; rebuild the sqlite-vec index or run `vega benchmark --suite recall`."
+            ? "Search is slow for 10 consecutive queries; run `vega reindex` or `vega benchmark --suite recall`."
             : "Search is slow for 10 consecutive queries; install sqlite-vec or run `vega benchmark --suite recall`."
         );
       }
@@ -64,7 +79,25 @@ export class SearchEngine {
     this.slowQueryCount = 0;
   }
 
-  search(query: string, queryEmbedding: Float32Array | null, options: SearchOptions): SearchResult[] {
+  rebuildIndex(): number {
+    if (!this.sqliteVecEngine.isAvailable()) {
+      throw new Error("sqlite-vec not available");
+    }
+
+    const indexed = this.sqliteVecEngine.rebuildIndex();
+    if (this.activeVectorEngine !== "sqlite-vec") {
+      this.activeVectorEngine = "sqlite-vec";
+      logSearchInfo(`Vector search switched from brute-force to sqlite-vec with ${indexed} indexed embeddings.`);
+    }
+
+    return indexed;
+  }
+
+  searchDetailed(
+    query: string,
+    queryEmbedding: Float32Array | null,
+    options: SearchOptions
+  ): SearchExecution {
     const startedAt = Date.now();
     const vectorResults =
       queryEmbedding === null ? [] : this.searchVectors(queryEmbedding, options);
@@ -95,6 +128,15 @@ export class SearchEngine {
 
     this.trackQueryLatency(Date.now() - startedAt);
 
-    return results;
+    return {
+      results,
+      bm25ResultCount: bm25Results.length,
+      vectorResultCount: vectorResults.length,
+      vectorEngine: this.activeVectorEngine
+    };
+  }
+
+  search(query: string, queryEmbedding: Float32Array | null, options: SearchOptions): SearchResult[] {
+    return this.searchDetailed(query, queryEmbedding, options).results;
   }
 }

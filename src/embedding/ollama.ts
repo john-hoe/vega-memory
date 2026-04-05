@@ -1,4 +1,5 @@
 import type { VegaConfig } from "../config.js";
+import { embeddingCache } from "./cache.js";
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
 const AVAILABILITY_TIMEOUT_MS = 3_000;
@@ -64,6 +65,11 @@ export const generateEmbedding = async (
   text: string,
   config: VegaConfig
 ): Promise<Float32Array | null> => {
+  const cached = embeddingCache.get(text);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   const url = `${config.ollamaBaseUrl.replace(/\/+$/, "")}/api/embed`;
 
   for (let attempt = 0; attempt < RETRY_ATTEMPTS; attempt += 1) {
@@ -91,6 +97,7 @@ export const generateEmbedding = async (
       const embedding = parseEmbedding(body.embeddings);
 
       if (embedding !== null) {
+        embeddingCache.set(text, embedding);
         return embedding;
       }
 

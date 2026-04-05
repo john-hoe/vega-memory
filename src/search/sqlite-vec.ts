@@ -38,6 +38,7 @@ export class SqliteVecEngine {
   }> = [];
   private indexSignature = "";
   private indexDimension: number | null = null;
+  private indexedCount = 0;
 
   constructor(private readonly repository: Repository) {}
 
@@ -85,6 +86,12 @@ export class SqliteVecEngine {
       throw new Error("sqlite-vec not available");
     }
 
+    const snapshot = this.repository.getEmbeddingIndexSnapshot();
+    const signature = `${snapshot.count}:${snapshot.latestUpdatedAt ?? "none"}:${snapshot.totalBytes}`;
+    if (signature === this.indexSignature) {
+      return this.indexedCount;
+    }
+
     const candidates = this.repository
       .getAllEmbeddings()
       .map((entry) => ({
@@ -96,18 +103,12 @@ export class SqliteVecEngine {
       dimension === null
         ? []
         : candidates.filter((entry) => entry.vector.length === dimension);
-    const signature = usableCandidates
-      .map((entry) => `${entry.id}:${entry.memory.updated_at}:${entry.vector.length}`)
-      .join("|");
-
-    if (signature === this.indexSignature) {
-      return usableCandidates.length;
-    }
 
     this.repository.db.exec(`DROP TABLE IF EXISTS temp.${this.indexTableName}`);
     this.indexSignature = signature;
     this.indexedCandidates = usableCandidates;
-    this.indexDimension = dimension;
+    this.indexDimension = usableCandidates[0]?.vector.length ?? null;
+    this.indexedCount = usableCandidates.length;
 
     if (usableCandidates.length === 0 || dimension === null) {
       return 0;
@@ -126,7 +127,20 @@ export class SqliteVecEngine {
       });
     })();
 
-    return usableCandidates.length;
+    return this.indexedCount;
+  }
+
+  rebuildIndex(): number {
+    if (!this.isAvailable()) {
+      throw new Error("sqlite-vec not available");
+    }
+
+    this.repository.db.exec(`DROP TABLE IF EXISTS temp.${this.indexTableName}`);
+    this.indexSignature = "";
+    this.indexedCandidates = [];
+    this.indexDimension = null;
+    this.indexedCount = 0;
+    return this.createIndex();
   }
 
   search(queryEmbedding: Float32Array, options: SearchOptions): SearchResult[] {

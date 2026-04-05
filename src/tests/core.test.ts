@@ -16,6 +16,7 @@ import { RecallService } from "../core/recall.js";
 import { exportSnapshot } from "../core/snapshot.js";
 import type { Memory, SearchOptions } from "../core/types.js";
 import { Repository } from "../db/repository.js";
+import { embeddingCache } from "../embedding/cache.js";
 import { SearchEngine } from "../search/engine.js";
 
 const baseConfig: VegaConfig = {
@@ -24,6 +25,7 @@ const baseConfig: VegaConfig = {
   ollamaModel: "bge-m3",
   tokenBudget: 2000,
   similarityThreshold: 0.85,
+  shardingEnabled: false,
   backupRetentionDays: 7,
   apiPort: 3271,
   apiKey: undefined,
@@ -65,6 +67,7 @@ const defaultSearchOptions: SearchOptions = {
 
 const installEmbeddingMock = (vector: number[]): (() => void) => {
   const originalFetch = globalThis.fetch;
+  embeddingCache.clear();
 
   globalThis.fetch = async (_input, init) => {
     const method = init?.method ?? "GET";
@@ -86,12 +89,14 @@ const installEmbeddingMock = (vector: number[]): (() => void) => {
   };
 
   return () => {
+    embeddingCache.clear();
     globalThis.fetch = originalFetch;
   };
 };
 
 const installDynamicEmbeddingMock = (resolver: (input: string) => number[]): (() => void) => {
   const originalFetch = globalThis.fetch;
+  embeddingCache.clear();
 
   globalThis.fetch = async (_input, init) => {
     const method = init?.method ?? "GET";
@@ -118,6 +123,7 @@ const installDynamicEmbeddingMock = (resolver: (input: string) => number[]): (()
   };
 
   return () => {
+    embeddingCache.clear();
     globalThis.fetch = originalFetch;
   };
 };

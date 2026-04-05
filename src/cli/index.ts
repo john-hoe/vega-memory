@@ -22,12 +22,14 @@ import { registerMaintenanceCommands } from "./commands/maintenance.js";
 import { registerMigrateCommand } from "./commands/migrate.js";
 import { registerQualityCommand } from "./commands/quality.js";
 import { registerRecallCommand } from "./commands/recall.js";
+import { registerReindexCommand } from "./commands/reindex.js";
 import { registerScreenshotCommand } from "./commands/screenshot.js";
 import { registerSessionCommands } from "./commands/session.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerStoreCommand } from "./commands/store.js";
 import { registerPluginCommands } from "./commands/plugins.js";
 import { registerTemplateCommands } from "./commands/templates.js";
+import { registerTuneCommand } from "./commands/tune.js";
 import { CompactService } from "../core/compact.js";
 import { CodeIndexService } from "../core/code-index.js";
 import { CompressionService } from "../core/compression.js";
@@ -44,6 +46,7 @@ import { Repository } from "../db/repository.js";
 import { PluginLoader } from "../plugins/loader.js";
 import { TemplateMarketplace } from "../plugins/marketplace.js";
 import { SearchEngine } from "../search/engine.js";
+import { RelevanceTuner } from "../search/tuning.js";
 
 const ensureDataDirectory = (dbPath: string): void => {
   if (dbPath === ":memory:") {
@@ -101,9 +104,11 @@ async function main(): Promise<void> {
   const qualityService = new QualityService(repository, config);
   const pluginLoader = new PluginLoader();
   const templateMarketplace = new TemplateMarketplace(config);
+  const relevanceTuner = new RelevanceTuner(repository);
 
   registerStoreCommand(program, memoryService);
   registerRecallCommand(program, recallService);
+  registerReindexCommand(program, searchEngine);
   registerListCommand(program, recallService);
   registerCompressionCommand(program, compressionService, repository);
   registerDocGeneratorCommand(program, docGenerator);
@@ -123,6 +128,7 @@ async function main(): Promise<void> {
   registerBenchmarkCommand(program, repository, memoryService, recallService, config);
   registerPluginCommands(program, pluginLoader);
   registerTemplateCommands(program, templateMarketplace, repository);
+  registerTuneCommand(program, relevanceTuner);
 
   try {
     await program.parseAsync(process.argv);

@@ -18,6 +18,7 @@ const baseConfig: VegaConfig = {
   ollamaModel: "bge-m3",
   tokenBudget: 2000,
   similarityThreshold: 0.85,
+  shardingEnabled: false,
   backupRetentionDays: 7,
   observerEnabled: false,
   apiPort: 3271,

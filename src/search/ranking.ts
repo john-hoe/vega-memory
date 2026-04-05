@@ -7,8 +7,8 @@ const VERIFIED_WEIGHTS = {
   conflict: 0.5
 } as const;
 
-const VECTOR_WEIGHT = 0.7;
-const BM25_WEIGHT = 0.3;
+export const DEFAULT_VECTOR_WEIGHT = 0.7;
+export const DEFAULT_BM25_WEIGHT = 0.3;
 
 export const computeRecency = (accessedAt: string, decayRate: number): number => {
   const daysSince = (Date.now() - Date.parse(accessedAt)) / 86_400_000;
@@ -56,13 +56,13 @@ export const hybridSearch = (
   const rankedBm25Results = [...bm25Results].sort((left, right) => left.rank - right.rank);
 
   rankedVectorResults.forEach((result, index) => {
-    const reciprocalRankScore = reciprocalRank(index + 1) * VECTOR_WEIGHT;
+    const reciprocalRankScore = reciprocalRank(index + 1) * DEFAULT_VECTOR_WEIGHT;
     memoryById.set(result.memory.id, result.memory);
     fusedScores.set(result.memory.id, (fusedScores.get(result.memory.id) ?? 0) + reciprocalRankScore);
   });
 
   rankedBm25Results.forEach((result, index) => {
-    const reciprocalRankScore = reciprocalRank(index + 1) * BM25_WEIGHT;
+    const reciprocalRankScore = reciprocalRank(index + 1) * DEFAULT_BM25_WEIGHT;
     memoryById.set(result.memory.id, result.memory);
     fusedScores.set(result.memory.id, (fusedScores.get(result.memory.id) ?? 0) + reciprocalRankScore);
   });

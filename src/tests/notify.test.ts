@@ -19,6 +19,7 @@ const createConfig = (overrides: Partial<VegaConfig> = {}): VegaConfig => ({
   ollamaModel: "bge-m3",
   tokenBudget: 2000,
   similarityThreshold: 0.85,
+  shardingEnabled: false,
   backupRetentionDays: 7,
   apiPort: 3271,
   apiKey: undefined,

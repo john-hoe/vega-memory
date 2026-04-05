@@ -63,6 +63,27 @@ interface MetadataRow {
   updated_at: string;
 }
 
+interface CountRow {
+  total: number;
+}
+
+interface EmbeddingIndexSnapshotRow {
+  total: number;
+  latest_updated_at: string | null;
+  total_bytes: number | null;
+}
+
+interface PerformanceLogRow {
+  timestamp: string;
+  operation: string;
+  latency_ms: number;
+  memory_count: number;
+  result_count: number;
+  avg_similarity: number | null;
+  result_types: string | null;
+  bm25_result_count: number | null;
+}
+
 interface EntityRow {
   id: string;
   name: string;
@@ -121,6 +142,49 @@ function mapEntity(row: EntityRow): Entity {
 
 function mapEntityRelation(row: EntityRelationRow): EntityRelation {
   return row;
+}
+
+function mapPerformanceLog(row: PerformanceLogRow): PerformanceLog {
+  return {
+    timestamp: row.timestamp,
+    operation: row.operation,
+    latency_ms: row.latency_ms,
+    memory_count: row.memory_count,
+    result_count: row.result_count,
+    avg_similarity: row.avg_similarity,
+    result_types: parseJsonArray(row.result_types ?? "[]") as PerformanceLog["result_types"],
+    bm25_result_count: row.bm25_result_count ?? 0
+  };
+}
+
+function appendScopedClauses(
+  clauses: string[],
+  params: unknown[],
+  project?: string,
+  type?: string,
+  includeGlobal = false,
+  embeddingRequired = false
+): void {
+  if (embeddingRequired) {
+    clauses.push("embedding IS NOT NULL");
+  }
+
+  clauses.push("status = 'active'");
+
+  if (project) {
+    if (includeGlobal) {
+      clauses.push("(project = ? OR scope = 'global')");
+      params.push(project);
+    } else {
+      clauses.push("project = ?");
+      params.push(project);
+    }
+  }
+
+  if (type) {
+    clauses.push("type = ?");
+    params.push(type);
+  }
 }
 
 function normalizeSort(sort?: string): string {
@@ -482,22 +546,9 @@ export class Repository {
     type?: string,
     includeGlobal = false
   ): { id: string; embedding: Buffer; memory: Memory }[] {
-    const clauses = ["embedding IS NOT NULL", "status = 'active'"];
+    const clauses: string[] = [];
     const params: unknown[] = [];
-
-    if (project) {
-      if (includeGlobal) {
-        clauses.push("(project = ? OR scope = 'global')");
-        params.push(project);
-      } else {
-        clauses.push("project = ?");
-        params.push(project);
-      }
-    }
-    if (type) {
-      clauses.push("type = ?");
-      params.push(type);
-    }
+    appendScopedClauses(clauses, params, project, type, includeGlobal, true);
 
     const rows = this.db
       .prepare<unknown[], MemoryRow>(`SELECT * FROM memories WHERE ${clauses.join(" AND ")}`)
@@ -508,6 +559,84 @@ export class Repository {
       embedding: row.embedding as Buffer,
       memory: mapMemory(row)
     }));
+  }
+
+  getEmbeddingChunk(
+    offset: number,
+    limit: number,
+    project?: string,
+    type?: string,
+    includeGlobal = false
+  ): { id: string; embedding: Buffer; memory: Memory }[] {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    appendScopedClauses(clauses, params, project, type, includeGlobal, true);
+
+    const rows = this.db
+      .prepare<unknown[], MemoryRow>(
+        `SELECT * FROM memories
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY updated_at DESC
+         LIMIT ? OFFSET ?`
+      )
+      .all(...params, limit, offset);
+
+    return rows.map((row) => ({
+      id: row.id,
+      embedding: row.embedding as Buffer,
+      memory: mapMemory(row)
+    }));
+  }
+
+  countEmbeddings(project?: string, type?: string, includeGlobal = false): number {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    appendScopedClauses(clauses, params, project, type, includeGlobal, true);
+
+    const row = this.db
+      .prepare<unknown[], CountRow>(
+        `SELECT COUNT(*) AS total FROM memories WHERE ${clauses.join(" AND ")}`
+      )
+      .get(...params);
+
+    return row?.total ?? 0;
+  }
+
+  countActiveMemories(project?: string, type?: string, includeGlobal = false): number {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    appendScopedClauses(clauses, params, project, type, includeGlobal);
+
+    const row = this.db
+      .prepare<unknown[], CountRow>(
+        `SELECT COUNT(*) AS total FROM memories WHERE ${clauses.join(" AND ")}`
+      )
+      .get(...params);
+
+    return row?.total ?? 0;
+  }
+
+  getEmbeddingIndexSnapshot(): {
+    count: number;
+    latestUpdatedAt: string | null;
+    totalBytes: number;
+  } {
+    const row = this.db
+      .prepare<[], EmbeddingIndexSnapshotRow>(
+        `SELECT
+           COUNT(*) AS total,
+           MAX(updated_at) AS latest_updated_at,
+           SUM(length(embedding)) AS total_bytes
+         FROM memories
+         WHERE embedding IS NOT NULL AND status = 'active'`
+      )
+      .get();
+
+    return {
+      count: row?.total ?? 0,
+      latestUpdatedAt: row?.latest_updated_at ?? null,
+      totalBytes: row?.total_bytes ?? 0
+    };
   }
 
   createSession(session: Session): void {
@@ -691,17 +820,51 @@ export class Repository {
 
   logPerformance(entry: PerformanceLog): void {
     this.db
-      .prepare<[string, string, number, number, number]>(
-        `INSERT INTO performance_log (timestamp, operation, latency_ms, memory_count, result_count)
-         VALUES (?, ?, ?, ?, ?)`
+      .prepare<[string, string, number, number, number, number | null, string, number]>(
+        `INSERT INTO performance_log (
+           timestamp,
+           operation,
+           latency_ms,
+           memory_count,
+           result_count,
+           avg_similarity,
+           result_types,
+           bm25_result_count
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         entry.timestamp,
         entry.operation,
         entry.latency_ms,
         entry.memory_count,
-        entry.result_count
+        entry.result_count,
+        entry.avg_similarity ?? null,
+        serializeJsonArray((entry.result_types ?? []) as string[]),
+        entry.bm25_result_count ?? 0
       );
+  }
+
+  getRecentPerformanceLogs(limit = 100, operations?: string | string[]): PerformanceLog[] {
+    const operationList =
+      operations === undefined ? [] : Array.isArray(operations) ? operations : [operations];
+    const params: unknown[] = [];
+    const where =
+      operationList.length === 0
+        ? ""
+        : `WHERE operation IN (${operationList.map(() => "?").join(", ")})`;
+
+    const rows = this.db
+      .prepare<unknown[], PerformanceLogRow>(
+        `SELECT *
+         FROM performance_log
+         ${where}
+         ORDER BY timestamp DESC
+         LIMIT ?`
+      )
+      .all(...operationList, limit);
+
+    return rows.map(mapPerformanceLog);
   }
 
   getAuditLog(filters?: {
