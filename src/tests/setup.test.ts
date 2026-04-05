@@ -4,10 +4,19 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
-const cliPath = join(process.cwd(), "dist", "cli", "index.js");
-const expectedMcpEntryPath = join(process.cwd(), "dist", "index.js");
+const projectRoot = process.cwd();
+const cliPath = join(projectRoot, "dist", "cli", "index.js");
+const cliModuleUrl = pathToFileURL(cliPath).href;
+const expectedMcpEntryPath = join(projectRoot, "dist", "index.js");
+const childBaseEnv = Object.fromEntries(
+  Object.entries(process.env).filter(
+    ([key]) => !key.startsWith("VEGA_") && key !== "OLLAMA_BASE_URL" && key !== "OLLAMA_MODEL"
+  )
+);
+const cliBootstrap = `process.argv.splice(1, 0, ${JSON.stringify(cliPath)}); await import(${JSON.stringify(cliModuleUrl)});`;
 
 interface CliResult {
   status: number | null;
@@ -17,13 +26,17 @@ interface CliResult {
 
 const runCli = (args: string[], homeDirectory: string): Promise<CliResult> =>
   new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cliPath, ...args], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        HOME: homeDirectory
+    const child = spawn(
+      process.execPath,
+      ["--input-type=module", "-e", cliBootstrap, "--", ...args],
+      {
+        cwd: projectRoot,
+        env: {
+          ...childBaseEnv,
+          HOME: homeDirectory
+        }
       }
-    });
+    );
     let stdout = "";
     let stderr = "";
 

@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { loadConfig } from "../config.js";
@@ -21,6 +22,16 @@ const ensureDataDirectory = (dbPath: string): void => {
 
   mkdirSync(dirname(resolve(dbPath)), { recursive: true });
 };
+
+const projectRoot = process.cwd();
+const cliPath = join(projectRoot, "dist", "cli", "index.js");
+const cliModuleUrl = pathToFileURL(cliPath).href;
+const childBaseEnv = Object.fromEntries(
+  Object.entries(process.env).filter(
+    ([key]) => !key.startsWith("VEGA_") && key !== "OLLAMA_BASE_URL" && key !== "OLLAMA_MODEL"
+  )
+);
+const cliBootstrap = `process.argv.splice(1, 0, ${JSON.stringify(cliPath)}); await import(${JSON.stringify(cliModuleUrl)});`;
 
 test("E2E: Vega Memory System", async (t) => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-e2e-"));
@@ -221,15 +232,19 @@ test("E2E: Vega Memory System", async (t) => {
     });
 
     await t.test("CLI health command runs without error", () => {
-      const output = execFileSync("node", ["dist/cli/index.js", "health"], {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          VEGA_DB_PATH: dbPath,
-          OLLAMA_BASE_URL: "http://localhost:99999"
+      const output = execFileSync(
+        process.execPath,
+        ["--input-type=module", "-e", cliBootstrap, "--", "health"],
+        {
+          cwd: projectRoot,
+          encoding: "utf8",
+          env: {
+            ...childBaseEnv,
+            VEGA_DB_PATH: dbPath,
+            OLLAMA_BASE_URL: "http://localhost:99999"
+          }
         }
-      });
+      );
 
       assert.match(output, /memory count:/i);
     });

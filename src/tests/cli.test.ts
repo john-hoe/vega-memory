@@ -3,18 +3,27 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { Repository } from "../db/repository.js";
 
-const cliPath = join(process.cwd(), "dist", "cli", "index.js");
+const projectRoot = process.cwd();
+const cliPath = join(projectRoot, "dist", "cli", "index.js");
+const cliModuleUrl = pathToFileURL(cliPath).href;
+const childBaseEnv = Object.fromEntries(
+  Object.entries(process.env).filter(
+    ([key]) => !key.startsWith("VEGA_") && key !== "OLLAMA_BASE_URL" && key !== "OLLAMA_MODEL"
+  )
+);
+const cliBootstrap = `process.argv.splice(1, 0, ${JSON.stringify(cliPath)}); await import(${JSON.stringify(cliModuleUrl)});`;
 
 const runCli = (args: string[], env: NodeJS.ProcessEnv): string =>
-  execFileSync(process.execPath, [cliPath, ...args], {
-    cwd: process.cwd(),
+  execFileSync(process.execPath, ["--input-type=module", "-e", cliBootstrap, "--", ...args], {
+    cwd: projectRoot,
     encoding: "utf8",
     env: {
-      ...process.env,
+      ...childBaseEnv,
       ...env
     }
   });
