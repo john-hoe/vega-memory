@@ -1,0 +1,8 @@
+{
+  "name": "vega-remote-client",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5"
+  }
+}
