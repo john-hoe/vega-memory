@@ -74,8 +74,9 @@ export class QualityService {
     };
   }
 
-  async degradeLowQuality(threshold = 0.3): Promise<number> {
+  async degradeLowQuality(project?: string, threshold = 0.3): Promise<number> {
     const memories = this.repository.listMemories({
+      project,
       status: "active",
       limit: 1_000_000
     });
@@ -87,8 +88,13 @@ export class QualityService {
         continue;
       }
 
+      const nextImportance = Math.max(0, memory.importance - 0.1);
+      if (nextImportance === memory.importance) {
+        continue;
+      }
+
       this.repository.updateMemory(memory.id, {
-        importance: Math.max(0, memory.importance - 0.1),
+        importance: nextImportance,
         updated_at
       });
       degraded += 1;

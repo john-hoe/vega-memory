@@ -60,6 +60,80 @@ test("CLI store and list commands work together", () => {
   }
 });
 
+test("CLI Phase 5 commands support JSON output", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-phase5-json-"));
+  const dbPath = join(tempDir, "memory.db");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999"
+  };
+  const repository = new Repository(dbPath);
+
+  try {
+    repository.createMemory({
+      id: "phase5-decision",
+      type: "decision",
+      project: "vega",
+      title: "Use SQLite",
+      content: "Use SQLite for local persistence.",
+      embedding: null,
+      importance: 0.6,
+      source: "explicit",
+      tags: ["sqlite"],
+      created_at: "2026-04-01T00:00:00.000Z",
+      updated_at: "2026-04-01T00:00:00.000Z",
+      accessed_at: "2026-04-01T00:00:00.000Z",
+      status: "active",
+      verified: "verified",
+      scope: "project",
+      accessed_projects: ["vega"]
+    });
+    repository.createMemory({
+      id: "phase5-long",
+      type: "project_context",
+      project: "vega",
+      title: "Long memory",
+      content: "L".repeat(1500),
+      embedding: null,
+      importance: 0.5,
+      source: "auto",
+      tags: ["long"],
+      created_at: "2026-04-01T00:00:00.000Z",
+      updated_at: "2026-04-01T00:00:00.000Z",
+      accessed_at: "2026-04-01T00:00:00.000Z",
+      status: "active",
+      verified: "unverified",
+      scope: "project",
+      accessed_projects: ["vega"]
+    });
+
+    const docs = JSON.parse(
+      runCli(["generate-docs", "--project", "vega", "--type", "readme", "--json"], env)
+    ) as { readme: string };
+    const quality = JSON.parse(runCli(["quality", "--json"], env)) as {
+      total: number;
+      avg_score: number;
+      low_quality: unknown[];
+      degraded: number;
+    };
+    const compression = JSON.parse(
+      runCli(["compress", "--project", "vega", "--dry-run", "--json"], env)
+    ) as {
+      eligible: number;
+      total_chars: number;
+    };
+
+    assert.match(docs.readme, /^# vega README/m);
+    assert.equal(quality.total, 2);
+    assert.equal(typeof quality.avg_score, "number");
+    assert.equal(compression.eligible, 1);
+    assert.equal(compression.total_chars, 1500);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CLI export and import support encrypted JSON", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-export-encrypted-"));
   const sourceDbPath = join(tempDir, "source.db");

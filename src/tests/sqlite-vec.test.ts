@@ -78,11 +78,12 @@ test("SearchEngine falls back to BruteForceEngine when sqlite-vec unavailable", 
   const repository = new Repository(":memory:");
   const restoreLoadExtension = forceMissingExtension(repository);
   const messages: string[] = [];
-  const originalLog = console.log;
+  const originalWrite = process.stderr.write.bind(process.stderr);
 
-  console.log = (...values: unknown[]) => {
-    messages.push(values.map((value) => String(value)).join(" "));
-  };
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    messages.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
 
   try {
     repository.createMemory(createMemory());
@@ -99,7 +100,7 @@ test("SearchEngine falls back to BruteForceEngine when sqlite-vec unavailable", 
       ["memory-1"]
     );
   } finally {
-    console.log = originalLog;
+    process.stderr.write = originalWrite;
     restoreLoadExtension();
     repository.close();
   }

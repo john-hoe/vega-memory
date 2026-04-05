@@ -20,43 +20,53 @@ const toSection = (heading: string, content: string): string => `## ${heading}\n
 const sortChronologically = (memories: Memory[]): Memory[] =>
   [...memories].sort((left, right) => Date.parse(left.created_at) - Date.parse(right.created_at));
 
+const isUsableForDocs = (memory: Memory): boolean =>
+  memory.status === "active" &&
+  memory.verified !== "rejected" &&
+  memory.verified !== "conflict";
+
 export class DocGenerator {
   constructor(private readonly repository: Repository) {}
 
+  private listDocMemories(filters: {
+    project?: string;
+    type: Memory["type"];
+    scope?: Memory["scope"];
+    sort: string;
+  }): Memory[] {
+    return this.repository
+      .listMemories({
+        ...filters,
+        status: "active",
+        limit: 10_000
+      })
+      .filter(isUsableForDocs);
+  }
+
   generateProjectReadme(project: string): string {
-    const decisions = this.repository.listMemories({
+    const decisions = this.listDocMemories({
       project,
       type: "decision",
-      status: "active",
-      limit: 10_000,
       sort: "created_at ASC"
     });
-    const pitfalls = this.repository.listMemories({
+    const pitfalls = this.listDocMemories({
       project,
       type: "pitfall",
-      status: "active",
-      limit: 10_000,
       sort: "created_at ASC"
     });
-    const tasks = this.repository.listMemories({
+    const tasks = this.listDocMemories({
       project,
       type: "task_state",
-      status: "active",
-      limit: 10_000,
       sort: "updated_at DESC"
     });
-    const context = this.repository.listMemories({
+    const context = this.listDocMemories({
       project,
       type: "project_context",
-      status: "active",
-      limit: 10_000,
       sort: "created_at ASC"
     });
-    const preferences = this.repository.listMemories({
+    const preferences = this.listDocMemories({
       type: "preference",
       scope: "global",
-      status: "active",
-      limit: 10_000,
       sort: "importance DESC"
     });
 
@@ -75,10 +85,9 @@ export class DocGenerator {
 
   generateDecisionLog(project: string): string {
     const decisions = sortChronologically(
-      this.repository.listMemories({
+      this.listDocMemories({
         project,
         type: "decision",
-        limit: 10_000,
         sort: "created_at ASC"
       })
     );
@@ -97,10 +106,9 @@ export class DocGenerator {
   }
 
   generatePitfallGuide(project: string): string {
-    const pitfalls = this.repository.listMemories({
+    const pitfalls = this.listDocMemories({
       project,
       type: "pitfall",
-      limit: 10_000,
       sort: "created_at ASC"
     });
     const grouped = new Map<string, Memory[]>();

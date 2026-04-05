@@ -21,8 +21,16 @@ const AUTO_EXTRACT_PATTERNS: Array<{ type: MemoryType; pattern: RegExp }> = [
 
 const now = (): string => new Date().toISOString();
 
+const SESSION_BUDGET_RATIOS = {
+  preferences: 0.1,
+  activeTasks: 0.2,
+  context: 0.2
+} as const;
+
+const estimateMemoryTokens = (memory: Memory): number => memory.content.length / 4;
+
 const estimateTokens = (memories: Memory[]): number =>
-  memories.reduce((total, memory) => total + memory.content.length / 4, 0);
+  memories.reduce((total, memory) => total + estimateMemoryTokens(memory), 0);
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
 
@@ -46,6 +54,14 @@ const splitSentences = (summary: string): string[] =>
 const isInProjectScope = (memory: Memory, project: string): boolean =>
   memory.project === project || memory.scope === "global";
 
+const isSessionVisible = (memory: Memory): boolean =>
+  memory.status === "active" &&
+  memory.verified !== "rejected" &&
+  memory.verified !== "conflict";
+
+const isRelevantMemoryType = (memory: Memory): boolean =>
+  memory.type === "pitfall" || memory.type === "decision" || memory.type === "insight";
+
 const toRelevantResult = (memory: Memory, finalScore: number): SearchResult => ({
   memory,
   similarity: finalScore,
@@ -64,6 +80,53 @@ const dedupeRelevantResults = (results: SearchResult[]): SearchResult[] => {
   }
 
   return [...uniqueResults.values()];
+};
+
+const takeMemoriesWithinBudget = (memories: Memory[], tokenBudget: number): Memory[] => {
+  if (tokenBudget <= 0) {
+    return [];
+  }
+
+  const kept: Memory[] = [];
+  let usedTokens = 0;
+
+  for (const memory of memories) {
+    const memoryTokens = estimateMemoryTokens(memory);
+
+    if (memoryTokens > tokenBudget - usedTokens) {
+      continue;
+    }
+
+    kept.push(memory);
+    usedTokens += memoryTokens;
+  }
+
+  return kept;
+};
+
+const takeRelevantResultsWithinBudget = (
+  results: SearchResult[],
+  tokenBudget: number
+): SearchResult[] => {
+  if (tokenBudget <= 0) {
+    return [];
+  }
+
+  const kept: SearchResult[] = [];
+  let usedTokens = 0;
+
+  for (const result of results) {
+    const memoryTokens = estimateMemoryTokens(result.memory);
+
+    if (memoryTokens > tokenBudget - usedTokens) {
+      continue;
+    }
+
+    kept.push(result);
+    usedTokens += memoryTokens;
+  }
+
+  return kept;
 };
 
 export class SessionService {
@@ -85,13 +148,15 @@ export class SessionService {
     const normalizedTaskHint = taskHint?.trim() ?? "";
     const taskHintKeywords = normalizedTaskHint ? extractTaskHintKeywords(normalizedTaskHint) : [];
 
-    const preferences = this.repository.listMemories({
-      type: "preference",
-      status: "active",
-      scope: "global",
-      limit: 10_000,
-      sort: "importance DESC"
-    });
+    const preferences = this.repository
+      .listMemories({
+        type: "preference",
+        status: "active",
+        scope: "global",
+        limit: 10_000,
+        sort: "importance DESC"
+      })
+      .filter(isSessionVisible);
     const globalRelevant = [
       ...this.repository.listMemories({
         scope: "global",
@@ -114,19 +179,23 @@ export class SessionService {
         limit: 10,
         sort: "importance DESC"
       })
-    ];
-    const active_tasks = this.repository.listMemories({
-      type: "task_state",
-      status: "active",
-      project,
-      limit: 10_000
-    });
-    const context = this.repository.listMemories({
-      type: "project_context",
-      status: "active",
-      project,
-      limit: 10_000
-    });
+    ].filter(isSessionVisible);
+    const active_tasks = this.repository
+      .listMemories({
+        type: "task_state",
+        status: "active",
+        project,
+        limit: 10_000
+      })
+      .filter(isSessionVisible);
+    const context = this.repository
+      .listMemories({
+        type: "project_context",
+        status: "active",
+        project,
+        limit: 10_000
+      })
+      .filter(isSessionVisible);
     const relevantResults =
       taskHintKeywords.length > 0
         ? (await this.recallService.recall(normalizedTaskHint, {
@@ -137,12 +206,21 @@ export class SessionService {
             finalScore:
               result.memory.project === project ? result.finalScore : result.finalScore * 0.5
           }))
+            .filter(
+              (result) => isRelevantMemoryType(result.memory) && result.memory.verified !== "conflict"
+            )
         : [];
+    const excludedIds = new Set([
+      ...preferences.map((memory) => memory.id),
+      ...active_tasks.map((memory) => memory.id),
+      ...context.map((memory) => memory.id)
+    ]);
     const allRelevantResults = dedupeRelevantResults([
       ...globalRelevant.map((memory) => toRelevantResult(memory, memory.importance)),
       ...relevantResults
-    ]);
+    ]).filter((result) => !excludedIds.has(result.memory.id));
     const allMemories = this.repository.listMemories({
+      status: "active",
       limit: 10_000,
       sort: "created_at DESC"
     });
@@ -154,7 +232,7 @@ export class SessionService {
       .slice(0, 3);
     const conflicts = allMemories.filter(
       (memory) => memory.verified === "conflict" && isInProjectScope(memory, project)
-    );
+    ).sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
     const proactive_warnings = taskHintKeywords.length
       ? this.repository
           .listMemories({
@@ -164,7 +242,7 @@ export class SessionService {
             sort: "importance DESC"
           })
           .filter((memory) => {
-            if (!isInProjectScope(memory, project)) {
+            if (!isInProjectScope(memory, project) || !isSessionVisible(memory)) {
               return false;
             }
 
@@ -174,51 +252,64 @@ export class SessionService {
           .map((memory) => memory.content)
       : [];
 
-    let trimmedRelevantResults = [...allRelevantResults];
-    let token_estimate = estimateTokens([
-      ...preferences,
-      ...active_tasks,
-      ...context,
-      ...trimmedRelevantResults.map((result) => result.memory),
-      ...recent_unverified,
-      ...conflicts
+    const preferenceBudget = Math.floor(this.config.tokenBudget * SESSION_BUDGET_RATIOS.preferences);
+    const activeTaskBudget = Math.floor(this.config.tokenBudget * SESSION_BUDGET_RATIOS.activeTasks);
+    const contextBudget = Math.floor(this.config.tokenBudget * SESSION_BUDGET_RATIOS.context);
+    const trimmedPreferences = takeMemoriesWithinBudget(preferences, preferenceBudget);
+    const trimmedActiveTasks = takeMemoriesWithinBudget(active_tasks, activeTaskBudget);
+    const trimmedContext = takeMemoriesWithinBudget(context, contextBudget);
+    const baseBudgetUsage = estimateTokens([
+      ...trimmedPreferences,
+      ...trimmedActiveTasks,
+      ...trimmedContext
     ]);
-
-    if (token_estimate > this.config.tokenBudget && trimmedRelevantResults.length > 0) {
-      const byLowestScoreFirst = [...trimmedRelevantResults].sort(
-        (left, right) => left.finalScore - right.finalScore
-      );
-
-      while (token_estimate > this.config.tokenBudget && byLowestScoreFirst.length > 0) {
-        const removed = byLowestScoreFirst.shift();
-        if (!removed) {
-          break;
-        }
-
-        trimmedRelevantResults = trimmedRelevantResults.filter(
-          (result) => result.memory.id !== removed.memory.id
-        );
-        token_estimate = estimateTokens([
-          ...preferences,
-          ...active_tasks,
-          ...context,
-          ...trimmedRelevantResults.map((result) => result.memory),
-          ...recent_unverified,
-          ...conflicts
-        ]);
-      }
-    }
+    const trimmedRecentUnverified = takeMemoriesWithinBudget(
+      recent_unverified,
+      Math.max(0, this.config.tokenBudget - baseBudgetUsage)
+    );
+    const trimmedConflicts = takeMemoriesWithinBudget(
+      conflicts,
+      Math.max(
+        0,
+        this.config.tokenBudget -
+          estimateTokens([
+            ...trimmedPreferences,
+            ...trimmedActiveTasks,
+            ...trimmedContext,
+            ...trimmedRecentUnverified
+          ])
+      )
+    );
+    const usedNonRelevantBudget = estimateTokens([
+      ...trimmedPreferences,
+      ...trimmedActiveTasks,
+      ...trimmedContext,
+      ...trimmedRecentUnverified,
+      ...trimmedConflicts
+    ]);
+    const trimmedRelevantResults = takeRelevantResultsWithinBudget(
+      [...allRelevantResults].sort((left, right) => right.finalScore - left.finalScore),
+      Math.max(0, this.config.tokenBudget - usedNonRelevantBudget)
+    );
+    const token_estimate = estimateTokens([
+      ...trimmedPreferences,
+      ...trimmedActiveTasks,
+      ...trimmedContext,
+      ...trimmedRelevantResults.map((result) => result.memory),
+      ...trimmedRecentUnverified,
+      ...trimmedConflicts
+    ]);
 
     return {
       project,
-      active_tasks,
-      preferences,
-      context,
+      active_tasks: trimmedActiveTasks,
+      preferences: trimmedPreferences,
+      context: trimmedContext,
       relevant: [...trimmedRelevantResults]
         .sort((left, right) => right.finalScore - left.finalScore)
         .map((result) => result.memory),
-      recent_unverified,
-      conflicts,
+      recent_unverified: trimmedRecentUnverified,
+      conflicts: trimmedConflicts,
       proactive_warnings,
       token_estimate
     };
@@ -252,7 +343,7 @@ export class SessionService {
           source: "auto"
         });
 
-        if (stored.id) {
+        if (stored.id && (stored.action === "created" || stored.action === "conflict")) {
           memories_created.push(stored.id);
         }
       }
@@ -270,7 +361,7 @@ export class SessionService {
             source: "auto"
           });
 
-          if (stored.id) {
+          if (stored.id && (stored.action === "created" || stored.action === "conflict")) {
             memories_created.push(stored.id);
           }
         }

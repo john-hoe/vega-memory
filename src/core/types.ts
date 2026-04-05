@@ -161,8 +161,10 @@ export interface DiagnoseReport {
   can_auto_fix: boolean;
 }
 
+export type ExtractableMemoryType = Exclude<MemoryType, "insight">;
+
 export interface ExtractionCandidate {
-  type: MemoryType;
+  type: ExtractableMemoryType;
   title: string;
   content: string;
   tags: string[];

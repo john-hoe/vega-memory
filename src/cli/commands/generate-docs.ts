@@ -28,12 +28,13 @@ export function registerDocGeneratorCommand(
     .description("Generate project documentation from stored memories")
     .requiredOption("--project <project>", "project name")
     .option("--output <dir>", "output directory")
+    .option("--json", "print JSON")
     .addOption(
       new Option("--type <type>", "document type")
         .choices(["readme", "decisions", "pitfalls", "all"])
         .default("all")
     )
-    .action((options: { project: string; output?: string; type: DocType }) => {
+    .action((options: { project: string; output?: string; type: DocType; json?: boolean }) => {
       const docs = buildDocs(docGenerator, options.project);
       const selected =
         options.type === "all"
@@ -42,14 +43,44 @@ export function registerDocGeneratorCommand(
 
       if (options.output) {
         const outputDir = resolve(options.output);
+        const written: Record<string, string> = {};
         mkdirSync(outputDir, { recursive: true });
 
         for (const docType of selected) {
           const outputPath = join(outputDir, DOC_FILES[docType]);
           writeFileSync(outputPath, `${docs[docType]}\n`, "utf8");
+          written[docType] = outputPath;
+        }
+
+        if (options.json) {
+          console.log(
+            JSON.stringify(
+              {
+                project: options.project,
+                written
+              },
+              null,
+              2
+            )
+          );
+          return;
+        }
+
+        for (const outputPath of Object.values(written)) {
           console.log(outputPath);
         }
 
+        return;
+      }
+
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            Object.fromEntries(selected.map((docType) => [docType, docs[docType]])),
+            null,
+            2
+          )
+        );
         return;
       }
 

@@ -224,9 +224,11 @@ export interface CreateMCPServerOptions {
     compact(project?: string): CompactResult | Promise<CompactResult>;
   };
   compressionService?: {
-    compressMemory(
-      memoryId: string
-    ): Promise<{ original_length: number; compressed_length: number }>;
+    compressMemory(memoryId: string): Promise<{
+      original_length: number;
+      compressed_length: number;
+      applied: boolean;
+    }>;
     compressBatch(
       project?: string,
       minLength?: number
@@ -374,6 +376,7 @@ export function createMCPServer({
     "Update an existing memory entry.",
     {
       id: z.string().trim().min(1),
+      title: z.string().trim().min(1).optional(),
       content: z.string().trim().min(1).optional(),
       importance: z.number().min(0).max(1).optional(),
       tags: z.array(z.string().trim().min(1)).optional()
@@ -381,6 +384,7 @@ export function createMCPServer({
     async (args) =>
       runTool(repository, "memory_update", args, observer, async () => {
         await memoryService.update(args.id, {
+          title: args.title,
           content: args.content,
           importance: args.importance,
           tags: args.tags
@@ -517,7 +521,8 @@ export function createMCPServer({
       "Compress one memory or a batch of long memories with Ollama.",
       {
         memory_id: z.string().trim().min(1).optional(),
-        project: z.string().trim().min(1).optional()
+        project: z.string().trim().min(1).optional(),
+        min_length: z.number().int().positive().optional()
       },
       async (args) =>
         runTool(repository, "memory_compress", args, observer, async () => {
@@ -526,15 +531,48 @@ export function createMCPServer({
 
             return {
               result: result as Record<string, unknown>,
-              resultCount: result.compressed_length < result.original_length ? 1 : 0
+              resultCount: result.applied ? 1 : 0
             };
           }
 
-          const result = await compressionService.compressBatch(args.project);
+          const result = await compressionService.compressBatch(args.project, args.min_length);
 
           return {
             result: result as Record<string, unknown>,
             resultCount: result.compressed
+          };
+        })
+    );
+  }
+
+  if (observer.enabled && observer.service !== undefined) {
+    server.tool(
+      "memory_observe",
+      "Forward external tool execution data to Vega's passive observer.",
+      {
+        tool_name: z.string().trim().min(1),
+        project: z.string().trim().min(1).optional(),
+        input: z.unknown().optional(),
+        output: z.unknown().optional()
+      },
+      async (args) =>
+        runTool(repository, "memory_observe", args, { enabled: false }, async () => {
+          const observed = observer.service?.shouldObserve(args.tool_name) ?? false;
+          const stored_id = observed
+            ? await observer.service?.observeToolOutput(
+                args.tool_name,
+                args.input,
+                args.output,
+                args.project ?? "global"
+              )
+            : null;
+
+          return {
+            result: {
+              observed,
+              stored_id
+            },
+            resultCount: stored_id ? 1 : 0
           };
         })
     );

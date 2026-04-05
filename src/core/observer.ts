@@ -5,7 +5,8 @@ import type { StoreResult } from "./types.js";
 import { MemoryService } from "./memory.js";
 
 const SHELL_TOOL_PATTERN = /(^|[_\s-])(shell|bash|zsh|terminal|exec)([_\s-]|$)/i;
-const FILE_WRITE_TOOL_PATTERN = /(^|[_\s-])(write|edit|patch|save|update_file)([_\s-]|$)/i;
+const FILE_WRITE_TOOL_PATTERN =
+  /(^|[_\s-])(write|edit|patch|save|update_file|create_file|apply_patch|replace_content|update_content)([_\s-]|$)/i;
 const READ_ONLY_TOOL_PATTERN = /(^|[_\s-])(read|open|find|search|list|view|screenshot|click|navigate)([_\s-]|$)/i;
 const ERROR_PATTERN =
   /(?:^|\b)(error|failed|failure|exception|traceback|permission denied|enoent|eacces)\b/i;

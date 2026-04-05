@@ -472,6 +472,75 @@ test("sessionStart scopes recent unverified memories and conflicts to the projec
   }
 });
 
+test("sessionStart keeps token_estimate within budget and excludes conflicts from normal context", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-budget-"));
+  const project = basename(tempDir);
+  const { repository, sessionService } = createSessionService({
+    ...baseConfig,
+    tokenBudget: 180
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "preference-big",
+        type: "preference",
+        project: "shared",
+        scope: "global",
+        verified: "verified",
+        content: "P".repeat(300)
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "task-big",
+        type: "task_state",
+        project,
+        verified: "verified",
+        content: "T".repeat(300)
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "context-big",
+        type: "project_context",
+        project,
+        verified: "verified",
+        content: "C".repeat(300)
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "global-conflict",
+        type: "decision",
+        project: "shared",
+        scope: "global",
+        verified: "conflict",
+        content: "Conflict memories should stay out of relevant."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "global-decision",
+        type: "decision",
+        project: "shared",
+        scope: "global",
+        verified: "verified",
+        content: "Verified global decision should remain eligible."
+      })
+    );
+
+    const result = await sessionService.sessionStart(tempDir);
+
+    assert.equal(result.token_estimate <= 180, true);
+    assert.equal(result.relevant.some((memory) => memory.id === "global-conflict"), false);
+    assert.equal(result.conflicts.some((memory) => memory.id === "global-conflict"), true);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("sessionEnd extracts decision from summary containing 决定", async () => {
   const restoreFetch = installEmbeddingMock([0.4, 0.6]);
   const { repository, sessionService } = createSessionService();
@@ -508,6 +577,29 @@ test("sessionEnd extracts pitfall from summary containing 修复", async () => {
 
     assert.equal(pitfalls.length, 1);
     assert.match(pitfalls[0]?.content ?? "", /修复/);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("sessionEnd records only newly created memories in memories_created", async () => {
+  const restoreFetch = installEmbeddingMock([0.4, 0.6]);
+  const { repository, sessionService } = createSessionService();
+
+  try {
+    await sessionService.sessionEnd("vega", "我们决定使用 SQLite 作为本地存储。");
+    await sessionService.sessionEnd("vega", "我们决定使用 SQLite 作为本地存储。");
+
+    const db = getDatabase(repository);
+    const sessions = db
+      .prepare(
+        "SELECT memories_created FROM sessions ORDER BY ended_at ASC"
+      )
+      .all() as Array<{ memories_created: string }>;
+
+    assert.equal(JSON.parse(sessions[0]?.memories_created ?? "[]").length, 1);
+    assert.equal(JSON.parse(sessions[1]?.memories_created ?? "[]").length, 0);
   } finally {
     restoreFetch();
     repository.close();

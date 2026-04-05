@@ -5,6 +5,10 @@ import { BruteForceEngine } from "./brute-force.js";
 import { computeFinalScore, computeRecency, getDecayRate, hybridSearch } from "./ranking.js";
 import { SqliteVecEngine } from "./sqlite-vec.js";
 
+const logSearchInfo = (message: string): void => {
+  process.stderr.write(`${message}\n`);
+};
+
 export class SearchEngine {
   private readonly bruteForceEngine: BruteForceEngine;
   private readonly sqliteVecEngine: SqliteVecEngine;
@@ -19,11 +23,11 @@ export class SearchEngine {
     this.sqliteVecEngine = new SqliteVecEngine(repository);
     this.activeVectorEngine = this.sqliteVecEngine.isAvailable() ? "sqlite-vec" : "brute-force";
 
-    console.log(`Vector search engine: ${this.activeVectorEngine}`);
+    logSearchInfo(`Vector search engine: ${this.activeVectorEngine}`);
 
     if (this.activeVectorEngine === "sqlite-vec") {
       const indexed = this.sqliteVecEngine.createIndex();
-      console.log(`Vector search auto-upgraded to sqlite-vec with ${indexed} indexed embeddings.`);
+      logSearchInfo(`Vector search auto-upgraded to sqlite-vec with ${indexed} indexed embeddings.`);
     }
   }
 
@@ -47,7 +51,7 @@ export class SearchEngine {
       this.slowQueryCount += 1;
 
       if (this.slowQueryCount === 10) {
-        console.log(
+        logSearchInfo(
           this.activeVectorEngine === "sqlite-vec"
             ? "Search is slow for 10 consecutive queries; rebuild the sqlite-vec index or run `vega benchmark --suite recall`."
             : "Search is slow for 10 consecutive queries; install sqlite-vec or run `vega benchmark --suite recall`."

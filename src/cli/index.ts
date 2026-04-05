@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   registerMaintenanceCommands(program, repository, compactService, config);
   registerImportExportCommands(program, repository, memoryService, config);
   registerMigrateCommand(program, memoryService);
-  registerQualityCommand(program, qualityService, repository);
+  registerQualityCommand(program, qualityService);
   registerAuditCommand(program, repository);
   registerBenchmarkCommand(program, repository, memoryService, recallService, config);
 

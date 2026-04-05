@@ -8,6 +8,10 @@ const now = (): string => new Date().toISOString();
 
 const unique = (values: string[]): string[] => [...new Set(values)];
 
+const logRecallInfo = (message: string): void => {
+  process.stderr.write(`${message}\n`);
+};
+
 export class RecallService {
   constructor(
     private readonly repository: Repository,
@@ -42,7 +46,7 @@ export class RecallService {
       );
 
       if (shouldPromote) {
-        console.log(
+        logRecallInfo(
           `Memory ${result.memory.id} promoted to global scope (accessed by ${accessedProjects.length} projects)`
         );
       }
