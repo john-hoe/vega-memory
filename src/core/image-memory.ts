@@ -7,6 +7,10 @@ import { MemoryService } from "./memory.js";
 import { Repository } from "../db/repository.js";
 
 const SCREENSHOT_HASH_PREFIX = "image-memory.hash.";
+const SCREENSHOT_MEMORY_IMPORTANCE = 0.95;
+
+const getMetadataKey = (project: string, hash: string): string =>
+  `${SCREENSHOT_HASH_PREFIX}${project}.${hash}`;
 
 export class ImageMemoryService {
   constructor(
@@ -22,26 +26,40 @@ export class ImageMemoryService {
     const absoluteImagePath = resolve(imagePath);
     const image = readFileSync(absoluteImagePath);
     const hash = createHash("sha256").update(image).digest("hex");
-    const existingId = this.repository.getMetadata(`${SCREENSHOT_HASH_PREFIX}${hash}`);
+    const metadataKey = getMetadataKey(project, hash);
+    const title = `Screenshot: ${basename(absoluteImagePath)}`;
+    const content = `${description}\n[Image: ${absoluteImagePath}]`;
+    const tags = [basename(absoluteImagePath), "screenshot", project];
+    const existingId = this.repository.getMetadata(metadataKey);
 
     if (existingId) {
       const existingMemory = this.repository.getMemory(existingId);
 
       if (existingMemory) {
+        await this.memoryService.update(existingMemory.id, {
+          title,
+          content,
+          tags,
+          importance: SCREENSHOT_MEMORY_IMPORTANCE
+        });
         return existingMemory.id;
       }
+
+      this.repository.deleteMetadata(metadataKey);
     }
 
     const result = await this.memoryService.store({
-      content: `${description}\n[Image: ${absoluteImagePath}]`,
-      title: `Screenshot: ${basename(absoluteImagePath)}`,
+      content,
+      title,
       type: "project_context",
       project,
-      tags: [basename(absoluteImagePath), "screenshot", project],
-      source: "explicit"
+      tags,
+      importance: SCREENSHOT_MEMORY_IMPORTANCE,
+      source: "explicit",
+      skipSimilarityCheck: true
     });
 
-    this.repository.setMetadata(`${SCREENSHOT_HASH_PREFIX}${hash}`, result.id);
+    this.repository.setMetadata(metadataKey, result.id);
 
     return result.id;
   }

@@ -82,6 +82,12 @@ const serializeSessionStartResult = (result: SessionStartResult) => ({
   token_estimate: result.token_estimate
 });
 
+const serializeGraphQueryResult = (result: GraphQueryResult) => ({
+  entity: result.entity,
+  relations: result.relations,
+  memories: result.memories.map(serializeMemory)
+});
+
 const resultCountForSessionStart = (result: SessionStartResult): number =>
   result.active_tasks.length +
   result.preferences.length +
@@ -183,7 +189,7 @@ export function createMCPServer({
         const result = await Promise.resolve(graphService.query(args.entity, args.depth));
 
         return {
-          result,
+          result: serializeGraphQueryResult(result),
           resultCount: result.relations.length + result.memories.length
         };
       })

@@ -42,14 +42,11 @@ export class GitHistoryService {
     });
   }
 
-  private hasCommitMemory(project: string, hash: string, subject: string): boolean {
+  private hasCommitMemory(project: string, hash: string): boolean {
     const shortHash = hash.slice(0, 7).toLowerCase();
 
-    return this.listProjectMemories(project).some(
-      (memory) =>
-        memory.tags.some((tag) => tag.toLowerCase() === shortHash) ||
-        memory.content === subject ||
-        memory.title === subject
+    return this.listProjectMemories(project).some((memory) =>
+      memory.tags.some((tag) => tag.toLowerCase() === shortHash)
     );
   }
 
@@ -59,7 +56,7 @@ export class GitHistoryService {
     subject: string,
     type: MemoryType
   ): Promise<boolean> {
-    if (this.hasCommitMemory(project, hash, subject)) {
+    if (this.hasCommitMemory(project, hash)) {
       return false;
     }
 
@@ -69,7 +66,8 @@ export class GitHistoryService {
       type,
       project,
       tags: ["git", project, hash.slice(0, 7)],
-      source: "explicit"
+      source: "explicit",
+      skipSimilarityCheck: true
     });
 
     return true;

@@ -1,6 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, extname, join, resolve } from "node:path";
-import { v4 as uuidv4 } from "uuid";
+import { basename, extname, join, relative, resolve } from "node:path";
 
 import { MemoryService } from "./memory.js";
 import { Repository } from "../db/repository.js";
@@ -10,7 +9,8 @@ interface DocumentSection {
   content: string;
 }
 
-const now = (): string => new Date().toISOString();
+const INDEXED_MEMORY_IMPORTANCE = 0.95;
+const SKIPPED_DIRECTORIES = new Set([".git", "dist", "node_modules"]);
 
 const toWordLimit = (value: string, wordLimit: number): string => {
   const words = value.trim().split(/\s+/).filter(Boolean);
@@ -31,6 +31,10 @@ const walkFiles = (directoryPath: string): string[] => {
     const stats = statSync(fullPath);
 
     if (stats.isDirectory()) {
+      if (SKIPPED_DIRECTORIES.has(entry)) {
+        continue;
+      }
+
       files.push(...walkFiles(fullPath));
       continue;
     }
@@ -120,59 +124,70 @@ const buildTieredContent = (heading: string, content: string): string => {
 export class DocIndexService {
   constructor(
     private readonly repository: Repository,
-    private readonly _memoryService: MemoryService
+    private readonly memoryService: MemoryService
   ) {}
 
-  async indexMarkdown(filePath: string, project: string): Promise<number> {
-    const absolutePath = resolve(filePath);
+  private async indexSections(
+    absolutePath: string,
+    sourceLabel: string,
+    project: string
+  ): Promise<number> {
     const fileName = basename(absolutePath);
     const content = readFileSync(absolutePath, "utf8");
     const sections = splitSections(content, fileName);
-    const timestamp = now();
-
-    for (const section of sections) {
-      const title = `${fileName}: ${section.heading}`;
-      const indexedContent = buildTieredContent(section.heading, section.content);
-      const tags = [fileName, ...extractHeadingKeywords(section.heading)];
-      const existing = this.repository
+    const existingByTitle = new Map(
+      this.repository
         .listMemories({
           project,
           type: "project_context",
           limit: 10_000
         })
-        .find((memory) => memory.title === title);
+        .map((memory) => [memory.title, memory])
+    );
+    const headingCounts = new Map<string, number>();
+
+    for (const section of sections) {
+      const nextCount = (headingCounts.get(section.heading) ?? 0) + 1;
+      headingCounts.set(section.heading, nextCount);
+
+      const title =
+        nextCount === 1
+          ? `${sourceLabel}: ${section.heading}`
+          : `${sourceLabel}: ${section.heading} (${nextCount})`;
+      const indexedContent = buildTieredContent(section.heading, section.content);
+      const tags = [fileName, ...extractHeadingKeywords(section.heading)];
+      const existing = existingByTitle.get(title);
 
       if (existing) {
-        this.repository.updateMemory(existing.id, {
+        await this.memoryService.update(existing.id, {
           content: indexedContent,
           tags,
-          updated_at: timestamp,
-          accessed_at: timestamp
+          importance: INDEXED_MEMORY_IMPORTANCE
         });
-        continue;
+      } else {
+        const result = await this.memoryService.store({
+          title,
+          content: indexedContent,
+          type: "project_context",
+          project,
+          tags,
+          importance: INDEXED_MEMORY_IMPORTANCE,
+          source: "explicit",
+          skipSimilarityCheck: true
+        });
+        const created = this.repository.getMemory(result.id);
+        if (created) {
+          existingByTitle.set(title, created);
+        }
       }
-
-      this.repository.createMemory({
-        id: uuidv4(),
-        title,
-        content: indexedContent,
-        type: "project_context",
-        project,
-        embedding: null,
-        importance: 0.7,
-        source: "explicit",
-        tags,
-        created_at: timestamp,
-        updated_at: timestamp,
-        accessed_at: timestamp,
-        status: "active",
-        verified: "verified",
-        scope: "project",
-        accessed_projects: [project]
-      });
     }
 
     return sections.length;
+  }
+
+  async indexMarkdown(filePath: string, project: string): Promise<number> {
+    const absolutePath = resolve(filePath);
+    return this.indexSections(absolutePath, basename(absolutePath), project);
   }
 
   async indexDirectory(
@@ -193,7 +208,11 @@ export class DocIndexService {
         continue;
       }
 
-      totalSections += await this.indexMarkdown(filePath, project);
+      totalSections += await this.indexSections(
+        filePath,
+        relative(absoluteDirectory, filePath) || basename(filePath),
+        project
+      );
     }
 
     return totalSections;

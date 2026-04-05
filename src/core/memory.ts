@@ -1,7 +1,14 @@
 import { v4 as uuidv4 } from "uuid";
 
 import type { VegaConfig } from "../config.js";
-import type { Memory, MemorySource, MemoryType, StoreParams, StoreResult } from "./types.js";
+import type {
+  Memory,
+  MemorySource,
+  MemoryType,
+  MemoryUpdateParams,
+  StoreParams,
+  StoreResult
+} from "./types.js";
 import { Repository } from "../db/repository.js";
 import { generateEmbedding, cosineSimilarity } from "../embedding/ollama.js";
 import { shouldExclude } from "../security/exclusion.js";
@@ -234,7 +241,7 @@ export class MemoryService {
     const importance = defaultImportanceFor(params.type, source, params.importance);
     const scope = params.type === "preference" ? "global" : "project";
     const matched =
-      embedding === null
+      embedding === null || params.skipSimilarityCheck
         ? null
         : this.findMatch(
             params.type === "preference" ? undefined : params.project,
@@ -373,10 +380,7 @@ export class MemoryService {
     return { id, action: "created", title };
   }
 
-  async update(
-    id: string,
-    updates: { content?: string; importance?: number; tags?: string[] }
-  ): Promise<void> {
+  async update(id: string, updates: MemoryUpdateParams): Promise<void> {
     const existing = this.repository.getMemory(id);
     if (!existing) {
       throw new Error(`Memory not found: ${id}`);
@@ -387,16 +391,31 @@ export class MemoryService {
       const { redacted } = redactSensitiveData(updates.content);
       nextUpdates.content = redacted;
       nextUpdates.embedding = toEmbeddingBuffer(await generateEmbedding(redacted, this.config));
+      nextUpdates.tags =
+        updates.tags !== undefined
+          ? unique(updates.tags.map(normalizeToken).filter(Boolean))
+          : extractTags(redacted);
     }
     if (updates.importance !== undefined) {
       nextUpdates.importance = Math.max(0, Math.min(1, updates.importance));
     }
-    if (updates.tags !== undefined) {
+    if (updates.tags !== undefined && updates.content === undefined) {
       nextUpdates.tags = unique(updates.tags.map(normalizeToken).filter(Boolean));
+    }
+    if (updates.title !== undefined) {
+      const title = updates.title.trim();
+      if (title.length > 0) {
+        nextUpdates.title = title;
+      }
     }
 
     nextUpdates.updated_at = now();
     this.repository.updateMemory(id, nextUpdates);
+
+    const refreshed = this.repository.getMemory(id);
+    if (refreshed) {
+      this.linkKnowledgeGraph(id, refreshed.content, refreshed.tags);
+    }
   }
 
   async delete(id: string): Promise<void> {

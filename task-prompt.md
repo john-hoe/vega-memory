@@ -1,120 +1,127 @@
-Task 26-31: Phase 3 — Security + Lifecycle (all 6 tasks).
+Task 32-36: Phase 4 — Knowledge + Multimodal (all 5 tasks).
 
 Read AGENTS.md for rules. Read ALL src/ files to understand the current codebase.
 
-## Task 26: SQLCipher Database Encryption
-Files: src/db/repository.ts, src/config.ts, package.json
-Problem: Database file is stored in plaintext.
-Fix:
-- Install better-sqlite3 with SQLCipher support is complex. Instead, use a simpler approach:
-  Add an optional encryption layer using Node.js built-in crypto module.
-  Create src/db/encryption.ts:
-  - encryptFile(inputPath: string, key: Buffer): void — AES-256-GCM encrypt the db file in-place
-  - decryptFile(inputPath: string, key: Buffer): Buffer — decrypt and return content
-  - For runtime: we keep using unencrypted SQLite in memory/on-disk normally, but encrypt backups.
-  - Add encryptBackup option to config
+## Task 32: Knowledge Graph Layer
+Files: src/core/knowledge-graph.ts, src/db/schema.ts, src/db/repository.ts
 
-Actually, simpler and more practical approach:
-- Create src/security/encryption.ts with:
-  - encryptBuffer(data: Buffer, key: string): Buffer — AES-256-GCM, prepend IV+authTag
-  - decryptBuffer(encrypted: Buffer, key: string): Buffer — extract IV+authTag, decrypt
-  - generateKey(): string — crypto.randomBytes(32).toString('hex')
-- Update src/db/backup.ts: after creating backup, optionally encrypt it if encryption key is configured
-- Add to config: encryptionKey?: string (from VEGA_ENCRYPTION_KEY env var)
+Create an entity-relation layer on top of flat memories:
 
-## Task 27: macOS Keychain Integration
-File: src/security/keychain.ts
-- getKey(service: string, account: string): Promise<string | null>
-  Run: security find-generic-password -s <service> -a <account> -w
-  Return stdout or null on error
-- setKey(service: string, account: string, key: string): Promise<void>
-  Run: security add-generic-password -s <service> -a <account> -w <key> -U
-- deleteKey(service: string, account: string): Promise<void>
-  Run: security delete-generic-password -s <service> -a <account>
+1. Add tables to schema.ts:
+   - entities: id TEXT PK, name TEXT UNIQUE, type TEXT (person/project/tool/concept/file), created_at TEXT
+   - relations: id TEXT PK, source_entity_id TEXT FK, target_entity_id TEXT FK, relation_type TEXT (uses/depends_on/related_to/part_of/caused_by), memory_id TEXT FK, created_at TEXT
 
-Create CLI command:
-  vega init-encryption
-  - Check if key exists in Keychain (service: 'dev.vega-memory', account: 'encryption-key')
-  - If not: generate key, store in Keychain, print success
-  - If yes: print "Encryption key already configured"
+2. Add to repository.ts:
+   - createEntity(name, type): upsert entity
+   - createRelation(sourceId, targetId, relationType, memoryId): insert relation
+   - getEntityRelations(entityId): get all relations for an entity
+   - findEntity(name): find entity by name
+   - traverseGraph(entityId, depth): BFS traverse relations up to N levels
 
-## Task 28: Encrypted Export
-File: src/cli/commands/import-export.ts
-Add --encrypt flag to export command:
-  vega export --format json --encrypt -o backup.enc.json
-  - Export memories as JSON
-  - Encrypt the JSON content using encryption key from Keychain (or VEGA_ENCRYPTION_KEY env)
-  - Write encrypted file
-  
-Add --decrypt flag to import:
-  vega import --decrypt backup.enc.json
-  - Read file, decrypt using key, parse JSON, import
+3. Create src/core/knowledge-graph.ts:
+   Export class KnowledgeGraphService:
+   - constructor(repository)
+   - extractEntities(content: string, tags: string[]): Entity[]
+     Simple rule-based extraction: tags become entities, capitalized multi-word phrases become entities
+   - linkMemory(memoryId: string, entities: Entity[]): void
+     Create entities and relations between them and the memory
+   - query(entityName: string, depth?: number): {entity, relations, memories}
+     Find entity, traverse graph, return connected memories
 
-## Task 29: Graceful Deletion Protocol
-File: src/core/lifecycle.ts
-Export class LifecycleManager:
-  - constructor(repository: Repository, notificationManager: NotificationManager, config: VegaConfig)
-  
-  - checkPendingDeletions(): GracefulDeletionStatus
-    1. Find archived memories where updated_at > 83 days ago
-    2. Check if user has run 'vega export --archived' since notification
-    3. Return: { pending: Memory[], daysUntilDeletion: number, userAcknowledged: boolean }
-  
-  - notifyPendingDeletions(memories: Memory[]): Promise<void>
-    Send Telegram + write alert: "N memories will be cleaned in 7 days. Run: vega export --archived --before 90d"
-  
-  - executeDeletion(): { deleted: number, blocked: number }
-    1. Find archived > 90 days
-    2. Check if export was run (track in metadata table or file)
-    3. If exported: delete. If not: extend 3 days (max 2 extensions)
-    4. NEVER delete source='explicit' memories
-    5. Return counts
+4. Integrate into memory.ts store():
+   After storing memory, extract entities and link them
 
-  - Add to types.ts: GracefulDeletionStatus type
+5. Add MCP tool: memory_graph — params: entity(string), depth?(number)
+   Returns entity relations and connected memories
 
-Integrate into scheduler daily task.
+6. Add CLI command: vega graph <entity> [--depth N]
 
-## Task 30: Cross-Project Auto-Promotion
-File: src/core/recall.ts
-Problem: Memories accessed by >=2 projects should auto-promote from project to global scope.
-Fix in recall():
-  After updating accessed_projects:
-  - If accessed_projects.length >= 2 AND scope === 'project':
-    Update scope to 'global' via repository.updateMemory
-    Log: "Memory {id} promoted to global scope (accessed by {n} projects)"
+## Task 33: Code-Aware Memory (tree-sitter AST)
+Files: src/core/code-index.ts
 
-## Task 31: Memory Exclusion Rules Enhancement
-File: src/security/exclusion.ts
-Export function shouldExclude(content: string): { excluded: boolean, reason: string }
-Check content against exclusion patterns:
-  - Emotional/complaints: /(真垃圾|烦死|fuck|shit|damn|hate this)/i with no actionable content
-  - One-time queries: /^(这个|what does|explain|帮我查|什么意思).{0,50}[?？]$/i
-  - Raw data dumps: content.length > 2000 AND content has >50% non-alphabetic chars
-  - Common knowledge: /(how to|怎么写|for loop|import module)/i AND content.length < 100
+Since tree-sitter requires native bindings which are complex, implement a simpler approach:
+- Create src/core/code-index.ts:
+  Export class CodeIndexService:
+  - constructor(repository)
+  - indexFile(filePath: string): CodeSymbol[]
+    Parse file using regex patterns (not full AST):
+    - TypeScript/JavaScript: /export\s+(class|function|const|interface|type)\s+(\w+)/
+    - Python: /^(class|def)\s+(\w+)/
+    Return: [{name, kind, file, line}]
+  - indexDirectory(dirPath: string, extensions: string[]): number
+    Walk directory, index each file, store symbols as project_context memories
+  - searchSymbol(name: string): Memory[]
+    Search memories for symbol references
 
-Integrate into src/core/memory.ts store():
-  Before processing, run shouldExclude(). If excluded, return { id: '', action: 'excluded', title: reason }
+- Add CLI command: vega index <directory> [--ext ts,js,py]
+- Store each file's symbols as a project_context memory with tags=[filename, ...symbolNames]
 
-## Tests for all tasks:
-File: src/tests/security-advanced.test.ts
-- Test: encryptBuffer/decryptBuffer roundtrip
-- Test: decryptBuffer with wrong key throws
-- Test: generateKey returns 64-char hex string
-- Test: shouldExclude detects emotional content
-- Test: shouldExclude allows normal technical content
-- Test: shouldExclude detects raw data dumps
-- Test: graceful deletion finds memories > 83 days archived
-- Test: graceful deletion never deletes explicit source memories
-- Test: cross-project auto-promotion triggers at 2 projects
+## Task 34: Git History Memory Source
+File: src/core/git-history.ts
 
-File: src/tests/keychain.test.ts
-- Test: keychain operations (only if on macOS, skip otherwise)
+Export class GitHistoryService:
+  - constructor(repository, memoryService)
+  - extractFromGitLog(repoPath: string, since?: string, limit?: number): Promise<number>
+    Run: git -C <path> log --oneline --since=<date> -n <limit>
+    For each commit: extract message as a decision/task_state memory
+    Deduplicate against existing memories
+    Return count imported
+  - extractFromRecentDiffs(repoPath: string, count?: number): Promise<number>
+    Run: git -C <path> log -n <count> --format="%H %s" 
+    For significant commits (not "chore:"), create pitfall/decision memories
+
+- Add CLI command: vega git-import <repo-path> [--since 2026-01-01] [--limit 50]
+
+## Task 35: Screenshot/Image Memory
+File: src/core/image-memory.ts
+
+Export class ImageMemoryService:
+  - constructor(repository, memoryService)
+  - storeScreenshot(imagePath: string, description: string, project: string): Promise<string>
+    1. Read image file, compute hash for dedup
+    2. Store image path + description as a project_context memory
+    3. Tags: [filename, 'screenshot', project]
+    4. Content: description + "\n[Image: <path>]"
+    Return memory id
+  - listScreenshots(project?: string): Memory[]
+    List all memories with 'screenshot' tag
+
+- Add CLI command: vega screenshot <image-path> --description "..." [--project p]
+- Note: We store the file path reference, not the image binary (SQLite is for text)
+
+## Task 36: File/Document Indexer
+File: src/core/doc-index.ts
+
+Export class DocIndexService:
+  - constructor(repository, memoryService)
+  - indexMarkdown(filePath: string, project: string): Promise<number>
+    Parse markdown file, split by ## headings
+    Each section becomes a project_context memory with L0/L1/L2 tiered content:
+    - L0: heading only (~10 tokens)
+    - L1: first paragraph summary (~50 tokens)
+    - L2: full section content
+    Store with tags=[filename, heading-keywords]
+    Return count of sections indexed
+  - indexDirectory(dirPath: string, project: string, extensions?: string[]): Promise<number>
+    Walk directory, index .md files
+    Return total sections indexed
+
+- Add CLI command: vega index-docs <path> [--project p] [--ext md,txt]
+
+## Tests:
+File: src/tests/knowledge.test.ts
+- Test: extractEntities finds tags as entities
+- Test: linkMemory creates entity and relation records
+- Test: traverseGraph returns connected memories at depth 1
+- Test: CodeIndexService.indexFile extracts TS class/function names
+- Test: GitHistoryService.extractFromGitLog creates memories from commits
+- Test: DocIndexService.indexMarkdown splits by headings
 
 After all:
   npx tsc
-  node --test dist/tests/security-advanced.test.js
+  node --test dist/tests/knowledge.test.js
   node --test dist/tests/*.test.js
 
 Then commit:
-  git add -A && git commit -m "feat: Phase 3 — encryption, keychain, encrypted export, graceful deletion, auto-promotion, exclusion rules"
+  git add -A && git commit -m "feat: Phase 4 — knowledge graph, code index, git history, image memory, doc indexer"
   git push origin main

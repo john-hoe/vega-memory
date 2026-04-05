@@ -82,7 +82,7 @@ async function main(): Promise<void> {
     config
   );
   const compactService = new CompactService(repository, config);
-  const codeIndexService = new CodeIndexService(repository);
+  const codeIndexService = new CodeIndexService(repository, memoryService);
   const gitHistoryService = new GitHistoryService(repository, memoryService);
   const imageMemoryService = new ImageMemoryService(repository, memoryService);
   const docIndexService = new DocIndexService(repository, memoryService);

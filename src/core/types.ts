@@ -169,6 +169,7 @@ export interface StoreParams {
   tags?: string[];
   importance?: number;
   source?: MemorySource;
+  skipSimilarityCheck?: boolean;
 }
 
 export interface StoreResult {
@@ -208,6 +209,7 @@ export interface MemoryListFilters {
 }
 
 export interface MemoryUpdateParams {
+  title?: string;
   content?: string;
   importance?: number;
   tags?: string[];

@@ -1,14 +1,15 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
-import { v4 as uuidv4 } from "uuid";
 
 import type { CodeSymbol, Memory } from "./types.js";
+import { MemoryService } from "./memory.js";
 import { Repository } from "../db/repository.js";
 
-const TS_EXPORT_PATTERN = /export\s+(class|function|const|interface|type)\s+(\w+)/g;
-const PYTHON_PATTERN = /^\s*(class|def)\s+(\w+)/g;
-
-const now = (): string => new Date().toISOString();
+const TS_EXPORT_PATTERN =
+  /export\s+(?:default\s+)?(?:async\s+)?(class|function|const|interface|type)\s+(\w+)/g;
+const PYTHON_PATTERN = /^\s*(?:async\s+)?(class|def)\s+(\w+)/g;
+const INDEXED_MEMORY_IMPORTANCE = 0.95;
+const SKIPPED_DIRECTORIES = new Set([".git", "dist", "node_modules"]);
 
 const normalizeExtensions = (extensions: string[]): Set<string> =>
   new Set(
@@ -27,6 +28,10 @@ const walkFiles = (directoryPath: string): string[] => {
     const stats = statSync(fullPath);
 
     if (stats.isDirectory()) {
+      if (SKIPPED_DIRECTORIES.has(entry)) {
+        continue;
+      }
+
       files.push(...walkFiles(fullPath));
       continue;
     }
@@ -75,7 +80,10 @@ const buildMemoryContent = (relativeFilePath: string, symbols: CodeSymbol[]): st
       ].join("\n");
 
 export class CodeIndexService {
-  constructor(private readonly repository: Repository) {}
+  constructor(
+    private readonly repository: Repository,
+    private readonly memoryService: MemoryService
+  ) {}
 
   indexFile(filePath: string): CodeSymbol[] {
     const absolutePath = resolve(filePath);
@@ -84,11 +92,19 @@ export class CodeIndexService {
     return findSymbols(content, absolutePath);
   }
 
-  indexDirectory(dirPath: string, extensions: string[]): number {
+  async indexDirectory(dirPath: string, extensions: string[]): Promise<number> {
     const absoluteDirectory = resolve(dirPath);
     const allowedExtensions = normalizeExtensions(extensions);
     const project = basename(absoluteDirectory);
-    const timestamp = now();
+    const existingByTitle = new Map(
+      this.repository
+        .listMemories({
+          project,
+          type: "project_context",
+          limit: 10_000
+        })
+        .map((memory) => [memory.title, memory])
+    );
     let indexedFiles = 0;
 
     for (const filePath of walkFiles(absoluteDirectory)) {
@@ -101,40 +117,33 @@ export class CodeIndexService {
       const title = `Code Index: ${relativeFilePath}`;
       const content = buildMemoryContent(relativeFilePath, symbols);
       const tags = [basename(filePath), ...symbols.map((symbol) => symbol.name)];
-      const existing = this.repository
-        .listMemories({
-          project,
-          type: "project_context",
-          limit: 10_000
-        })
-        .find((memory) => memory.title === title);
+      const existing = existingByTitle.get(title);
 
       if (existing) {
-        this.repository.updateMemory(existing.id, {
+        await this.memoryService.update(existing.id, {
           content,
           tags,
-          updated_at: timestamp,
-          accessed_at: timestamp
+          importance: INDEXED_MEMORY_IMPORTANCE
         });
+        const refreshed = this.repository.getMemory(existing.id);
+        if (refreshed) {
+          existingByTitle.set(title, refreshed);
+        }
       } else {
-        this.repository.createMemory({
-          id: uuidv4(),
-          type: "project_context",
-          project,
+        const result = await this.memoryService.store({
           title,
           content,
-          embedding: null,
-          importance: 0.7,
-          source: "explicit",
+          type: "project_context",
+          project,
           tags,
-          created_at: timestamp,
-          updated_at: timestamp,
-          accessed_at: timestamp,
-          status: "active",
-          verified: "verified",
-          scope: "project",
-          accessed_projects: [project]
+          importance: INDEXED_MEMORY_IMPORTANCE,
+          source: "explicit",
+          skipSimilarityCheck: true
         });
+        const created = this.repository.getMemory(result.id);
+        if (created) {
+          existingByTitle.set(title, created);
+        }
       }
 
       indexedFiles += 1;

@@ -17,8 +17,8 @@ export function registerCodeIndexCommand(
     .description("Index source code symbols")
     .argument("<directory>", "directory to index")
     .option("--ext <extensions>", "comma-separated extensions", parseExtensions, ["ts", "js", "py"])
-    .action((directory: string, options: { ext: string[] }) => {
-      const indexedFiles = codeIndexService.indexDirectory(directory, options.ext);
+    .action(async (directory: string, options: { ext: string[] }) => {
+      const indexedFiles = await codeIndexService.indexDirectory(directory, options.ext);
 
       console.log(`indexed ${indexedFiles} files`);
     });
