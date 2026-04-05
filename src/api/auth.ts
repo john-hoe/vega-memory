@@ -9,6 +9,7 @@ export const DASHBOARD_AUTH_COOKIE = "vega_dashboard_auth";
 const UNAUTHORIZED_RESPONSE = {
   error: "unauthorized"
 } as const;
+const dashboardSessions = new WeakMap<VegaConfig, Set<string>>();
 
 const parseCookies = (cookieHeader: string | undefined): Record<string, string> => {
   if (!cookieHeader) {
@@ -42,6 +43,17 @@ const parseCookies = (cookieHeader: string | undefined): Record<string, string> 
     }, {});
 };
 
+const getDashboardSessionStore = (config: VegaConfig): Set<string> => {
+  const existingStore = dashboardSessions.get(config);
+  if (existingStore) {
+    return existingStore;
+  }
+
+  const nextStore = new Set<string>();
+  dashboardSessions.set(config, nextStore);
+  return nextStore;
+};
+
 export const matchesConfiguredApiKey = (
   candidate: string | undefined,
   expected: string
@@ -60,7 +72,38 @@ export const matchesConfiguredApiKey = (
   return timingSafeEqual(left, right);
 };
 
-export const isAuthorizedRequest = (req: Request, config: VegaConfig): boolean => {
+export const getDashboardSessionToken = (req: Request): string | undefined => {
+  const cookies = parseCookies(req.get("cookie"));
+  return cookies[DASHBOARD_AUTH_COOKIE];
+};
+
+export const registerDashboardSession = (config: VegaConfig, sessionToken: string): void => {
+  getDashboardSessionStore(config).add(sessionToken);
+};
+
+export const revokeDashboardSession = (
+  config: VegaConfig,
+  sessionToken: string | undefined
+): void => {
+  if (sessionToken === undefined) {
+    return;
+  }
+
+  dashboardSessions.get(config)?.delete(sessionToken);
+};
+
+export const hasDashboardSession = (
+  config: VegaConfig,
+  sessionToken: string | undefined
+): boolean => {
+  if (sessionToken === undefined) {
+    return false;
+  }
+
+  return dashboardSessions.get(config)?.has(sessionToken) ?? false;
+};
+
+export const isAuthorizedBearerRequest = (req: Request, config: VegaConfig): boolean => {
   if (config.apiKey === undefined) {
     return true;
   }
@@ -74,8 +117,18 @@ export const isAuthorizedRequest = (req: Request, config: VegaConfig): boolean =
     }
   }
 
-  const cookies = parseCookies(req.get("cookie"));
-  return matchesConfiguredApiKey(cookies[DASHBOARD_AUTH_COOKIE], config.apiKey);
+  return false;
+};
+
+export const isAuthorizedRequest = (req: Request, config: VegaConfig): boolean => {
+  if (config.apiKey === undefined) {
+    return true;
+  }
+
+  return (
+    isAuthorizedBearerRequest(req, config) ||
+    hasDashboardSession(config, getDashboardSessionToken(req))
+  );
 };
 
 export const createAuthMiddleware = (config: VegaConfig): RequestHandler => {

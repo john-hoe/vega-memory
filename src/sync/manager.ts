@@ -38,6 +38,11 @@ export class SyncManager {
       return 0;
     }
 
+    if (!(await this.client.isAuthenticated())) {
+      console.warn("Sync failed: invalid API key");
+      return 0;
+    }
+
     const operations = this.queue.dequeue();
     let synced = 0;
 

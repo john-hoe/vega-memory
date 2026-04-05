@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
+import { DASHBOARD_AUTH_COOKIE } from "../api/auth.js";
 import { createAPIServer } from "../api/server.js";
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
@@ -177,6 +179,9 @@ test("Dashboard requires login and serves HTML after authentication", async () =
       redirect: "manual"
     });
     const cookie = loginResponse.headers.get("set-cookie");
+    const sessionToken = cookie?.match(
+      new RegExp(`(?:^|\\s|,)${DASHBOARD_AUTH_COOKIE}=([^;]+)`)
+    )?.[1];
     const response = await fetch(`${baseUrl}/`, {
       headers: {
         cookie: cookie ?? ""
@@ -188,15 +193,101 @@ test("Dashboard requires login and serves HTML after authentication", async () =
         cookie: cookie ?? ""
       }
     });
+    const logoutResponse = await fetch(`${baseUrl}/dashboard/logout`, {
+      method: "POST",
+      headers: {
+        cookie: cookie ?? ""
+      },
+      redirect: "manual"
+    });
+    const relockedResponse = await fetch(`${baseUrl}/`, {
+      headers: {
+        cookie: cookie ?? ""
+      }
+    });
+    const apiAfterLogout = await fetch(`${baseUrl}/api/health`, {
+      headers: {
+        cookie: cookie ?? ""
+      }
+    });
 
     assert.equal(unauthorizedResponse.status, 401);
     assert.match(unauthorizedHtml, /Unlock Dashboard/);
     assert.equal(loginResponse.status, 302);
     assert.ok(cookie);
+    assert.match(sessionToken ?? "", /^[0-9a-f]{64}$/);
+    assert.notEqual(sessionToken, "top-secret");
+    assert.equal(cookie?.includes("SameSite=Strict"), true);
+    assert.equal(cookie?.includes("Secure"), false);
     assert.equal(response.status, 200);
     assert.match(html, /Vega Memory Dashboard/);
     assert.equal(response.headers.get("content-security-policy")?.includes("script-src 'self'"), true);
     assert.equal(apiResponse.status, 200);
+    assert.equal(logoutResponse.status, 302);
+    assert.equal(relockedResponse.status, 401);
+    assert.equal(apiAfterLogout.status, 401);
+  } finally {
+    await server.stop();
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Dashboard login adds Secure for non-localhost hosts", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-dashboard-secure-"));
+  const dbPath = join(tempDir, "memory.db");
+  const config = createConfig(dbPath, {
+    apiKey: "top-secret"
+  });
+  const repository = new Repository(config.dbPath);
+  const searchEngine = new SearchEngine(repository, config);
+  const memoryService = new MemoryService(repository, config);
+  const recallService = new RecallService(repository, searchEngine, config);
+  const sessionService = new SessionService(repository, memoryService, recallService, config);
+  const compactService = new CompactService(repository, config);
+  const server = createAPIServer(
+    {
+      repository,
+      memoryService,
+      recallService,
+      sessionService,
+      compactService
+    },
+    config
+  );
+
+  try {
+    mountDashboard(server.app, repository, config);
+    const port = await server.start(0);
+    const body = new URLSearchParams({
+      apiKey: "top-secret"
+    }).toString();
+    const cookie = await new Promise<string | undefined>((resolve, reject) => {
+      const request = httpRequest(
+        {
+          headers: {
+            "content-length": String(Buffer.byteLength(body)),
+            "content-type": "application/x-www-form-urlencoded",
+            host: "vega.example.com"
+          },
+          hostname: "127.0.0.1",
+          method: "POST",
+          path: "/dashboard/login",
+          port
+        },
+        (response) => {
+          response.resume();
+          resolve(response.headers["set-cookie"]?.[0]);
+        }
+      );
+
+      request.on("error", reject);
+      request.end(body);
+    });
+
+    assert.ok(cookie);
+    assert.equal(cookie?.includes("Secure"), true);
+    assert.equal(cookie?.includes("SameSite=Strict"), true);
   } finally {
     await server.stop();
     repository.close();

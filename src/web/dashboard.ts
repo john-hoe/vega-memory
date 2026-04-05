@@ -1,13 +1,24 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import express, { type Express, type RequestHandler, type Response } from "express";
+import express, {
+  type CookieOptions,
+  type Express,
+  type Request,
+  type RequestHandler,
+  type Response
+} from "express";
 
 import type { VegaConfig } from "../config.js";
 import {
   DASHBOARD_AUTH_COOKIE,
-  isAuthorizedRequest,
+  getDashboardSessionToken,
+  hasDashboardSession,
+  isAuthorizedBearerRequest,
+  registerDashboardSession,
+  revokeDashboardSession,
   matchesConfiguredApiKey
 } from "../api/auth.js";
 import type { WhiteLabelSettings } from "../core/types.js";
@@ -25,6 +36,7 @@ const DASHBOARD_CSP = [
   "style-src 'self' 'unsafe-inline'"
 ].join("; ");
 const DEFAULT_PRIMARY_COLOR = "#48c4b6";
+const DASHBOARD_SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 
 const resolvePublicDir = (): string => {
   const sourceDir = resolve(process.cwd(), "src", "web", "public");
@@ -35,6 +47,27 @@ const resolvePublicDir = (): string => {
 
   return join(dirname(fileURLToPath(import.meta.url)), "public");
 };
+
+const isLocalHostname = (hostname: string): boolean => {
+  const normalized = hostname.trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
+};
+
+const getDashboardCookieOptions = (
+  req: Request,
+  maxAge?: number
+): CookieOptions => ({
+  httpOnly: true,
+  ...(maxAge === undefined ? {} : { maxAge }),
+  path: "/",
+  sameSite: "strict",
+  secure: !isLocalHostname(req.hostname)
+});
 
 const setDashboardHeaders = (res: Response): void => {
   res.setHeader("Cache-Control", "no-store");
@@ -268,7 +301,11 @@ const renderLoginPage = (settings: WhiteLabelSettings, errorMessage?: string): s
 const requireDashboardAuth =
   (config: VegaConfig, sendLoginPage: boolean): RequestHandler =>
   (req, res, next) => {
-    if (isAuthorizedRequest(req, config)) {
+    if (
+      config.apiKey === undefined ||
+      isAuthorizedBearerRequest(req, config) ||
+      hasDashboardSession(config, getDashboardSessionToken(req))
+    ) {
       next();
       return;
     }
@@ -311,21 +348,20 @@ export function mountDashboard(
       return;
     }
 
-    res.cookie(DASHBOARD_AUTH_COOKIE, config.apiKey, {
-      httpOnly: true,
-      maxAge: 8 * 60 * 60 * 1000,
-      path: "/",
-      sameSite: "strict"
-    });
+    const sessionToken = randomBytes(32).toString("hex");
+
+    registerDashboardSession(config, sessionToken);
+    res.cookie(
+      DASHBOARD_AUTH_COOKIE,
+      sessionToken,
+      getDashboardCookieOptions(req, DASHBOARD_SESSION_MAX_AGE_MS)
+    );
     res.redirect("/");
   });
 
-  app.post("/dashboard/logout", (_req, res) => {
-    res.clearCookie(DASHBOARD_AUTH_COOKIE, {
-      httpOnly: true,
-      path: "/",
-      sameSite: "strict"
-    });
+  app.post("/dashboard/logout", (req, res) => {
+    revokeDashboardSession(config, getDashboardSessionToken(req));
+    res.clearCookie(DASHBOARD_AUTH_COOKIE, getDashboardCookieOptions(req));
     res.redirect("/");
   });
 

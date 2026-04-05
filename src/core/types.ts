@@ -229,7 +229,7 @@ export interface MemoryUpdateParams {
   tags?: string[];
 }
 
-export type HealthInfo = HealthReport | { status: "offline" };
+export type HealthInfo = HealthReport | { status: "offline" | "unauthorized" };
 
 export interface CompactResult {
   merged: number;

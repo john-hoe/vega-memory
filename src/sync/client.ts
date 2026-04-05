@@ -395,7 +395,13 @@ export class VegaSyncClient {
         },
         DEFAULT_REQUEST_TIMEOUT_MS
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof HttpResponseError && error.status === 401) {
+        return {
+          status: "unauthorized"
+        };
+      }
+
       return {
         status: "offline"
       };
@@ -413,9 +419,19 @@ export class VegaSyncClient {
       );
 
       return true;
-    } catch {
+    } catch (error) {
+      if (error instanceof HttpResponseError && error.status === 401) {
+        console.warn("Sync server reachable, but the configured API key is invalid.");
+        return true;
+      }
+
       return false;
     }
+  }
+
+  async isAuthenticated(): Promise<boolean> {
+    const health = await this.health();
+    return health.status !== "unauthorized";
   }
 
   async replay(operation: PendingOperation): Promise<void> {

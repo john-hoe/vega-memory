@@ -125,6 +125,58 @@ test("VegaSyncClient.health returns offline status when server unreachable", asy
   });
 });
 
+test("VegaSyncClient.health returns unauthorized status when API key is invalid", async () => {
+  const harness = await createHarness("top-secret");
+  const client = new VegaSyncClient(harness.baseUrl, "wrong-secret");
+
+  try {
+    const result = await client.health();
+
+    assert.deepEqual(result, {
+      status: "unauthorized"
+    });
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("VegaSyncClient treats unauthorized health responses as reachable", async () => {
+  const harness = await createHarness("top-secret");
+  const client = new VegaSyncClient(harness.baseUrl, "wrong-secret");
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+
+  console.warn = (...args: unknown[]): void => {
+    warnings.push(args.map((arg) => String(arg)).join(" "));
+  };
+
+  try {
+    const reachable = await client.isServerReachable();
+
+    assert.equal(reachable, true);
+    assert.equal(
+      warnings.some((warning) =>
+        warning.includes("Sync server reachable, but the configured API key is invalid.")
+      ),
+      true
+    );
+  } finally {
+    console.warn = originalWarn;
+    await harness.cleanup();
+  }
+});
+
+test("VegaSyncClient.isAuthenticated returns false when API key is invalid", async () => {
+  const harness = await createHarness("top-secret");
+  const client = new VegaSyncClient(harness.baseUrl, "wrong-secret");
+
+  try {
+    assert.equal(await client.isAuthenticated(), false);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("PendingQueue enqueue/dequeue/clear cycle", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-pending-cycle-"));
   const queue = new PendingQueue(tempDir);
@@ -378,6 +430,48 @@ test("SyncManager.syncPending replays queued operations to the server", async ()
     assert.equal(listed.length, 1);
     assert.match(listed[0]?.content ?? "", /Replay this queued operation/);
   } finally {
+    cacheRepo.close();
+    rmSync(tempDir, { recursive: true, force: true });
+    await harness.cleanup();
+  }
+});
+
+test("SyncManager.syncPending preserves the queue when the API key is invalid", async () => {
+  const harness = await createHarness("top-secret");
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-sync-invalid-key-"));
+  const queue = new PendingQueue(join(tempDir, "pending"));
+  const cacheRepo = new Repository(join(tempDir, "cache.db"));
+  const client = new VegaSyncClient(harness.baseUrl, "wrong-secret");
+  const syncManager = new SyncManager(client, queue, cacheRepo);
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+
+  client.setPendingQueue(queue);
+  client.setCacheRepository(cacheRepo);
+  queue.enqueue({
+    type: "store",
+    params: {
+      content: "Do not drop this queued operation",
+      type: "decision",
+      project: "vega"
+    },
+    timestamp: "2026-04-04T00:00:00.000Z"
+  });
+  console.warn = (...args: unknown[]): void => {
+    warnings.push(args.map((arg) => String(arg)).join(" "));
+  };
+
+  try {
+    const synced = await syncManager.syncPending();
+
+    assert.equal(synced, 0);
+    assert.equal(queue.count(), 1);
+    assert.equal(
+      warnings.some((warning) => warning.includes("Sync failed: invalid API key")),
+      true
+    );
+  } finally {
+    console.warn = originalWarn;
     cacheRepo.close();
     rmSync(tempDir, { recursive: true, force: true });
     await harness.cleanup();
