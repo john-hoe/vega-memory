@@ -12,6 +12,7 @@ import { SessionService } from "../core/session.js";
 import { Repository } from "../db/repository.js";
 import { NotificationManager } from "../notify/manager.js";
 import { SearchEngine } from "../search/engine.js";
+import { mountDashboard } from "../web/dashboard.js";
 import {
   dailyMaintenance,
   monitorOllamaAvailability,
@@ -111,6 +112,7 @@ export const startSchedulerApiServer = async (
   }
 
   const apiServer = createAPIServer(services, config);
+  mountDashboard(apiServer.app, services.repository, config);
   const apiPort = await apiServer.start(config.apiPort);
   writeLog(`HTTP API listening on port ${apiPort}`);
 

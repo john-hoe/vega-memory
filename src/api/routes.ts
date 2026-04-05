@@ -288,12 +288,9 @@ export function createRouter(services: APIRouterServices): Router {
 
       res.status(200).json(
         result.map((entry) => ({
-          id: entry.memory.id,
-          title: entry.memory.title,
-          content: entry.memory.content,
-          type: entry.memory.type,
+          ...serializeMemory(entry.memory),
           similarity: entry.similarity,
-          project: entry.memory.project
+          finalScore: entry.finalScore
         }))
       );
     })

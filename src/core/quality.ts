@@ -3,6 +3,7 @@ import type { Memory, QualityScore } from "./types.js";
 import { Repository } from "../db/repository.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const FRESHNESS_GRACE_MS = 1_000;
 
 const clamp = (value: number): number => Math.max(0, Math.min(1, value));
 
@@ -28,9 +29,11 @@ export class QualityService {
   ) {}
 
   scoreMemory(memory: Memory): QualityScore {
-    const daysSinceUpdate = Math.max(0, (Date.now() - Date.parse(memory.updated_at)) / DAY_MS);
+    const ageMs = Math.max(0, Date.now() - Date.parse(memory.updated_at));
+    const daysSinceUpdate = ageMs / DAY_MS;
     const accuracy = getAccuracy(memory);
-    const freshness = clamp(1 / (1 + daysSinceUpdate * 0.01));
+    const freshness =
+      ageMs <= FRESHNESS_GRACE_MS ? 1 : clamp(1 / (1 + daysSinceUpdate * 0.01));
     const usefulness = clamp(memory.access_count / 10);
     const completeness = clamp(memory.content.length / 200);
     const overall =

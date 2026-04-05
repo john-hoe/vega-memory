@@ -26,6 +26,8 @@ import { registerScreenshotCommand } from "./commands/screenshot.js";
 import { registerSessionCommands } from "./commands/session.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerStoreCommand } from "./commands/store.js";
+import { registerPluginCommands } from "./commands/plugins.js";
+import { registerTemplateCommands } from "./commands/templates.js";
 import { CompactService } from "../core/compact.js";
 import { CodeIndexService } from "../core/code-index.js";
 import { CompressionService } from "../core/compression.js";
@@ -39,6 +41,8 @@ import { QualityService } from "../core/quality.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import { Repository } from "../db/repository.js";
+import { PluginLoader } from "../plugins/loader.js";
+import { TemplateMarketplace } from "../plugins/marketplace.js";
 import { SearchEngine } from "../search/engine.js";
 
 const ensureDataDirectory = (dbPath: string): void => {
@@ -95,6 +99,8 @@ async function main(): Promise<void> {
   const imageMemoryService = new ImageMemoryService(repository, memoryService);
   const docIndexService = new DocIndexService(repository, memoryService);
   const qualityService = new QualityService(repository, config);
+  const pluginLoader = new PluginLoader();
+  const templateMarketplace = new TemplateMarketplace(config);
 
   registerStoreCommand(program, memoryService);
   registerRecallCommand(program, recallService);
@@ -115,6 +121,8 @@ async function main(): Promise<void> {
   registerQualityCommand(program, qualityService);
   registerAuditCommand(program, repository);
   registerBenchmarkCommand(program, repository, memoryService, recallService, config);
+  registerPluginCommands(program, pluginLoader);
+  registerTemplateCommands(program, templateMarketplace, repository);
 
   try {
     await program.parseAsync(process.argv);

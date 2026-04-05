@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vega Memory Dashboard</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #091014;
+        --panel: rgba(19, 29, 36, 0.92);
+        --panel-alt: rgba(14, 23, 29, 0.92);
+        --border: rgba(127, 180, 198, 0.18);
+        --text: #edf4f7;
+        --muted: #8ba0ac;
+        --accent: #48c4b6;
+        --accent-soft: rgba(72, 196, 182, 0.14);
+        --danger: #ff8574;
+        --shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(72, 196, 182, 0.18), transparent 34%),
+          radial-gradient(circle at top right, rgba(64, 104, 255, 0.12), transparent 28%),
+          linear-gradient(180deg, #081014 0%, #030608 100%);
+        color: var(--text);
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+        background-size: 32px 32px;
+        opacity: 0.22;
+      }
+
+      .page {
+        position: relative;
+        z-index: 1;
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 32px 20px 40px;
+      }
+
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        align-items: flex-start;
+        padding: 28px;
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        background:
+          linear-gradient(135deg, rgba(72, 196, 182, 0.12), rgba(12, 17, 23, 0.92)),
+          var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .hero h1 {
+        margin: 0 0 8px;
+        font-size: clamp(2rem, 4vw, 3rem);
+        letter-spacing: -0.04em;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 720px;
+        color: var(--muted);
+      }
+
+      .hero-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(3, 10, 14, 0.72);
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .status-pill::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 12px rgba(72, 196, 182, 0.8);
+      }
+
+      .button {
+        border: 1px solid var(--border);
+        background: rgba(6, 15, 20, 0.9);
+        color: var(--text);
+        border-radius: 12px;
+        padding: 10px 14px;
+        cursor: pointer;
+        transition: border-color 120ms ease, transform 120ms ease;
+      }
+
+      .button:hover {
+        border-color: rgba(72, 196, 182, 0.44);
+        transform: translateY(-1px);
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+        margin: 24px 0;
+      }
+
+      .stat-card,
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .stat-card {
+        padding: 20px 22px;
+      }
+
+      .stat-card .label {
+        color: var(--muted);
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .stat-card .value {
+        margin-top: 10px;
+        font-size: clamp(1.8rem, 4vw, 2.6rem);
+        font-weight: 700;
+        letter-spacing: -0.04em;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+        gap: 20px;
+      }
+
+      .panel {
+        overflow: hidden;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 20px 22px 18px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
+      }
+
+      .panel-header h2 {
+        margin: 0;
+        font-size: 1.05rem;
+        letter-spacing: 0.02em;
+      }
+
+      .search-form {
+        display: flex;
+        gap: 10px;
+        width: 100%;
+      }
+
+      .search-input {
+        flex: 1;
+        min-width: 0;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: rgba(4, 11, 15, 0.9);
+        color: var(--text);
+        padding: 12px 14px;
+        font: inherit;
+      }
+
+      .panel-subtitle {
+        padding: 0 22px 18px;
+        color: var(--muted);
+      }
+
+      .table-wrap {
+        overflow: auto;
+        max-height: 70vh;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      thead {
+        position: sticky;
+        top: 0;
+        background: rgba(5, 12, 17, 0.95);
+        backdrop-filter: blur(12px);
+      }
+
+      th,
+      td {
+        padding: 14px 22px;
+        border-bottom: 1px solid rgba(127, 180, 198, 0.1);
+        text-align: left;
+        font-size: 0.95rem;
+      }
+
+      th {
+        color: var(--muted);
+        font-size: 0.8rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      tbody tr {
+        cursor: pointer;
+        transition: background 120ms ease;
+      }
+
+      tbody tr:hover,
+      tbody tr.selected {
+        background: var(--accent-soft);
+      }
+
+      .type-tag,
+      .project-tag {
+        display: inline-flex;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.03);
+        white-space: nowrap;
+      }
+
+      .detail {
+        display: flex;
+        flex-direction: column;
+        min-height: 100%;
+      }
+
+      .detail-body {
+        padding: 22px;
+        display: grid;
+        gap: 18px;
+      }
+
+      .detail-body h3 {
+        margin: 0;
+        font-size: 1.4rem;
+      }
+
+      .detail-meta {
+        display: grid;
+        gap: 10px;
+        color: var(--muted);
+      }
+
+      .detail-content {
+        padding: 16px;
+        border-radius: 16px;
+        background: var(--panel-alt);
+        border: 1px solid var(--border);
+        white-space: pre-wrap;
+        line-height: 1.6;
+      }
+
+      .tag-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(72, 196, 182, 0.26);
+        background: rgba(72, 196, 182, 0.09);
+        color: #9ce4da;
+      }
+
+      .empty-state,
+      .message {
+        padding: 22px;
+        color: var(--muted);
+      }
+
+      .message.error {
+        color: var(--danger);
+      }
+
+      @media (max-width: 980px) {
+        .stats,
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .hero {
+          flex-direction: column;
+        }
+
+        .hero-actions,
+        .search-form {
+          width: 100%;
+          flex-wrap: wrap;
+        }
+
+        .button {
+          flex: 1 1 auto;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .page {
+          padding: 16px 14px 28px;
+        }
+
+        .hero,
+        .stat-card,
+        .panel-header,
+        .panel-subtitle,
+        th,
+        td,
+        .detail-body,
+        .empty-state,
+        .message {
+          padding-left: 16px;
+          padding-right: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <section class="hero">
+        <div>
+          <h1>Vega Memory Dashboard</h1>
+          <p>
+            Inspect health, browse stored memories, and search recall results from the
+            running Vega Memory API.
+          </p>
+        </div>
+        <div class="hero-actions">
+          <div class="status-pill" id="refresh-status">Connecting</div>
+          <button class="button" id="set-api-key" type="button">Set API Key</button>
+          <button class="button" id="clear-api-key" type="button">Clear API Key</button>
+        </div>
+      </section>
+
+      <section class="stats" aria-label="Dashboard stats">
+        <article class="stat-card">
+          <div class="label">Memory Count</div>
+          <div class="value" id="memory-count">-</div>
+        </article>
+        <article class="stat-card">
+          <div class="label">DB Size</div>
+          <div class="value" id="db-size">-</div>
+        </article>
+        <article class="stat-card">
+          <div class="label">Ollama Status</div>
+          <div class="value" id="ollama-status">-</div>
+        </article>
+      </section>
+
+      <section class="workspace">
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Memories</h2>
+            <form class="search-form" id="search-form">
+              <input
+                class="search-input"
+                id="search-input"
+                type="search"
+                placeholder="Search memories with /api/recall"
+                autocomplete="off"
+              />
+              <button class="button" type="submit">Search</button>
+              <button class="button" id="reset-search" type="button">Reset</button>
+            </form>
+          </div>
+          <div class="panel-subtitle" id="results-summary">
+            Loading memory list from /api/list
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Type</th>
+                  <th>Project</th>
+                  <th>Importance</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+              <tbody id="memory-table">
+                <tr>
+                  <td colspan="5" class="empty-state">Loading...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="message" id="table-message" hidden></div>
+        </article>
+
+        <aside class="panel detail">
+          <div class="panel-header">
+            <h2>Memory Detail</h2>
+          </div>
+          <div class="detail-body" id="detail-body">
+            <div class="empty-state">
+              Select a memory row to inspect content, tags, and metadata.
+            </div>
+          </div>
+        </aside>
+      </section>
+    </div>
+
+    <script>
+      const state = {
+        apiKey: window.localStorage.getItem("vega.apiKey") || "",
+        memories: [],
+        selectedId: null,
+        mode: "list",
+        query: ""
+      };
+
+      const elements = {
+        memoryCount: document.getElementById("memory-count"),
+        dbSize: document.getElementById("db-size"),
+        ollamaStatus: document.getElementById("ollama-status"),
+        refreshStatus: document.getElementById("refresh-status"),
+        resultsSummary: document.getElementById("results-summary"),
+        tableBody: document.getElementById("memory-table"),
+        tableMessage: document.getElementById("table-message"),
+        detailBody: document.getElementById("detail-body"),
+        searchForm: document.getElementById("search-form"),
+        searchInput: document.getElementById("search-input"),
+        resetSearch: document.getElementById("reset-search"),
+        setApiKey: document.getElementById("set-api-key"),
+        clearApiKey: document.getElementById("clear-api-key")
+      };
+
+      const formatTimestamp = (value) => {
+        if (!value) {
+          return "-";
+        }
+
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return value;
+        }
+
+        return new Intl.DateTimeFormat(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit"
+        }).format(date);
+      };
+
+      const headersWithAuth = (includeJson = false) => {
+        const headers = new Headers();
+
+        if (state.apiKey) {
+          headers.set("authorization", `Bearer ${state.apiKey}`);
+        }
+        if (includeJson) {
+          headers.set("content-type", "application/json");
+        }
+
+        return headers;
+      };
+
+      const promptForApiKey = () => {
+        const nextValue = window.prompt(
+          "Enter the Vega API key used by the scheduler HTTP API:",
+          state.apiKey
+        );
+
+        if (nextValue === null) {
+          return false;
+        }
+
+        state.apiKey = nextValue.trim();
+
+        if (state.apiKey) {
+          window.localStorage.setItem("vega.apiKey", state.apiKey);
+        } else {
+          window.localStorage.removeItem("vega.apiKey");
+        }
+
+        return true;
+      };
+
+      const fetchJson = async (path, init = {}, retry = true) => {
+        const response = await fetch(path, {
+          ...init,
+          headers:
+            init.body === undefined
+              ? headersWithAuth(false)
+              : headersWithAuth(true)
+        });
+
+        if (response.status === 401 && retry) {
+          elements.refreshStatus.textContent = "API key required";
+
+          if (!promptForApiKey()) {
+            throw new Error("API request requires a valid API key.");
+          }
+
+          return fetchJson(path, init, false);
+        }
+
+        if (!response.ok) {
+          let detail = response.statusText;
+
+          try {
+            const payload = await response.json();
+            if (payload && typeof payload.error === "string") {
+              detail = payload.error;
+            }
+          } catch {}
+
+          throw new Error(detail || `Request failed with status ${response.status}`);
+        }
+
+        return response.json();
+      };
+
+      const updateRefreshStatus = (label) => {
+        elements.refreshStatus.textContent = label;
+      };
+
+      const renderStats = (health) => {
+        elements.memoryCount.textContent = String(health.memories ?? 0);
+        elements.dbSize.textContent = `${Number(health.db_size_mb ?? 0).toFixed(2)} MB`;
+        elements.ollamaStatus.textContent = health.ollama ? "Online" : "Offline";
+      };
+
+      const renderMessage = (message, isError = false) => {
+        if (!message) {
+          elements.tableMessage.hidden = true;
+          elements.tableMessage.textContent = "";
+          elements.tableMessage.className = "message";
+          return;
+        }
+
+        elements.tableMessage.hidden = false;
+        elements.tableMessage.textContent = message;
+        elements.tableMessage.className = isError ? "message error" : "message";
+      };
+
+      const renderDetail = (memory) => {
+        if (!memory) {
+          elements.detailBody.innerHTML =
+            '<div class="empty-state">Select a memory row to inspect content, tags, and metadata.</div>';
+          return;
+        }
+
+        const tags = (memory.tags || [])
+          .map((tag) => `<span class="tag">${tag}</span>`)
+          .join("");
+
+        elements.detailBody.innerHTML = `
+          <div>
+            <h3>${memory.title || "Untitled Memory"}</h3>
+          </div>
+          <div class="detail-meta">
+            <div>Type: ${memory.type || "-"}</div>
+            <div>Project: ${memory.project || "-"}</div>
+            <div>Importance: ${
+              typeof memory.importance === "number" ? memory.importance.toFixed(2) : "-"
+            }</div>
+            <div>Status: ${memory.status || "-"}</div>
+            <div>Verified: ${memory.verified || "-"}</div>
+            <div>Updated: ${formatTimestamp(memory.updated_at)}</div>
+            <div>Created: ${formatTimestamp(memory.created_at)}</div>
+            <div>Access Count: ${memory.access_count ?? 0}</div>
+          </div>
+          <div>
+            <div class="detail-content">${memory.content || ""}</div>
+          </div>
+          <div>
+            <div class="label">Tags</div>
+            <div class="tag-list">${tags || '<span class="tag">none</span>'}</div>
+          </div>
+        `;
+      };
+
+      const selectMemory = (memoryId) => {
+        state.selectedId = memoryId;
+        const selected = state.memories.find((memory) => memory.id === memoryId) || null;
+
+        renderTable();
+        renderDetail(selected);
+      };
+
+      const renderTable = () => {
+        if (state.memories.length === 0) {
+          elements.tableBody.innerHTML =
+            '<tr><td colspan="5" class="empty-state">No memories available.</td></tr>';
+          renderDetail(null);
+          return;
+        }
+
+        elements.tableBody.innerHTML = "";
+
+        for (const memory of state.memories) {
+          const row = document.createElement("tr");
+
+          if (memory.id === state.selectedId) {
+            row.classList.add("selected");
+          }
+
+          row.innerHTML = `
+            <td>${memory.title || "Untitled Memory"}</td>
+            <td><span class="type-tag">${memory.type || "-"}</span></td>
+            <td><span class="project-tag">${memory.project || "-"}</span></td>
+            <td>${
+              typeof memory.importance === "number" ? memory.importance.toFixed(2) : "-"
+            }</td>
+            <td>${formatTimestamp(memory.updated_at)}</td>
+          `;
+          row.addEventListener("click", () => {
+            selectMemory(memory.id);
+          });
+          elements.tableBody.appendChild(row);
+        }
+
+        if (!state.selectedId || !state.memories.some((memory) => memory.id === state.selectedId)) {
+          state.selectedId = state.memories[0].id;
+        }
+
+        renderDetail(state.memories.find((memory) => memory.id === state.selectedId) || null);
+      };
+
+      const loadStats = async () => {
+        const health = await fetchJson("/api/health");
+        renderStats(health);
+      };
+
+      const loadMemories = async () => {
+        updateRefreshStatus("Refreshing list");
+        renderMessage("");
+
+        const memories = await fetchJson("/api/list?limit=100&sort=updated_at%20DESC");
+
+        state.mode = "list";
+        state.query = "";
+        state.memories = Array.isArray(memories) ? memories : [];
+        elements.resultsSummary.textContent = `Showing ${state.memories.length} recent memories`;
+        renderTable();
+        updateRefreshStatus("Live");
+      };
+
+      const searchMemories = async (query) => {
+        updateRefreshStatus("Searching");
+        renderMessage("");
+
+        const results = await fetchJson("/api/recall", {
+          method: "POST",
+          body: JSON.stringify({
+            query,
+            limit: 25,
+            min_similarity: 0
+          })
+        });
+
+        state.mode = "search";
+        state.query = query;
+        state.memories = Array.isArray(results) ? results : [];
+        elements.resultsSummary.textContent = `Search results for "${query}" (${state.memories.length})`;
+        renderTable();
+        updateRefreshStatus("Live");
+      };
+
+      const refreshDashboard = async () => {
+        try {
+          await loadStats();
+
+          if (state.mode === "search" && state.query) {
+            await searchMemories(state.query);
+          } else {
+            await loadMemories();
+          }
+        } catch (error) {
+          updateRefreshStatus("Error");
+          renderMessage(error instanceof Error ? error.message : String(error), true);
+        }
+      };
+
+      elements.searchForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const query = elements.searchInput.value.trim();
+
+        try {
+          await loadStats();
+
+          if (!query) {
+            await loadMemories();
+            return;
+          }
+
+          await searchMemories(query);
+        } catch (error) {
+          updateRefreshStatus("Error");
+          renderMessage(error instanceof Error ? error.message : String(error), true);
+        }
+      });
+
+      elements.resetSearch.addEventListener("click", async () => {
+        elements.searchInput.value = "";
+        await refreshDashboard();
+      });
+
+      elements.setApiKey.addEventListener("click", async () => {
+        if (promptForApiKey()) {
+          await refreshDashboard();
+        }
+      });
+
+      elements.clearApiKey.addEventListener("click", async () => {
+        state.apiKey = "";
+        window.localStorage.removeItem("vega.apiKey");
+        await refreshDashboard();
+      });
+
+      setInterval(() => {
+        void loadStats().catch((error) => {
+          updateRefreshStatus("Error");
+          renderMessage(error instanceof Error ? error.message : String(error), true);
+        });
+      }, 30000);
+
+      void refreshDashboard();
+    </script>
+  </body>
+</html>

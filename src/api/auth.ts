@@ -14,6 +14,11 @@ export const createAuthMiddleware = (config: VegaConfig): RequestHandler => {
   }
 
   return (req, res, next) => {
+    if (!req.path.startsWith("/api")) {
+      next();
+      return;
+    }
+
     const authorization = req.get("authorization");
     const expected = `Bearer ${config.apiKey}`;
 

@@ -68,6 +68,22 @@ export function initializeDatabase(db: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS teams (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      owner_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS team_members (
+      team_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('admin', 'member', 'readonly')),
+      joined_at TEXT NOT NULL,
+      PRIMARY KEY (team_id, user_id),
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS entities (
       id TEXT PRIMARY KEY,
       name TEXT UNIQUE,
@@ -96,6 +112,12 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_relations_memory
       ON relations(memory_id);
+
+    CREATE INDEX IF NOT EXISTS idx_team_members_team
+      ON team_members(team_id);
+
+    CREATE INDEX IF NOT EXISTS idx_team_members_user
+      ON team_members(user_id);
 
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
     USING fts5(title, content, tags, content=memories, content_rowid=rowid);
