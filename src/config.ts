@@ -10,6 +10,7 @@ export interface CloudBackupConfig {
 
 export interface VegaConfig {
   dbPath: string;
+  dbEncryption: boolean;
   ollamaBaseUrl: string;
   ollamaModel: string;
   tokenBudget: number;
@@ -67,6 +68,27 @@ const parseOptionalString = (value: unknown): string | undefined => {
   return trimmed.length > 0 ? trimmed : undefined;
 };
 
+const parseOptionalBoolean = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return undefined;
+};
+
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined) {
     return fallback;
@@ -79,7 +101,7 @@ const parseBoolean = (value: string | undefined, fallback: boolean): boolean => 
 const getConfigFilePath = (): string => join(homedir(), ".vega", "config.json");
 
 const loadFileConfig = (): Partial<
-  Pick<VegaConfig, "mode" | "serverUrl" | "apiKey" | "cacheDbPath">
+  Pick<VegaConfig, "mode" | "serverUrl" | "apiKey" | "cacheDbPath" | "dbEncryption">
 > => {
   try {
     const parsed = JSON.parse(readFileSync(getConfigFilePath(), "utf8")) as unknown;
@@ -94,7 +116,8 @@ const loadFileConfig = (): Partial<
       mode: mode === undefined ? undefined : parseMode(mode),
       serverUrl: parseOptionalString(parsed.server),
       apiKey: parseOptionalString(parsed.api_key),
-      cacheDbPath: parseOptionalString(parsed.cache_db)
+      cacheDbPath: parseOptionalString(parsed.cache_db),
+      dbEncryption: parseOptionalBoolean(parsed.db_encryption ?? parsed.dbEncryption)
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -121,10 +144,15 @@ const parseCloudBackup = (): CloudBackupConfig | undefined => {
 
 export const loadConfig = (): VegaConfig => {
   const fileConfig = loadFileConfig();
+  const dbEncryption =
+    process.env.VEGA_DB_ENCRYPTION === undefined
+      ? fileConfig.dbEncryption ?? false
+      : process.env.VEGA_DB_ENCRYPTION === "true";
   const encryptionKey = process.env.VEGA_ENCRYPTION_KEY || undefined;
 
   return {
     dbPath: expandHomePath(process.env.VEGA_DB_PATH ?? "./data/memory.db"),
+    dbEncryption,
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
     ollamaModel: process.env.OLLAMA_MODEL ?? "bge-m3",
     tokenBudget: clamp(parseNumber(process.env.VEGA_TOKEN_BUDGET, 2000), 500, 10_000),

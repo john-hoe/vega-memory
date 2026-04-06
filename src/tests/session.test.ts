@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
-import type Database from "better-sqlite3";
+import type Database from "better-sqlite3-multiple-ciphers";
 
 import type { VegaConfig } from "../config.js";
 import { MemoryService } from "../core/memory.js";
@@ -31,6 +31,7 @@ const baseConfig: VegaConfig = {
   telegramBotToken: undefined,
   telegramChatId: undefined,
   observerEnabled: false,
+  dbEncryption: false
 };
 
 const createStoredMemory = (

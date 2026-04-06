@@ -50,6 +50,7 @@ const createHarness = () => {
     telegramBotToken: undefined,
     telegramChatId: undefined,
     observerEnabled: false,
+    dbEncryption: false
   };
   const repository = new Repository(dbPath);
   const diagnoseService = new DiagnoseService(repository, config);

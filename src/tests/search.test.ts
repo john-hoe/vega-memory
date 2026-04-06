@@ -57,6 +57,7 @@ const baseConfig: VegaConfig = {
   telegramBotToken: undefined,
   telegramChatId: undefined,
   observerEnabled: false,
+  dbEncryption: false,
 };
 
 test("BruteForceEngine returns results sorted by similarity", () => {

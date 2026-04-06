@@ -53,6 +53,7 @@ import { PluginLoader } from "../plugins/loader.js";
 import { TemplateMarketplace } from "../plugins/marketplace.js";
 import { SearchEngine } from "../search/engine.js";
 import { RelevanceTuner } from "../search/tuning.js";
+import { resolveConfiguredEncryptionKey } from "../security/keychain.js";
 
 const ensureDataDirectory = (dbPath: string): void => {
   if (dbPath === ":memory:") {
@@ -87,9 +88,12 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
+  const repositoryKey = config.dbEncryption
+    ? await resolveConfiguredEncryptionKey(config)
+    : undefined;
   ensureDataDirectory(config.dbPath);
 
-  const repository = new Repository(config.dbPath);
+  const repository = new Repository(config.dbPath, repositoryKey);
   const searchEngine = new SearchEngine(repository, config);
   const knowledgeGraphService = new KnowledgeGraphService(repository);
   const memoryService = new MemoryService(repository, config, knowledgeGraphService);

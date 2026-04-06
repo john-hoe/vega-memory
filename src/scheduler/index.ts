@@ -12,6 +12,7 @@ import { SessionService } from "../core/session.js";
 import { Repository } from "../db/repository.js";
 import { NotificationManager } from "../notify/manager.js";
 import { SearchEngine } from "../search/engine.js";
+import { resolveConfiguredEncryptionKey } from "../security/keychain.js";
 import { mountDashboard } from "../web/dashboard.js";
 import {
   dailyMaintenance,
@@ -124,13 +125,16 @@ export const startSchedulerApiServer = async (
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  const repositoryKey = config.dbEncryption
+    ? await resolveConfiguredEncryptionKey(config)
+    : undefined;
   ensureSchedulerDirectories(config.dbPath);
   const notificationManager = new NotificationManager(
     config,
     join(getDataDir(config.dbPath), "alerts")
   );
 
-  const repository = new Repository(config.dbPath);
+  const repository = new Repository(config.dbPath, repositoryKey);
   const searchEngine = new SearchEngine(repository, config);
   const memoryService = new MemoryService(repository, config);
   const recallService = new RecallService(repository, searchEngine, config);

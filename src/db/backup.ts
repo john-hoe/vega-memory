@@ -9,12 +9,22 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import BetterSqlite3 from "better-sqlite3";
+import BetterSqlite3 from "better-sqlite3-multiple-ciphers";
 
 import { decryptBuffer, encryptBuffer } from "../security/encryption.js";
 
 type BackupOptions = Parameters<InstanceType<typeof BetterSqlite3>["backup"]>[1];
 const ENCRYPTED_BACKUP_SUFFIX = ".enc";
+const SQLITE_HEADER = Buffer.from("SQLite format 3\0", "utf8");
+
+function isPlainSqliteDatabase(dbPath: string): boolean {
+  try {
+    const header = readFileSync(dbPath).subarray(0, SQLITE_HEADER.length);
+    return header.equals(SQLITE_HEADER);
+  } catch {
+    return false;
+  }
+}
 
 function listBackupPaths(backupDir: string): string[] {
   try {
@@ -43,15 +53,22 @@ export async function createBackup(
 ): Promise<string> {
   mkdirSync(backupDir, { recursive: true });
   const backupPath = join(backupDir, `memory-${new Date().toISOString().slice(0, 10)}.db`);
-  const sourceDb = new BetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
+  const plainSqliteDatabase = isPlainSqliteDatabase(dbPath);
+  const sourceDb = new BetterSqlite3(dbPath, { fileMustExist: true });
 
   try {
-    await sourceDb.backup(backupPath, options);
+    if (!plainSqliteDatabase && encryptionKey) {
+      sourceDb.pragma(`key = "x'${encryptionKey}'"`);
+    }
+
+    sourceDb.pragma("wal_checkpoint(TRUNCATE)");
   } finally {
     sourceDb.close();
   }
 
-  if (encryptionKey === undefined) {
+  copyFileSync(dbPath, backupPath);
+
+  if (encryptionKey === undefined || !plainSqliteDatabase) {
     return backupPath;
   }
 

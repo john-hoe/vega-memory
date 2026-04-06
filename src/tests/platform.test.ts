@@ -35,6 +35,7 @@ const createConfig = (dbPath: string, overrides: Partial<VegaConfig> = {}): Vega
   telegramBotToken: undefined,
   telegramChatId: undefined,
   observerEnabled: false,
+  dbEncryption: false,
   ...overrides
 });
 

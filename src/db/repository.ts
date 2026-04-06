@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import BetterSqlite3 from "better-sqlite3";
+import BetterSqlite3 from "better-sqlite3-multiple-ciphers";
 import { v4 as uuidv4 } from "uuid";
 
 import type {
@@ -233,12 +233,15 @@ function normalizeNonNegativeInteger(value: number): number {
 export class Repository {
   readonly db: BetterSqlite3.Database;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, encryptionKey?: string) {
     if (dbPath !== ":memory:") {
       mkdirSync(dirname(dbPath), { recursive: true });
     }
 
     this.db = new BetterSqlite3(dbPath);
+    if (encryptionKey) {
+      this.db.pragma(`key = "x'${encryptionKey}'"`);
+    }
     initializeDatabase(this.db);
   }
 

@@ -35,6 +35,7 @@ const baseConfig: VegaConfig = {
   telegramBotToken: undefined,
   telegramChatId: undefined,
   observerEnabled: false,
+  dbEncryption: false,
 };
 
 const createEmbeddingBuffer = (values: number[]): Buffer => Buffer.from(new Float32Array(values).buffer);

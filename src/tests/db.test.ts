@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
-import Database from "better-sqlite3";
+import Database from "better-sqlite3-multiple-ciphers";
 
 import { cleanOldBackups, createBackup, restoreFromBackup, shouldBackup } from "../db/backup.js";
 import { Repository } from "../db/repository.js";

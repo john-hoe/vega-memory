@@ -21,6 +21,7 @@ const baseConfig: VegaConfig = {
   shardingEnabled: false,
   backupRetentionDays: 7,
   observerEnabled: false,
+  dbEncryption: false,
   apiPort: 3271,
   apiKey: undefined,
   mode: "server",

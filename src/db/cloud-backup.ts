@@ -1,7 +1,7 @@
 import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import Database from "better-sqlite3";
+import Database from "better-sqlite3-multiple-ciphers";
 
 import type { CloudBackupConfig } from "../config.js";
 
@@ -12,6 +12,7 @@ interface BackupMetadata {
 }
 
 const METADATA_SUFFIX = ".metadata.json";
+const SQLITE_HEADER = Buffer.from("SQLite format 3\0", "utf8");
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -47,6 +48,16 @@ export class CloudBackupProvider {
 
     if (!localPath.endsWith(".enc")) {
       try {
+        const fileHeader = (await readFile(localPath)).subarray(0, SQLITE_HEADER.length);
+
+        if (!fileHeader.equals(SQLITE_HEADER)) {
+          return {
+            timestamp: new Date(fileStat.mtimeMs).toISOString(),
+            memory_count: memoryCount,
+            db_size_bytes: fileStat.size
+          };
+        }
+
         const db = new Database(localPath, { readonly: true, fileMustExist: true });
 
         try {

@@ -23,6 +23,7 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID,
+    VEGA_DB_ENCRYPTION: process.env.VEGA_DB_ENCRYPTION,
     VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
     VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR
   };
@@ -42,6 +43,7 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_CACHE_DB;
   delete process.env.VEGA_TG_BOT_TOKEN;
   delete process.env.VEGA_TG_CHAT_ID;
+  delete process.env.VEGA_DB_ENCRYPTION;
   delete process.env.VEGA_ENCRYPTION_KEY;
   delete process.env.VEGA_CLOUD_BACKUP_DIR;
 
@@ -61,6 +63,7 @@ test("loadConfig returns the documented defaults", () => {
     telegramBotToken: undefined,
     telegramChatId: undefined,
     observerEnabled: false,
+    dbEncryption: false,
     cloudBackup: undefined
   });
 
@@ -84,6 +87,7 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID,
+    VEGA_DB_ENCRYPTION: process.env.VEGA_DB_ENCRYPTION,
     VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
     VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR
   };
@@ -103,6 +107,7 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_CACHE_DB = "/tmp/vega-cache.db";
   process.env.VEGA_TG_BOT_TOKEN = "bot-token";
   process.env.VEGA_TG_CHAT_ID = "chat-id";
+  process.env.VEGA_DB_ENCRYPTION = "true";
   process.env.VEGA_ENCRYPTION_KEY =
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
   process.env.VEGA_CLOUD_BACKUP_DIR = "/tmp/vega-cloud";
@@ -123,6 +128,7 @@ test("loadConfig reads overrides from process.env", () => {
     telegramBotToken: "bot-token",
     telegramChatId: "chat-id",
     observerEnabled: true,
+    dbEncryption: true,
     encryptionKey:
       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     cloudBackup: {
@@ -170,7 +176,8 @@ test("loadConfig reads ~/.vega/config.json values and lets env override them", (
     VEGA_MODE: process.env.VEGA_MODE,
     VEGA_SERVER_URL: process.env.VEGA_SERVER_URL,
     VEGA_API_KEY: process.env.VEGA_API_KEY,
-    VEGA_CACHE_DB: process.env.VEGA_CACHE_DB
+    VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
+    VEGA_DB_ENCRYPTION: process.env.VEGA_DB_ENCRYPTION
   };
 
   try {
@@ -181,7 +188,8 @@ test("loadConfig reads ~/.vega/config.json values and lets env override them", (
         mode: "client",
         server: "http://127.0.0.1:4321",
         api_key: "file-secret",
-        cache_db: "~/.vega/file-cache.db"
+        cache_db: "~/.vega/file-cache.db",
+        db_encryption: true
       })}\n`,
       "utf8"
     );
@@ -191,6 +199,7 @@ test("loadConfig reads ~/.vega/config.json values and lets env override them", (
     delete process.env.VEGA_SERVER_URL;
     delete process.env.VEGA_API_KEY;
     delete process.env.VEGA_CACHE_DB;
+    delete process.env.VEGA_DB_ENCRYPTION;
 
     const config = loadConfig();
 
@@ -198,10 +207,13 @@ test("loadConfig reads ~/.vega/config.json values and lets env override them", (
     assert.equal(config.serverUrl, "http://127.0.0.1:4321");
     assert.equal(config.apiKey, "file-secret");
     assert.equal(config.cacheDbPath, join(tempHome, ".vega", "file-cache.db"));
+    assert.equal(config.dbEncryption, true);
 
     process.env.VEGA_API_KEY = "env-secret";
+    process.env.VEGA_DB_ENCRYPTION = "false";
 
     assert.equal(loadConfig().apiKey, "env-secret");
+    assert.equal(loadConfig().dbEncryption, false);
   } finally {
     Object.assign(process.env, previous);
     rmSync(tempHome, { recursive: true, force: true });

@@ -21,6 +21,7 @@ const unreachableConfig: VegaConfig = {
   telegramBotToken: undefined,
   telegramChatId: undefined,
   observerEnabled: false,
+  dbEncryption: false,
 };
 
 const installFetchMock = (

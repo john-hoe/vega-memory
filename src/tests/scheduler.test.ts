@@ -94,6 +94,7 @@ const createSchedulerApiHarness = (apiKey?: string) => {
     telegramBotToken: undefined,
     telegramChatId: undefined,
     observerEnabled: false,
+    dbEncryption: false
   };
   const repository = new Repository(config.dbPath);
   const searchEngine = new SearchEngine(repository, config);
@@ -204,6 +205,7 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
     telegramBotToken: undefined,
     telegramChatId: undefined,
     observerEnabled: false,
+    dbEncryption: false
   };
   const repository = new Repository(dbPath);
   const compactService = new CompactService(repository, config);
@@ -259,6 +261,7 @@ test(
       telegramBotToken: undefined,
       telegramChatId: undefined,
       observerEnabled: false,
+      dbEncryption: false
     };
     const repository = new Repository(dbPath);
     const compactService = new CompactService(repository, config);
@@ -307,6 +310,7 @@ test("weeklyHealthReport writes integrity and memory count details", async () =>
     telegramBotToken: undefined,
     telegramChatId: undefined,
     observerEnabled: false,
+    dbEncryption: false
   };
   const repository = new Repository(dbPath);
 

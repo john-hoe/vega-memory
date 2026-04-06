@@ -14,6 +14,7 @@ import { SessionService } from "./core/session.js";
 import { Repository } from "./db/repository.js";
 import { createMCPServer } from "./mcp/server.js";
 import { SearchEngine } from "./search/engine.js";
+import { resolveConfiguredEncryptionKey } from "./security/keychain.js";
 import { VegaSyncClient } from "./sync/client.js";
 import { SyncManager } from "./sync/manager.js";
 import { PendingQueue } from "./sync/queue.js";
@@ -36,6 +37,9 @@ async function main(): Promise<void> {
   debugLog("main() starting");
   const config = loadConfig();
   const activeDbPath = config.mode === "client" ? config.cacheDbPath : config.dbPath;
+  const repositoryKey = config.dbEncryption
+    ? await resolveConfiguredEncryptionKey(config)
+    : undefined;
   ensureDataDirectory(activeDbPath);
 
   const runtime =
@@ -45,7 +49,7 @@ async function main(): Promise<void> {
             throw new Error("VEGA_SERVER_URL is required when VEGA_MODE=client");
           }
 
-          const repository = new Repository(config.cacheDbPath);
+          const repository = new Repository(config.cacheDbPath, repositoryKey);
           const client = new VegaSyncClient(config.serverUrl, config.apiKey);
           const queue = new PendingQueue();
           const syncManager = new SyncManager(client, queue, repository);
@@ -91,7 +95,7 @@ async function main(): Promise<void> {
           };
         })()
       : (() => {
-          const repository = new Repository(config.dbPath);
+          const repository = new Repository(config.dbPath, repositoryKey);
           const searchEngine = new SearchEngine(repository, config);
           const graphService = new KnowledgeGraphService(repository);
           const memoryService = new MemoryService(repository, config, graphService);

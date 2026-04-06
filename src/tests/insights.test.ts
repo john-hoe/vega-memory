@@ -37,6 +37,7 @@ const baseConfig: VegaConfig = {
   telegramBotToken: undefined,
   telegramChatId: undefined,
   observerEnabled: false,
+  dbEncryption: false,
 };
 
 const createStoredMemory = (

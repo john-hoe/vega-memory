@@ -15,6 +15,7 @@ import { dailyMaintenance } from "../scheduler/tasks.js";
 
 const createConfig = (overrides: Partial<VegaConfig> = {}): VegaConfig => ({
   dbPath: ":memory:",
+  dbEncryption: false,
   ollamaBaseUrl: "http://localhost:11434",
   ollamaModel: "bge-m3",
   tokenBudget: 2000,
