@@ -27,8 +27,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check
-        run: rm -rf dist && npx tsc
+      - name: Build
+        run: rm -rf dist && npm run build
 
       - name: Run tests
         run: node --test dist/tests/*.test.js

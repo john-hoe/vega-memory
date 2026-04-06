@@ -6,7 +6,7 @@
     "vega": "./dist/cli/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-web-public.mjs",
     "dev": "tsc --watch",
     "test": "node --test dist/tests/**/*.test.js"
   },

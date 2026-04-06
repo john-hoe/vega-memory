@@ -9,6 +9,8 @@
     <string>/opt/homebrew/bin/node</string>
     <string>/Users/johnmacmini/workspace/vega-memory/dist/scheduler/index.js</string>
   </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/johnmacmini/workspace/vega-memory</string>
   <key>KeepAlive</key>
   <true/>
   <key>RunAtLoad</key>
