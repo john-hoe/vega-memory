@@ -23,6 +23,10 @@
   <dict>
     <key>VEGA_DB_PATH</key>
     <string>/Users/johnmacmini/workspace/vega-memory/data/memory.db</string>
+    <key>VEGA_API_KEY</key>
+    <string>8bdc7e80b2cfa4556c856a32dd0a2bd7</string>
+    <key>VEGA_SQLITE_VEC_PATH</key>
+    <string>/Users/johnmacmini/workspace/vega-memory/node_modules/sqlite-vec-darwin-arm64/vec0</string>
   </dict>
 </dict>
 </plist>
