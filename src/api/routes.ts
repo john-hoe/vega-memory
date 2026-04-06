@@ -1,6 +1,7 @@
 import { Router, type Request, type RequestHandler, type Response } from "express";
 
 import type { VegaConfig } from "../config.js";
+import { getRequestTenantId } from "./auth.js";
 import { AnalyticsService } from "../core/analytics.js";
 import { CompactService } from "../core/compact.js";
 import { getHealthReport } from "../core/health.js";
@@ -367,9 +368,10 @@ const parseDateString = (value: unknown, field: string): string | undefined => {
   return parsed;
 };
 
-const getRequestAuditContext = (req: Request): AuditContext => ({
+const getRequestAuditContext = (req: Request, res: Response): AuditContext => ({
   actor: "api",
-  ip: req.ip ?? null
+  ip: req.ip ?? null,
+  tenant_id: getRequestTenantId(res)
 });
 
 export function createRouter(services: APIRouterServices): Router {
@@ -381,12 +383,14 @@ export function createRouter(services: APIRouterServices): Router {
     "/api/store",
     handleRoute(async (req, res) => {
       const body = requireBody(req.body);
+      const tenantId = getRequestTenantId(res);
       const result = await services.memoryService.store({
         content: requireString(body.content, "content"),
         type: parseMemoryType(body.type, "type") ?? (() => {
           throw new ApiError(400, "type is required");
         })(),
         project: parseSingleValue(body.project, "project") ?? "global",
+        tenant_id: tenantId,
         title: parseSingleValue(body.title, "title"),
         tags: parseStringArray(body.tags, "tags"),
         importance: parseNumber(body.importance, "importance", {
@@ -394,7 +398,7 @@ export function createRouter(services: APIRouterServices): Router {
           max: 1
         }),
         source: parseMemorySource(body.source, "source"),
-        auditContext: getRequestAuditContext(req)
+        auditContext: getRequestAuditContext(req, res)
       });
 
       res.status(200).json(result);
@@ -524,7 +528,7 @@ export function createRouter(services: APIRouterServices): Router {
           }),
           tags: parseStringArray(body.tags, "tags")
         },
-        getRequestAuditContext(req)
+        getRequestAuditContext(req, res)
       );
 
       res.status(200).json({
@@ -538,7 +542,7 @@ export function createRouter(services: APIRouterServices): Router {
     "/api/memory/:id",
     handleRoute(async (req, res) => {
       const id = requireString(req.params.id, "id");
-      await services.memoryService.delete(id, getRequestAuditContext(req));
+      await services.memoryService.delete(id, getRequestAuditContext(req, res));
 
       res.status(200).json({
         id,
@@ -569,7 +573,7 @@ export function createRouter(services: APIRouterServices): Router {
         project,
         requireString(body.summary, "summary"),
         parseStringArray(body.completed_tasks, "completed_tasks"),
-        getRequestAuditContext(req)
+        getRequestAuditContext(req, res)
       );
 
       res.status(200).json({
@@ -604,7 +608,7 @@ export function createRouter(services: APIRouterServices): Router {
       const body = req.body === undefined ? {} : requireBody(req.body);
       const result = services.compactService.compact(
         parseSingleValue(body.project, "project"),
-        getRequestAuditContext(req)
+        getRequestAuditContext(req, res)
       );
 
       res.status(200).json(result);

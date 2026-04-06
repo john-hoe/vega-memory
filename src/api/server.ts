@@ -4,11 +4,13 @@ import type { AddressInfo } from "node:net";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 
 import type { VegaConfig } from "../config.js";
-import { createAuthMiddleware } from "./auth.js";
+import { createAuthMiddleware, getRequestTenantId } from "./auth.js";
 import { createRouter, type APIRouterServices } from "./routes.js";
 
 const isAddressInfo = (value: string | AddressInfo | null): value is AddressInfo =>
   typeof value === "object" && value !== null;
+
+const shouldLogApiRequest = (path: string): boolean => path.startsWith("/api") && path !== "/api/health";
 
 export function createAPIServer(
   services: Omit<APIRouterServices, "config">,
@@ -26,7 +28,27 @@ export function createAPIServer(
       limit: "10mb"
     })
   );
-  app.use(createAuthMiddleware(config));
+  app.use((req, res, next) => {
+    if (!shouldLogApiRequest(req.path)) {
+      next();
+      return;
+    }
+
+    const startedAt = Date.now();
+    res.once("finish", () => {
+      services.repository.logPerformance({
+        timestamp: new Date().toISOString(),
+        tenant_id: getRequestTenantId(res),
+        operation: `${req.method.toUpperCase()} ${req.path}`,
+        latency_ms: Date.now() - startedAt,
+        memory_count: 0,
+        result_count: 0
+      });
+    });
+
+    next();
+  });
+  app.use(createAuthMiddleware(config, services.repository));
   app.use(
     createRouter({
       ...services,

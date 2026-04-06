@@ -189,6 +189,7 @@ export interface StoreParams {
   content: string;
   type: MemoryType;
   project: string;
+  tenant_id?: string | null;
   title?: string;
   tags?: string[];
   importance?: number;
@@ -243,6 +244,7 @@ export interface MemoryUpdateParams {
 export interface AuditContext {
   actor: string;
   ip: string | null;
+  tenant_id?: string | null;
 }
 
 export type HealthInfo = HealthReport | { status: "offline" | "unauthorized" };

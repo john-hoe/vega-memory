@@ -14,6 +14,7 @@ import express, {
 import type { VegaConfig } from "../config.js";
 import {
   DASHBOARD_AUTH_COOKIE,
+  DASHBOARD_SESSION_MAX_AGE_MS,
   getDashboardSessionToken,
   hasDashboardSession,
   isAuthorizedBearerRequest,
@@ -36,7 +37,6 @@ const DASHBOARD_CSP = [
   "style-src 'self' 'unsafe-inline'"
 ].join("; ");
 const DEFAULT_PRIMARY_COLOR = "#48c4b6";
-const DASHBOARD_SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 
 const resolvePublicDir = (): string => {
   const sourceDir = resolve(process.cwd(), "src", "web", "public");
@@ -299,11 +299,11 @@ const renderLoginPage = (settings: WhiteLabelSettings, errorMessage?: string): s
 };
 
 const requireDashboardAuth =
-  (config: VegaConfig, sendLoginPage: boolean): RequestHandler =>
+  (config: VegaConfig, repository: Repository, sendLoginPage: boolean): RequestHandler =>
   (req, res, next) => {
     if (
       config.apiKey === undefined ||
-      isAuthorizedBearerRequest(req, config) ||
+      isAuthorizedBearerRequest(req, res, config, repository) ||
       hasDashboardSession(config, getDashboardSessionToken(req))
     ) {
       next();
@@ -322,15 +322,15 @@ const requireDashboardAuth =
 
 export function mountDashboard(
   app: Express,
-  _repository: Repository,
+  repository: Repository,
   config: VegaConfig
 ): void {
   const publicDir = resolvePublicDir();
   const dashboardTemplate = readFileSync(join(publicDir, "index.html"), "utf8");
   const wikiTemplate = readFileSync(join(publicDir, "wiki.html"), "utf8");
   const whiteLabelConfig = new WhiteLabelConfig();
-  const dashboardAuth = requireDashboardAuth(config, true);
-  const assetAuth = requireDashboardAuth(config, false);
+  const dashboardAuth = requireDashboardAuth(config, repository, true);
+  const assetAuth = requireDashboardAuth(config, repository, false);
   const renderDashboard: RequestHandler = (_req, res) => {
     setDashboardHeaders(res);
     res.type("html").send(renderDashboardPage(dashboardTemplate, whiteLabelConfig.load()));

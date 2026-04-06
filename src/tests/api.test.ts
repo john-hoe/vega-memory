@@ -7,14 +7,19 @@ import test from "node:test";
 import { createAPIServer } from "../api/server.js";
 import {
   DASHBOARD_AUTH_COOKIE,
+  DASHBOARD_SESSION_MAX_AGE_MS,
+  hasDashboardSession,
+  pruneStaleSessions,
   registerDashboardSession,
   revokeDashboardSession
 } from "../api/auth.js";
 import type { VegaConfig } from "../config.js";
+import { BillingService } from "../core/billing.js";
 import { CompactService } from "../core/compact.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
+import { TenantService } from "../core/tenant.js";
 import { Repository } from "../db/repository.js";
 import { SearchEngine } from "../search/engine.js";
 
@@ -81,7 +86,7 @@ const createHarness = async (apiKey?: string): Promise<TestHarness> => {
     },
     request(path: string, init?: RequestInit): Promise<Response> {
       const headers = new Headers(init?.headers);
-      if (apiKey) {
+      if (apiKey && !headers.has("authorization")) {
         headers.set("authorization", `Bearer ${apiKey}`);
       }
       if (init?.body !== undefined && !headers.has("content-type")) {
@@ -438,6 +443,183 @@ test("dashboard session cookie authorizes API requests when apiKey is set", asyn
     assert.equal(response.status, 200);
   } finally {
     revokeDashboardSession(harness.config, sessionToken);
+    await harness.cleanup();
+  }
+});
+
+test("tenant API key authorizes API requests and stores tenant ownership", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenant = tenantService.createTenant("Acme", "pro");
+
+  try {
+    const storeResponse = await harness.request("/api/store", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${tenant.api_key}`
+      },
+      body: JSON.stringify({
+        content: "Tenant-scoped memory written through the API",
+        type: "decision",
+        project: "tenant-project"
+      })
+    });
+    const stored = await readJson<{ id: string; action: string }>(storeResponse);
+    const memory = harness.repository.getMemory(stored.id);
+    const performanceEntry = harness.repository.db
+      .prepare<
+        [],
+        {
+          operation: string;
+          tenant_id: string | null;
+        }
+      >(
+        `SELECT operation, tenant_id
+         FROM performance_log
+         ORDER BY rowid DESC
+         LIMIT 1`
+      )
+      .get();
+
+    assert.equal(storeResponse.status, 200);
+    assert.equal(stored.action, "created");
+    assert.equal(memory?.tenant_id, tenant.id);
+    assert.equal(performanceEntry?.operation, "POST /api/store");
+    assert.equal(performanceEntry?.tenant_id, tenant.id);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("root API key still authorizes API requests when tenant auth is enabled", async () => {
+  const harness = await createHarness("top-secret");
+
+  try {
+    const response = await harness.request("/api/list?limit=1");
+
+    assert.equal(response.status, 200);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("invalid bearer token returns 401 when API auth is enabled", async () => {
+  const harness = await createHarness("top-secret");
+
+  try {
+    const response = await harness.request("/api/list?limit=1", {
+      headers: {
+        authorization: "Bearer invalid-key"
+      }
+    });
+    const body = await readJson<{ error: string }>(response);
+
+    assert.equal(response.status, 401);
+    assert.equal(body.error, "unauthorized");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("deactivated tenant API key returns 401", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenant = tenantService.createTenant("Inactive", "free");
+
+  tenantService.deactivateTenant(tenant.id);
+
+  try {
+    const response = await harness.request("/api/list?limit=1", {
+      headers: {
+        authorization: `Bearer ${tenant.api_key}`
+      }
+    });
+    const body = await readJson<{ error: string }>(response);
+
+    assert.equal(response.status, 401);
+    assert.equal(body.error, "unauthorized");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("billing counts API request log rows for tenant traffic", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const billingService = new BillingService(harness.repository);
+  const tenant = tenantService.createTenant("Billing", "pro");
+  const month = new Date().toISOString().slice(0, 7);
+
+  try {
+    const tenantHeaders = {
+      authorization: `Bearer ${tenant.api_key}`
+    };
+
+    await harness.request("/api/store", {
+      method: "POST",
+      headers: tenantHeaders,
+      body: JSON.stringify({
+        content: "Count this tenant API store call",
+        type: "decision",
+        project: "billing"
+      })
+    });
+    await harness.request("/api/list?project=billing&limit=10", {
+      headers: tenantHeaders
+    });
+    await harness.request("/api/health", {
+      headers: tenantHeaders
+    });
+
+    const usage = billingService.getUsageForBilling(tenant.id, month);
+
+    assert.equal(usage.api_calls, 2);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("dashboard sessions expire on the server after the TTL", async () => {
+  const harness = await createHarness("top-secret");
+  const sessionToken = "expiring-dashboard-session";
+  const originalDateNow = Date.now;
+
+  try {
+    Date.now = () => 1_000;
+    registerDashboardSession(harness.config, sessionToken);
+    assert.equal(hasDashboardSession(harness.config, sessionToken), true);
+
+    Date.now = () => 1_000 + DASHBOARD_SESSION_MAX_AGE_MS + 1;
+    assert.equal(hasDashboardSession(harness.config, sessionToken), false);
+  } finally {
+    Date.now = originalDateNow;
+    revokeDashboardSession(harness.config, sessionToken);
+    await harness.cleanup();
+  }
+});
+
+test("pruneStaleSessions removes expired dashboard sessions and keeps active ones", async () => {
+  const harness = await createHarness("top-secret");
+  const originalDateNow = Date.now;
+  const expiredToken = "expired-dashboard-session";
+  const activeToken = "active-dashboard-session";
+
+  try {
+    Date.now = () => 2_000;
+    registerDashboardSession(harness.config, expiredToken);
+
+    Date.now = () => 2_000 + DASHBOARD_SESSION_MAX_AGE_MS;
+    registerDashboardSession(harness.config, activeToken);
+
+    Date.now = () => 2_000 + DASHBOARD_SESSION_MAX_AGE_MS + 1;
+    pruneStaleSessions(harness.config);
+
+    assert.equal(hasDashboardSession(harness.config, expiredToken), false);
+    assert.equal(hasDashboardSession(harness.config, activeToken), true);
+  } finally {
+    Date.now = originalDateNow;
+    revokeDashboardSession(harness.config, expiredToken);
+    revokeDashboardSession(harness.config, activeToken);
     await harness.cleanup();
   }
 });

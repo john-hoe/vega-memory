@@ -65,7 +65,8 @@ const now = (): string => new Date().toISOString();
 
 const resolveAuditContext = (auditContext?: AuditContext): AuditContext => ({
   actor: auditContext?.actor ?? "system",
-  ip: auditContext?.ip ?? null
+  ip: auditContext?.ip ?? null,
+  tenant_id: auditContext?.tenant_id ?? null
 });
 
 const unique = (values: string[]): string[] => [...new Set(values)];
@@ -168,12 +169,17 @@ export class MemoryService {
   private findMatch(
     project: string | undefined,
     type: MemoryType,
-    embedding: Float32Array
+    embedding: Float32Array,
+    tenantId: string | null
   ): { memory: Memory; similarity: number } | null {
     let bestMatch: { memory: Memory; similarity: number } | null = null;
 
     for (const candidate of this.repository.getAllEmbeddings(project, type)) {
       if (candidate.memory.status !== "active") {
+        continue;
+      }
+
+      if ((candidate.memory.tenant_id ?? null) !== tenantId) {
         continue;
       }
 
@@ -197,6 +203,7 @@ export class MemoryService {
     project: string,
     keepId: string,
     title: string,
+    tenantId: string | null,
     auditContext?: AuditContext
   ): void {
     const normalizedTitle = normalizeTitle(title);
@@ -218,6 +225,10 @@ export class MemoryService {
         continue;
       }
 
+      if ((memory.tenant_id ?? null) !== tenantId) {
+        continue;
+      }
+
       if (normalizeTitle(memory.title) !== normalizedTitle) {
         continue;
       }
@@ -235,6 +246,7 @@ export class MemoryService {
 
   async store(params: StoreParams): Promise<StoreResult> {
     const auditContext = resolveAuditContext(params.auditContext);
+    const tenantId = params.tenant_id ?? auditContext.tenant_id ?? null;
     const source = params.source ?? "auto";
 
     if (source !== "explicit") {
@@ -263,7 +275,8 @@ export class MemoryService {
         : this.findMatch(
             params.type === "preference" ? undefined : params.project,
             params.type,
-            embedding
+            embedding,
+            tenantId
           );
     const timestamp = now();
     const summary = await generateSummary(redacted, this.config);
@@ -277,6 +290,7 @@ export class MemoryService {
       this.repository.createMemory(
         {
           id,
+          tenant_id: tenantId,
           type: params.type,
           project: params.project,
           title,
@@ -298,7 +312,7 @@ export class MemoryService {
       );
 
       if (params.type === "task_state") {
-        this.archiveSupersededTaskStates(params.project, id, title, auditContext);
+        this.archiveSupersededTaskStates(params.project, id, title, tenantId, auditContext);
       }
 
       this.repository.logAudit({
@@ -356,7 +370,13 @@ export class MemoryService {
       );
 
       if (params.type === "task_state") {
-        this.archiveSupersededTaskStates(params.project, matched.memory.id, nextTitle, auditContext);
+        this.archiveSupersededTaskStates(
+          params.project,
+          matched.memory.id,
+          nextTitle,
+          tenantId,
+          auditContext
+        );
       }
 
       this.repository.logAudit({
@@ -379,6 +399,7 @@ export class MemoryService {
     this.repository.createMemory(
       {
         id,
+        tenant_id: tenantId,
         type: params.type,
         project: params.project,
         title,
@@ -400,7 +421,7 @@ export class MemoryService {
     );
 
     if (params.type === "task_state") {
-      this.archiveSupersededTaskStates(params.project, id, title, auditContext);
+      this.archiveSupersededTaskStates(params.project, id, title, tenantId, auditContext);
     }
 
     this.repository.logAudit({

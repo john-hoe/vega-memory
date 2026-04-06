@@ -16,6 +16,7 @@ interface UsageLogRow {
 }
 
 const MONTH_PATTERN = /^\d{4}-\d{2}$/;
+const API_REQUEST_OPERATION_PATTERN = "% /api/%";
 
 const PLAN_API_LIMITS: Record<TenantPlan, number> = {
   free: 10_000,
@@ -93,8 +94,8 @@ export class BillingService {
 
   private countApiCallsForMonth(tenantId: string, month: string): number {
     const { start, end } = getMonthRange(month);
-    const clauses = ["timestamp >= ?", "timestamp < ?"];
-    const params: unknown[] = [start, end];
+    const clauses = ["timestamp >= ?", "timestamp < ?", "operation LIKE ?"];
+    const params: unknown[] = [start, end, API_REQUEST_OPERATION_PATTERN];
 
     if (this.hasColumn("performance_log", "tenant_id")) {
       clauses.push("tenant_id = ?");
