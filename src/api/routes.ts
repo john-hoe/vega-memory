@@ -16,6 +16,17 @@ import type {
   SessionStartResult
 } from "../core/types.js";
 import { Repository } from "../db/repository.js";
+import { PageManager } from "../wiki/page-manager.js";
+import { searchWikiPages } from "../wiki/search.js";
+import {
+  WIKI_PAGE_STATUSES,
+  WIKI_PAGE_TYPES,
+  type PageWithBacklinks,
+  type WikiPage,
+  type WikiPageStatus,
+  type WikiPageType,
+  type WikiPageVersion
+} from "../wiki/types.js";
 
 const MEMORY_TYPES = new Set<MemoryType>([
   "task_state",
@@ -27,6 +38,8 @@ const MEMORY_TYPES = new Set<MemoryType>([
 ]);
 
 const MEMORY_SOURCES = new Set<MemorySource>(["auto", "explicit"]);
+const WIKI_PAGE_TYPE_VALUES = new Set<WikiPageType>(WIKI_PAGE_TYPES);
+const WIKI_PAGE_STATUS_VALUES = new Set<WikiPageStatus>(WIKI_PAGE_STATUSES);
 
 class ApiError extends Error {
   constructor(
@@ -85,6 +98,47 @@ const serializeSearchResult = (result: SearchResult) => ({
   similarity: result.similarity,
   finalScore: result.finalScore
 });
+
+const serializeWikiPageListEntry = (page: WikiPage) => ({
+  id: page.id,
+  slug: page.slug,
+  title: page.title,
+  page_type: page.page_type,
+  status: page.status,
+  project: page.project,
+  updated_at: page.updated_at,
+  summary: page.summary
+});
+
+const serializeWikiPage = (page: WikiPage) => ({
+  id: page.id,
+  slug: page.slug,
+  title: page.title,
+  content: page.content,
+  summary: page.summary,
+  page_type: page.page_type,
+  scope: page.scope,
+  project: page.project,
+  tags: page.tags,
+  source_memory_ids: page.source_memory_ids,
+  status: page.status,
+  auto_generated: page.auto_generated,
+  reviewed: page.reviewed,
+  version: page.version,
+  parent_id: page.parent_id,
+  sort_order: page.sort_order,
+  created_at: page.created_at,
+  updated_at: page.updated_at,
+  reviewed_at: page.reviewed_at,
+  published_at: page.published_at
+});
+
+const serializePageWithBacklinks = (result: PageWithBacklinks) => ({
+  page: serializeWikiPage(result.page),
+  backlinks: result.backlinks
+});
+
+const serializeWikiPageVersion = (version: WikiPageVersion) => version;
 
 const flushResponse = (res: Response): void => {
   (res as Response & { flush?: () => void }).flush?.();
@@ -260,6 +314,32 @@ const parseMemorySource = (value: unknown, field: string): MemorySource | undefi
   return parsed as MemorySource;
 };
 
+const parseWikiPageType = (value: unknown, field: string): WikiPageType | undefined => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  if (!WIKI_PAGE_TYPE_VALUES.has(parsed as WikiPageType)) {
+    throw new ApiError(400, `${field} must be a supported wiki page type`);
+  }
+
+  return parsed as WikiPageType;
+};
+
+const parseWikiPageStatus = (value: unknown, field: string): WikiPageStatus | undefined => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  if (!WIKI_PAGE_STATUS_VALUES.has(parsed as WikiPageStatus)) {
+    throw new ApiError(400, `${field} must be a supported wiki page status`);
+  }
+
+  return parsed as WikiPageStatus;
+};
+
 const parseIntegerString = (value: unknown, field: string): number | undefined => {
   const parsed = parseSingleValue(value, field);
   if (parsed === undefined) {
@@ -293,6 +373,7 @@ const getRequestAuditContext = (req: Request): AuditContext => ({
 export function createRouter(services: APIRouterServices): Router {
   const router = Router();
   const analyticsService = new AnalyticsService(services.repository);
+  const pageManager = new PageManager(services.repository);
 
   router.post(
     "/api/store",
@@ -525,6 +606,67 @@ export function createRouter(services: APIRouterServices): Router {
       );
 
       res.status(200).json(result);
+    })
+  );
+
+  router.get(
+    "/api/wiki/pages",
+    handleRoute((req, res) => {
+      const pages = pageManager.listPages({
+        project: parseSingleValue(req.query.project, "project"),
+        page_type: parseWikiPageType(req.query.page_type, "page_type"),
+        status: parseWikiPageStatus(req.query.status, "status"),
+        limit: parseIntegerString(req.query.limit, "limit") ?? 50
+      });
+
+      res.status(200).json(pages.map(serializeWikiPageListEntry));
+    })
+  );
+
+  router.get(
+    "/api/wiki/pages/:slug/versions",
+    handleRoute((req, res) => {
+      const slug = requireString(req.params.slug, "slug");
+      const page = pageManager.getPage(slug);
+
+      if (!page) {
+        throw new ApiError(404, `Wiki page not found: ${slug}`);
+      }
+
+      res.status(200).json(pageManager.getVersions(page.id).map(serializeWikiPageVersion));
+    })
+  );
+
+  router.get(
+    "/api/wiki/pages/:slug",
+    handleRoute((req, res) => {
+      const slug = requireString(req.params.slug, "slug");
+      const page = pageManager.getPageWithBacklinks(slug);
+
+      if (!page) {
+        throw new ApiError(404, `Wiki page not found: ${slug}`);
+      }
+
+      res.status(200).json(serializePageWithBacklinks(page));
+    })
+  );
+
+  router.post(
+    "/api/wiki/search",
+    handleRoute((req, res) => {
+      const body = requireBody(req.body);
+      const query = requireString(body.query, "query");
+      const results = searchWikiPages(services.repository, {
+        query,
+        project: parseSingleValue(body.project, "project"),
+        limit:
+          parseNumber(body.limit, "limit", {
+            integer: true,
+            min: 1
+          }) ?? 10
+      });
+
+      res.status(200).json(results);
     })
   );
 

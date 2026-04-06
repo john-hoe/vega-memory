@@ -8,6 +8,7 @@ interface WikiSearchRow {
   summary: string;
   page_type: WikiPageType;
   status: WikiPageStatus;
+  project: string | null;
   updated_at: string;
   rank: number;
 }
@@ -26,6 +27,7 @@ export interface WikiSearchResult {
   summary: string;
   page_type: WikiPageType;
   status: WikiPageStatus;
+  project: string | null;
   updated_at: string;
 }
 
@@ -59,6 +61,7 @@ export function searchWikiPages(
          wiki_pages.summary AS summary,
          wiki_pages.page_type AS page_type,
          wiki_pages.status AS status,
+         wiki_pages.project AS project,
          wiki_pages.updated_at AS updated_at,
          bm25(wiki_pages_fts) AS rank
        FROM wiki_pages_fts

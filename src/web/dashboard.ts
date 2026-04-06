@@ -327,12 +327,17 @@ export function mountDashboard(
 ): void {
   const publicDir = resolvePublicDir();
   const dashboardTemplate = readFileSync(join(publicDir, "index.html"), "utf8");
+  const wikiTemplate = readFileSync(join(publicDir, "wiki.html"), "utf8");
   const whiteLabelConfig = new WhiteLabelConfig();
   const dashboardAuth = requireDashboardAuth(config, true);
   const assetAuth = requireDashboardAuth(config, false);
   const renderDashboard: RequestHandler = (_req, res) => {
     setDashboardHeaders(res);
     res.type("html").send(renderDashboardPage(dashboardTemplate, whiteLabelConfig.load()));
+  };
+  const renderWiki: RequestHandler = (_req, res) => {
+    setDashboardHeaders(res);
+    res.type("html").send(renderDashboardPage(wikiTemplate, whiteLabelConfig.load()));
   };
 
   app.post("/dashboard/login", express.urlencoded({ extended: false }), (req, res) => {
@@ -367,6 +372,8 @@ export function mountDashboard(
 
   app.get("/", dashboardAuth, renderDashboard);
   app.get("/index.html", dashboardAuth, renderDashboard);
+  app.get("/wiki", dashboardAuth, renderWiki);
+  app.get("/wiki.html", dashboardAuth, renderWiki);
   app.use(
     assetAuth,
     express.static(publicDir, {
