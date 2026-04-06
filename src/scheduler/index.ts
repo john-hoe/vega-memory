@@ -3,7 +3,11 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createAPIServer } from "../api/server.js";
-import { loadConfig, type VegaConfig } from "../config.js";
+import {
+  loadConfig,
+  requireDatabaseEncryptionKey,
+  type VegaConfig
+} from "../config.js";
 import type { APIRouterServices } from "../api/routes.js";
 import { CompactService } from "../core/compact.js";
 import { MemoryService } from "../core/memory.js";
@@ -125,9 +129,10 @@ export const startSchedulerApiServer = async (
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const repositoryKey = config.dbEncryption
-    ? await resolveConfiguredEncryptionKey(config)
-    : undefined;
+  const repositoryKey = requireDatabaseEncryptionKey(
+    config,
+    config.dbEncryption ? await resolveConfiguredEncryptionKey(config) : undefined
+  );
   ensureSchedulerDirectories(config.dbPath);
   const notificationManager = new NotificationManager(
     config,

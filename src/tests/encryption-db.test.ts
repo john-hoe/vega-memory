@@ -64,6 +64,26 @@ test("Repository opens encrypted database and reads/writes", () => {
   }
 });
 
+test("Repository fails to open encrypted database when key is missing", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-enc-db-missing-key-"));
+  const dbPath = join(tempDir, "memory.db");
+  const key = generateKey();
+
+  try {
+    const repository = new Repository(dbPath, key);
+    repository.createMemory(
+      createMemory({
+        id: "encrypted-memory-missing-key"
+      })
+    );
+    repository.close();
+
+    assert.throws(() => new Repository(dbPath), /not a database|encrypted|key/i);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("Repository works without encryption key (backward compatible)", () => {
   const repository = new Repository(":memory:");
 

@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { loadConfig } from "./config.js";
+import { loadConfig, requireDatabaseEncryptionKey } from "./config.js";
 import { CompactService } from "./core/compact.js";
 import { CompressionService } from "./core/compression.js";
 import { KnowledgeGraphService } from "./core/knowledge-graph.js";
@@ -37,9 +37,10 @@ async function main(): Promise<void> {
   debugLog("main() starting");
   const config = loadConfig();
   const activeDbPath = config.mode === "client" ? config.cacheDbPath : config.dbPath;
-  const repositoryKey = config.dbEncryption
-    ? await resolveConfiguredEncryptionKey(config)
-    : undefined;
+  const repositoryKey = requireDatabaseEncryptionKey(
+    config,
+    config.dbEncryption ? await resolveConfiguredEncryptionKey(config) : undefined
+  );
   ensureDataDirectory(activeDbPath);
 
   const runtime =

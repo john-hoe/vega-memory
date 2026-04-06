@@ -186,13 +186,7 @@ export async function backfillSummaries(
   _memoryService: MemoryService,
   config: VegaConfig
 ): Promise<{ updated: number; failed: number }> {
-  const memories = repository
-    .listMemories({
-      status: "active",
-      limit: 1_000_000,
-      sort: "updated_at DESC"
-    })
-    .filter((memory) => memory.summary === null && memory.content.length > 200);
+  const memories = repository.listMemoriesNeedingSummary();
   let updated = 0;
   let failed = 0;
 

@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 
 import { Command } from "commander";
 
-import { loadConfig } from "../config.js";
+import { loadConfig, requireDatabaseEncryptionKey } from "../config.js";
 import { registerAnalyticsCommand } from "./commands/analytics.js";
 import { registerAuditCommand } from "./commands/audit.js";
 import { registerBenchmarkCommand } from "./commands/benchmark.js";
@@ -88,9 +88,10 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
-  const repositoryKey = config.dbEncryption
-    ? await resolveConfiguredEncryptionKey(config)
-    : undefined;
+  const repositoryKey = requireDatabaseEncryptionKey(
+    config,
+    config.dbEncryption ? await resolveConfiguredEncryptionKey(config) : undefined
+  );
   ensureDataDirectory(config.dbPath);
 
   const repository = new Repository(config.dbPath, repositoryKey);

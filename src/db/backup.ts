@@ -53,6 +53,7 @@ export async function createBackup(
 ): Promise<string> {
   mkdirSync(backupDir, { recursive: true });
   const backupPath = join(backupDir, `memory-${new Date().toISOString().slice(0, 10)}.db`);
+  const encryptedPath = `${backupPath}${ENCRYPTED_BACKUP_SUFFIX}`;
   const plainSqliteDatabase = isPlainSqliteDatabase(dbPath);
   const sourceDb = new BetterSqlite3(dbPath, { fileMustExist: true });
 
@@ -61,18 +62,22 @@ export async function createBackup(
       sourceDb.pragma(`key = "x'${encryptionKey}'"`);
     }
 
-    sourceDb.pragma("wal_checkpoint(TRUNCATE)");
+    rmSync(backupPath, { force: true });
+    rmSync(encryptedPath, { force: true });
+
+    if (plainSqliteDatabase) {
+      await sourceDb.backup(backupPath, options);
+    } else {
+      sourceDb.prepare("VACUUM INTO ?").run(backupPath);
+    }
   } finally {
     sourceDb.close();
   }
-
-  copyFileSync(dbPath, backupPath);
 
   if (encryptionKey === undefined || !plainSqliteDatabase) {
     return backupPath;
   }
 
-  const encryptedPath = `${backupPath}${ENCRYPTED_BACKUP_SUFFIX}`;
   writeFileSync(encryptedPath, encryptBuffer(readFileSync(backupPath), encryptionKey));
   rmSync(backupPath, { force: true });
 

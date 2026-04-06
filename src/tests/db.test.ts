@@ -201,6 +201,56 @@ test("getAllEmbeddings excludes archived memories", () => {
   }
 });
 
+test("listMemoriesNeedingSummary returns only active long memories with id and content", () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "needs-summary",
+        content: "L".repeat(300),
+        summary: null,
+        status: "active"
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "has-summary",
+        content: "L".repeat(300),
+        summary: "already summarized",
+        status: "active"
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "short-content",
+        content: "short",
+        summary: null,
+        status: "active"
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "archived-content",
+        content: "L".repeat(300),
+        summary: null,
+        status: "archived"
+      })
+    );
+
+    const memories = repository.listMemoriesNeedingSummary();
+
+    assert.deepEqual(memories, [
+      {
+        id: "needs-summary",
+        content: "L".repeat(300)
+      }
+    ]);
+  } finally {
+    repository.close();
+  }
+});
+
 test("audit log insertion and querying", () => {
   const repository = new Repository(":memory:");
   const memory = createMemory();
@@ -472,6 +522,40 @@ test("backup create and restore with encryption", async () => {
       assert.equal(stored.title, memory.title);
     } finally {
       restoredDb.close();
+    }
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("backup create and restore from encrypted source database", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-backup-encrypted-source-"));
+  const backupDir = join(tempDir, "backups");
+  const dbPath = join(tempDir, "memory.db");
+  const encryptionKey = generateKey();
+  const repository = new Repository(dbPath, encryptionKey);
+  const memory = createMemory({
+    id: "mem-encrypted-source",
+    title: "Encrypted source backup memory"
+  });
+
+  try {
+    repository.createMemory(memory);
+
+    const backupPath = await createBackup(dbPath, backupDir, undefined, encryptionKey);
+    const encryptedBackup = new Database(backupPath, { readonly: true });
+    encryptedBackup.pragma(`key = "x'${encryptionKey}'"`);
+
+    try {
+      const stored = encryptedBackup.prepare("SELECT title FROM memories WHERE id = ?").get(memory.id) as
+        | { title: string }
+        | undefined;
+
+      assert.ok(stored);
+      assert.equal(stored.title, memory.title);
+    } finally {
+      encryptedBackup.close();
     }
   } finally {
     repository.close();

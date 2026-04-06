@@ -208,7 +208,7 @@ test("store skips summary for short content", async () => {
   }
 });
 
-test("session_start token estimate uses summary not content", async () => {
+test("session_start payload uses summary content and matching token estimate", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-tiered-session-"));
   const project = basename(tempDir);
   const { repository, sessionService } = createSessionHarness();
@@ -229,8 +229,9 @@ test("session_start token estimate uses summary not content", async () => {
 
     assert.equal(result.context.length, 1);
     assert.equal(result.context[0]?.summary, summary);
+    assert.equal(result.context[0]?.content, summary);
     assert.equal(result.token_estimate, summary.length / 4);
-    assert.ok(result.token_estimate < result.context[0]!.content.length / 4);
+    assert.equal(result.token_estimate, result.context[0]!.content.length / 4);
   } finally {
     repository.close();
     rmSync(tempDir, { recursive: true, force: true });

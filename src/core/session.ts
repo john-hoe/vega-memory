@@ -71,6 +71,11 @@ const isSessionVisible = (memory: Memory): boolean =>
 const isRelevantMemoryType = (memory: Memory): boolean =>
   memory.type === "pitfall" || memory.type === "decision" || memory.type === "insight";
 
+const toSessionMemory = (memory: Memory): Memory => ({
+  ...memory,
+  content: memory.summary ?? memory.content
+});
+
 const toRelevantResult = (memory: Memory, finalScore: number): SearchResult => ({
   memory,
   similarity: finalScore,
@@ -311,14 +316,14 @@ export class SessionService {
 
     return {
       project,
-      active_tasks: trimmedActiveTasks,
-      preferences: trimmedPreferences,
-      context: trimmedContext,
+      active_tasks: trimmedActiveTasks.map(toSessionMemory),
+      preferences: trimmedPreferences.map(toSessionMemory),
+      context: trimmedContext.map(toSessionMemory),
       relevant: [...trimmedRelevantResults]
         .sort((left, right) => right.finalScore - left.finalScore)
-        .map((result) => result.memory),
-      recent_unverified: trimmedRecentUnverified,
-      conflicts: trimmedConflicts,
+        .map((result) => toSessionMemory(result.memory)),
+      recent_unverified: trimmedRecentUnverified.map(toSessionMemory),
+      conflicts: trimmedConflicts.map(toSessionMemory),
       proactive_warnings,
       token_estimate
     };

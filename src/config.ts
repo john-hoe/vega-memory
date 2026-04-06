@@ -29,6 +29,9 @@ export interface VegaConfig {
   cloudBackup?: CloudBackupConfig;
 }
 
+export const DB_ENCRYPTION_KEY_MISSING_MESSAGE =
+  "VEGA_DB_ENCRYPTION is enabled but no encryption key is configured. Run vega init-encryption first.";
+
 const parseNumber = (value: string | undefined, fallback: number): number => {
   if (value === undefined) {
     return fallback;
@@ -176,4 +179,15 @@ export const loadConfig = (): VegaConfig => {
     ...(encryptionKey === undefined ? {} : { encryptionKey }),
     cloudBackup: parseCloudBackup()
   };
+};
+
+export const requireDatabaseEncryptionKey = (
+  config: Pick<VegaConfig, "dbEncryption">,
+  encryptionKey: string | null | undefined
+): string | undefined => {
+  if (config.dbEncryption && encryptionKey == null) {
+    throw new Error(DB_ENCRYPTION_KEY_MISSING_MESSAGE);
+  }
+
+  return encryptionKey ?? undefined;
 };

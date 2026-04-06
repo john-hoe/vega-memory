@@ -76,6 +76,11 @@ interface EmbeddingIndexSnapshotRow {
   total_bytes: number | null;
 }
 
+interface MemoryNeedingSummaryRow {
+  id: string;
+  content: string;
+}
+
 interface PerformanceLogRow {
   timestamp: string;
   tenant_id: string | null;
@@ -532,6 +537,19 @@ export class Repository {
       .all(...params, limit);
 
     return rows.map(mapMemory);
+  }
+
+  listMemoriesNeedingSummary(): Array<Pick<Memory, "id" | "content">> {
+    return this.db
+      .prepare<[], MemoryNeedingSummaryRow>(
+        `SELECT id, content
+         FROM memories
+         WHERE summary IS NULL
+           AND length(content) > 200
+           AND status = 'active'
+         ORDER BY updated_at DESC`
+      )
+      .all();
   }
 
   searchFTS(
