@@ -408,6 +408,63 @@ Same pattern as Claude Code. Add to `AGENTS.md` in your project:
 
 ---
 
+### Codex App (Desktop — Remote via MCP)
+
+The Codex desktop app supports MCP. For remote setups (e.g., Codex on Windows connecting to Vega on a Mac/Linux server), use the lightweight remote MCP proxy included in `client/vega-remote-mcp.mjs`.
+
+**Step 1: Clone and install on the client machine**
+
+```powershell
+# Windows PowerShell (or bash on Mac/Linux)
+git clone https://github.com/john-hoe/vega-memory.git
+cd vega-memory
+npm install @modelcontextprotocol/sdk
+```
+
+> Only the SDK is needed on the client — no native dependencies, no SQLite, no Ollama.
+
+**Step 2: Add MCP server in Codex App**
+
+Open Codex App → Settings → **MCP Servers** → Add:
+
+```json
+{
+  "command": "node",
+  "args": ["C:\\path\\to\\vega-memory\\client\\vega-remote-mcp.mjs"],
+  "env": {
+    "VEGA_SERVER_URL": "http://100.x.x.x:3271",
+    "VEGA_API_KEY": "your-api-key-here"
+  }
+}
+```
+
+| Variable | Value | How to find |
+|----------|-------|-------------|
+| `VEGA_SERVER_URL` | `http://100.x.x.x:3271` | Run `tailscale ip -4` on the server |
+| `VEGA_API_KEY` | Your generated key | The key used to start the scheduler |
+
+> On macOS/Linux, change the path to `/path/to/vega-memory/client/vega-remote-mcp.mjs`.
+
+**Step 3: Add custom instructions**
+
+Open Codex App → Settings → **Personalization** → Custom Instructions:
+
+```
+Follow CODEX.md and AGENTS.md rules strictly. Proactively store memories to Vega Memory (via MCP) as events happen — do NOT wait for user to ask. Each task completed, decision made, or bug fixed = one memory_store call immediately.
+```
+
+**Step 4: Verify**
+
+In a Codex App conversation, ask:
+
+```
+Check Vega Memory health
+```
+
+The agent should call `memory_health` and return the server status. If it shows `"status": "healthy"`, the connection is working.
+
+---
+
 ### HTTP API (Any Tool / Custom Integration)
 
 Any tool that can make HTTP requests can use Vega. Authentication is via Bearer token.

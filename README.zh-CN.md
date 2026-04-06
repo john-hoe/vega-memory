@@ -408,6 +408,63 @@ Run: `vega session-end --project PROJECT_NAME --summary "what was accomplished"`
 
 ---
 
+### Codex App（桌面版 — 远程 MCP 连接）
+
+Codex 桌面应用支持 MCP。在远程场景下（例如 Windows 上的 Codex 连接 Mac/Linux 服务器上的 Vega），请使用 `client/vega-remote-mcp.mjs` 中附带的轻量级远程 MCP 代理。
+
+**步骤 1：在客户端机器上克隆并安装**
+
+```powershell
+# Windows PowerShell (or bash on Mac/Linux)
+git clone https://github.com/john-hoe/vega-memory.git
+cd vega-memory
+npm install @modelcontextprotocol/sdk
+```
+
+> 客户端只需安装 SDK —— 无需原生依赖、无需 SQLite、无需 Ollama。
+
+**步骤 2：在 Codex App 中添加 MCP 服务器**
+
+打开 Codex App → Settings → **MCP Servers** → Add：
+
+```json
+{
+  "command": "node",
+  "args": ["C:\\path\\to\\vega-memory\\client\\vega-remote-mcp.mjs"],
+  "env": {
+    "VEGA_SERVER_URL": "http://100.x.x.x:3271",
+    "VEGA_API_KEY": "your-api-key-here"
+  }
+}
+```
+
+| 变量 | 取值 | 如何获取 |
+|------|------|----------|
+| `VEGA_SERVER_URL` | `http://100.x.x.x:3271` | 在服务器上运行 `tailscale ip -4` |
+| `VEGA_API_KEY` | 你生成的密钥 | 启动 scheduler 时使用的密钥 |
+
+> 在 macOS/Linux 上，请将路径改为 `/path/to/vega-memory/client/vega-remote-mcp.mjs`。
+
+**步骤 3：添加自定义说明**
+
+打开 Codex App → Settings → **Personalization** → Custom Instructions：
+
+```
+Follow CODEX.md and AGENTS.md rules strictly. Proactively store memories to Vega Memory (via MCP) as events happen — do NOT wait for user to ask. Each task completed, decision made, or bug fixed = one memory_store call immediately.
+```
+
+**步骤 4：验证**
+
+在 Codex App 对话中询问：
+
+```
+Check Vega Memory health
+```
+
+Agent 应调用 `memory_health` 并返回服务器状态。若显示 `"status": "healthy"`，则表示连接正常。
+
+---
+
 ### HTTP API（任何工具 / 自定义集成）
 
 任何可以发送 HTTP 请求的工具都能使用 Vega。认证方式为 Bearer token。
