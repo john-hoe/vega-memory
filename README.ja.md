@@ -468,6 +468,153 @@ Auth: Bearer token (set via environment variable, never hardcode)
 
 ---
 
+## 自動メモリストレージ
+
+Vega の真価は **自動** メモリストレージにあります。AI ツールが作業中に先回りしてメモリーを保存するため、毎回「これを覚えて」と言う必要はありません。
+
+### 仕組み
+
+```
+AI works on a task
+    ↓
+Completes a task     → auto-stores as task_state
+Makes a decision     → auto-stores as decision
+Fixes a bug          → auto-stores as pitfall
+Learns a preference  → auto-stores as preference
+    ↓
+Next session → session_start loads relevant memories automatically
+```
+
+### 何を保存するか（しないか）
+
+| 保存する | 保存しない |
+|-------|-------------|
+| 根拠付きの意思決定 | 感情的な不満 |
+| エラーメッセージ付きのバグ修正 | 先に進まなかった失敗したデバッグ試行 |
+| file paths, commands, version numbers | one-time queries |
+| アーキテクチャの選択 | raw data dumps |
+| ユーザーの好み | ありふれたプログラミング知識 |
+
+**原則：** 各メモリーは会話の要約ではなく、一つの具体的な事実です。エラーメッセージ、パス、コマンドなどの具体情報を残してください。
+
+### ツール別セットアップ
+
+#### Cursor（MCP — 自動）
+
+Cursor は MCP ツールを自動で呼び出します。次のルールファイルをワークスペースに追加してください：
+
+**`.cursor/rules/memory.mdc`:**
+```markdown
+---
+globs: ["**/*"]
+alwaysApply: true
+---
+
+Memory System Rules — MANDATORY (never skip, never wait for user reminder)
+
+### Normal Mode (MCP available)
+- Session start → call vega.session_start(working_directory, task_hint)
+- Task completed → call vega.memory_store(type: "task_state") IMMEDIATELY
+- Decision made → call vega.memory_store(type: "decision") IMMEDIATELY
+- Bug fixed → call vega.memory_store(type: "pitfall") IMMEDIATELY
+- New preference → call vega.memory_store(type: "preference") IMMEDIATELY
+- User says "remember" → call vega.memory_store(source: "explicit")
+- Session ending → call vega.session_end(summary)
+- CRITICAL: Store memories AS events happen. Do NOT batch. Do NOT wait for user to ask.
+- Before storing → verify content is NOT: emotional complaints, failed debug attempts, one-time queries, raw data, common knowledge
+```
+
+#### Claude Code（CLI）
+
+Claude Code はシェルコマンドを使います。プロジェクトの **`CLAUDE.md`** に追記してください：
+
+```markdown
+# Vega Memory — MANDATORY (auto-store, never wait for user reminder)
+
+## Session lifecycle
+- Start: `vega session-start --dir $(pwd) --json` — use output as context
+- End: `vega session-end --project PROJECT --summary "what was done"`
+
+## Auto-store (do these IMMEDIATELY when events happen)
+- Task done: `vega store "what was done" --type task_state --project PROJECT --title "title"`
+- Bug fixed: `vega store "error + fix" --type pitfall --project PROJECT --title "title"`
+- Decision: `vega store "choice + why" --type decision --project PROJECT --title "title"`
+- Preference: `vega store "preference" --type preference --project PROJECT --title "title"`
+
+## Before changes, search memory
+- `vega recall "query" --project PROJECT --json`
+
+## Rules
+- Store AS events happen, not at session end
+- Each fact = one separate store call
+- Preserve specifics: error messages, file paths, commands
+```
+
+#### Codex CLI
+
+Claude Code と同じパターンです。プロジェクトの **`CODEX.md`** に追記してください：
+
+```markdown
+# Vega Memory — MANDATORY (auto-store, never wait for user reminder)
+
+- On start: `vega session-start --dir $(pwd) --json`
+- Task done: `vega store "..." --type task_state --project PROJECT --title "..."`
+- Bug fixed: `vega store "..." --type pitfall --project PROJECT --title "..."`
+- Decision: `vega store "..." --type decision --project PROJECT --title "..."`
+- On end: `vega session-end --project PROJECT --summary "..."`
+- Before changes: `vega recall "query" --project PROJECT --json`
+- CRITICAL: Store immediately as events happen. Do NOT wait for user to ask.
+```
+
+#### Codex App（デスクトップ）
+
+Codex デスクトップアプリで MCP を使う場合、**設定 → Personalization → Custom Instructions** に次を追加してください：
+
+```
+Follow CODEX.md and AGENTS.md rules strictly. Proactively store memories to Vega Memory (via MCP) as events happen — do NOT wait for user to ask. Each task completed, decision made, or bug fixed = one memory_store call immediately.
+```
+
+#### OpenClaw / カスタムエージェント（HTTP API）
+
+HTTP API を使うエージェントには、次のように指示してください：
+
+```markdown
+## Vega Memory (HTTP API)
+Server: http://YOUR_SERVER:3271
+Auth: Bearer YOUR_API_KEY
+
+## Auto-store (call immediately when events happen)
+- POST /api/store {"content":"...", "type":"pitfall", "project":"..."}
+- POST /api/store {"content":"...", "type":"decision", "project":"..."}
+- POST /api/store {"content":"...", "type":"task_state", "project":"..."}
+
+## Before answering questions, recall
+- POST /api/recall {"query":"...", "project":"..."}
+
+## Session lifecycle
+- POST /api/session/start {"working_directory":"..."}
+- POST /api/session/end {"project":"...", "summary":"..."}
+```
+
+### 動作確認
+
+作業セッションのあと、メモリーが保存されているか確認します：
+
+```bash
+# List recent memories
+vega list --sort "created_at DESC" --json | head -20
+
+# Check memory count
+vega health --json | grep memories
+
+# Search for something discussed in the session
+vega recall "topic from your session"
+```
+
+メモリーが表示されない場合は、ルールファイルの配置と、MCP サーバーまたは CLI にアクセスできるかを確認してください。
+
+---
+
 ## CLI リファレンス
 
 ### コアワークフロー

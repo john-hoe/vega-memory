@@ -467,6 +467,153 @@ Auth: Bearer token (set via environment variable, never hardcode)
 
 ---
 
+## 自动记忆存储
+
+Vega 的真正威力在于**自动**记忆存储——AI 工具会在工作过程中主动写入记忆，而不必每次都让你说「记住这个」。
+
+### 工作原理
+
+```
+AI works on a task
+    ↓
+Completes a task     → auto-stores as task_state
+Makes a decision     → auto-stores as decision
+Fixes a bug          → auto-stores as pitfall
+Learns a preference  → auto-stores as preference
+    ↓
+Next session → session_start loads relevant memories automatically
+```
+
+### 存储什么（以及不存储什么）
+
+| 应存储 | 不应存储 |
+|-------|-------------|
+| 含推理的决策 | 情绪性抱怨 |
+| 含错误信息的 bug 修复 | 无果而终的失败调试尝试 |
+| 文件路径、命令、版本号 | 一次性查询 |
+| 架构选择 | 原始数据转储 |
+| 用户偏好 | 常见编程知识 |
+
+**核心原则：** 每条记忆是一个具体事实，而非对话摘要。保留具体细节（错误信息、路径、命令）。
+
+### 按工具配置
+
+#### Cursor（MCP — 自动）
+
+Cursor 会自动调用 MCP 工具。将以下规则文件加入工作区：
+
+**`.cursor/rules/memory.mdc`:**
+```markdown
+---
+globs: ["**/*"]
+alwaysApply: true
+---
+
+Memory System Rules — MANDATORY (never skip, never wait for user reminder)
+
+### Normal Mode (MCP available)
+- Session start → call vega.session_start(working_directory, task_hint)
+- Task completed → call vega.memory_store(type: "task_state") IMMEDIATELY
+- Decision made → call vega.memory_store(type: "decision") IMMEDIATELY
+- Bug fixed → call vega.memory_store(type: "pitfall") IMMEDIATELY
+- New preference → call vega.memory_store(type: "preference") IMMEDIATELY
+- User says "remember" → call vega.memory_store(source: "explicit")
+- Session ending → call vega.session_end(summary)
+- CRITICAL: Store memories AS events happen. Do NOT batch. Do NOT wait for user to ask.
+- Before storing → verify content is NOT: emotional complaints, failed debug attempts, one-time queries, raw data, common knowledge
+```
+
+#### Claude Code（CLI）
+
+Claude Code 使用 shell 命令。将以下内容加入项目的 **`CLAUDE.md`：**
+
+```markdown
+# Vega Memory — MANDATORY (auto-store, never wait for user reminder)
+
+## Session lifecycle
+- Start: `vega session-start --dir $(pwd) --json` — use output as context
+- End: `vega session-end --project PROJECT --summary "what was done"`
+
+## Auto-store (do these IMMEDIATELY when events happen)
+- Task done: `vega store "what was done" --type task_state --project PROJECT --title "title"`
+- Bug fixed: `vega store "error + fix" --type pitfall --project PROJECT --title "title"`
+- Decision: `vega store "choice + why" --type decision --project PROJECT --title "title"`
+- Preference: `vega store "preference" --type preference --project PROJECT --title "title"`
+
+## Before changes, search memory
+- `vega recall "query" --project PROJECT --json`
+
+## Rules
+- Store AS events happen, not at session end
+- Each fact = one separate store call
+- Preserve specifics: error messages, file paths, commands
+```
+
+#### Codex CLI
+
+与 Claude Code 相同模式。将以下内容加入项目的 **`CODEX.md`：**
+
+```markdown
+# Vega Memory — MANDATORY (auto-store, never wait for user reminder)
+
+- On start: `vega session-start --dir $(pwd) --json`
+- Task done: `vega store "..." --type task_state --project PROJECT --title "..."`
+- Bug fixed: `vega store "..." --type pitfall --project PROJECT --title "..."`
+- Decision: `vega store "..." --type decision --project PROJECT --title "..."`
+- On end: `vega session-end --project PROJECT --summary "..."`
+- Before changes: `vega recall "query" --project PROJECT --json`
+- CRITICAL: Store immediately as events happen. Do NOT wait for user to ask.
+```
+
+#### Codex App（桌面版）
+
+如果使用带 MCP 的 Codex 桌面应用，请将以下内容添加到 **Settings → Personalization → Custom Instructions：**
+
+```
+Follow CODEX.md and AGENTS.md rules strictly. Proactively store memories to Vega Memory (via MCP) as events happen — do NOT wait for user to ask. Each task completed, decision made, or bug fixed = one memory_store call immediately.
+```
+
+#### OpenClaw / 自定义 Agent（HTTP API）
+
+对于使用 HTTP API 的 Agent，请指示其：
+
+```markdown
+## Vega Memory (HTTP API)
+Server: http://YOUR_SERVER:3271
+Auth: Bearer YOUR_API_KEY
+
+## Auto-store (call immediately when events happen)
+- POST /api/store {"content":"...", "type":"pitfall", "project":"..."}
+- POST /api/store {"content":"...", "type":"decision", "project":"..."}
+- POST /api/store {"content":"...", "type":"task_state", "project":"..."}
+
+## Before answering questions, recall
+- POST /api/recall {"query":"...", "project":"..."}
+
+## Session lifecycle
+- POST /api/session/start {"working_directory":"..."}
+- POST /api/session/end {"project":"...", "summary":"..."}
+```
+
+### 验证是否生效
+
+结束一段工作后，检查是否已写入记忆：
+
+```bash
+# List recent memories
+vega list --sort "created_at DESC" --json | head -20
+
+# Check memory count
+vega health --json | grep memories
+
+# Search for something discussed in the session
+vega recall "topic from your session"
+```
+
+若没有任何记忆，请检查规则文件是否在正确位置，以及 MCP 服务器或 CLI 是否可用。
+
+---
+
 ## CLI 参考
 
 ### 核心工作流

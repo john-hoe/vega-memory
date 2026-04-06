@@ -467,6 +467,153 @@ Auth: Bearer token (set via environment variable, never hardcode)
 
 ---
 
+## Automatic Memory Storage
+
+The real power of Vega is **automatic** memory storage — AI tools proactively store memories as they work, without you having to say "remember this" every time.
+
+### How it works
+
+```
+AI works on a task
+    ↓
+Completes a task     → auto-stores as task_state
+Makes a decision     → auto-stores as decision
+Fixes a bug          → auto-stores as pitfall
+Learns a preference  → auto-stores as preference
+    ↓
+Next session → session_start loads relevant memories automatically
+```
+
+### What gets stored (and what doesn't)
+
+| Store | Don't store |
+|-------|-------------|
+| Decisions with reasoning | Emotional complaints |
+| Bug fixes with error messages | Failed debug attempts that led nowhere |
+| File paths, commands, version numbers | One-time queries |
+| Architecture choices | Raw data dumps |
+| User preferences | Common programming knowledge |
+
+**Key principle:** Each memory is one specific fact, not a conversation summary. Preserve concrete details (error messages, paths, commands).
+
+### Setup by tool
+
+#### Cursor (MCP — auto)
+
+Cursor calls MCP tools automatically. Add this rule file to your workspace:
+
+**`.cursor/rules/memory.mdc`:**
+```markdown
+---
+globs: ["**/*"]
+alwaysApply: true
+---
+
+Memory System Rules — MANDATORY (never skip, never wait for user reminder)
+
+### Normal Mode (MCP available)
+- Session start → call vega.session_start(working_directory, task_hint)
+- Task completed → call vega.memory_store(type: "task_state") IMMEDIATELY
+- Decision made → call vega.memory_store(type: "decision") IMMEDIATELY
+- Bug fixed → call vega.memory_store(type: "pitfall") IMMEDIATELY
+- New preference → call vega.memory_store(type: "preference") IMMEDIATELY
+- User says "remember" → call vega.memory_store(source: "explicit")
+- Session ending → call vega.session_end(summary)
+- CRITICAL: Store memories AS events happen. Do NOT batch. Do NOT wait for user to ask.
+- Before storing → verify content is NOT: emotional complaints, failed debug attempts, one-time queries, raw data, common knowledge
+```
+
+#### Claude Code (CLI)
+
+Claude Code uses shell commands. Add to your project's **`CLAUDE.md`:**
+
+```markdown
+# Vega Memory — MANDATORY (auto-store, never wait for user reminder)
+
+## Session lifecycle
+- Start: `vega session-start --dir $(pwd) --json` — use output as context
+- End: `vega session-end --project PROJECT --summary "what was done"`
+
+## Auto-store (do these IMMEDIATELY when events happen)
+- Task done: `vega store "what was done" --type task_state --project PROJECT --title "title"`
+- Bug fixed: `vega store "error + fix" --type pitfall --project PROJECT --title "title"`
+- Decision: `vega store "choice + why" --type decision --project PROJECT --title "title"`
+- Preference: `vega store "preference" --type preference --project PROJECT --title "title"`
+
+## Before changes, search memory
+- `vega recall "query" --project PROJECT --json`
+
+## Rules
+- Store AS events happen, not at session end
+- Each fact = one separate store call
+- Preserve specifics: error messages, file paths, commands
+```
+
+#### Codex CLI
+
+Same pattern as Claude Code. Add to your project's **`CODEX.md`:**
+
+```markdown
+# Vega Memory — MANDATORY (auto-store, never wait for user reminder)
+
+- On start: `vega session-start --dir $(pwd) --json`
+- Task done: `vega store "..." --type task_state --project PROJECT --title "..."`
+- Bug fixed: `vega store "..." --type pitfall --project PROJECT --title "..."`
+- Decision: `vega store "..." --type decision --project PROJECT --title "..."`
+- On end: `vega session-end --project PROJECT --summary "..."`
+- Before changes: `vega recall "query" --project PROJECT --json`
+- CRITICAL: Store immediately as events happen. Do NOT wait for user to ask.
+```
+
+#### Codex App (Desktop)
+
+If using the Codex desktop app with MCP, add this to **Settings → Personalization → Custom Instructions:**
+
+```
+Follow CODEX.md and AGENTS.md rules strictly. Proactively store memories to Vega Memory (via MCP) as events happen — do NOT wait for user to ask. Each task completed, decision made, or bug fixed = one memory_store call immediately.
+```
+
+#### OpenClaw / Custom Agents (HTTP API)
+
+For agents using the HTTP API, instruct them to:
+
+```markdown
+## Vega Memory (HTTP API)
+Server: http://YOUR_SERVER:3271
+Auth: Bearer YOUR_API_KEY
+
+## Auto-store (call immediately when events happen)
+- POST /api/store {"content":"...", "type":"pitfall", "project":"..."}
+- POST /api/store {"content":"...", "type":"decision", "project":"..."}
+- POST /api/store {"content":"...", "type":"task_state", "project":"..."}
+
+## Before answering questions, recall
+- POST /api/recall {"query":"...", "project":"..."}
+
+## Session lifecycle
+- POST /api/session/start {"working_directory":"..."}
+- POST /api/session/end {"project":"...", "summary":"..."}
+```
+
+### Verifying it works
+
+After a work session, check that memories were stored:
+
+```bash
+# List recent memories
+vega list --sort "created_at DESC" --json | head -20
+
+# Check memory count
+vega health --json | grep memories
+
+# Search for something discussed in the session
+vega recall "topic from your session"
+```
+
+If no memories appear, check that the rule files are in the correct location and that the MCP server or CLI is accessible.
+
+---
+
 ## CLI Reference
 
 ### Core Workflow
