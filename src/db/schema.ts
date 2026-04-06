@@ -223,6 +223,17 @@ export function initializeDatabase(db: Database.Database): void {
       tags TEXT NOT NULL DEFAULT '[]'
     );
 
+    CREATE TABLE IF NOT EXISTS rss_feeds (
+      id TEXT PRIMARY KEY,
+      url TEXT UNIQUE NOT NULL,
+      title TEXT NOT NULL,
+      project TEXT,
+      last_polled_at TEXT,
+      last_entry_at TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_relations_source_entity
       ON relations(source_entity_id);
 
@@ -273,6 +284,12 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_content_sources_processed
       ON content_sources(processed);
+
+    CREATE INDEX IF NOT EXISTS idx_rss_feeds_active
+      ON rss_feeds(active);
+
+    CREATE INDEX IF NOT EXISTS idx_rss_feeds_project
+      ON rss_feeds(project);
 
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
     USING fts5(title, content, tags, content=memories, content_rowid=rowid);

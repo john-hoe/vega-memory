@@ -10,6 +10,9 @@ import type { VegaConfig } from "../config.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { getHealthReport } from "../core/health.js";
 import { Repository } from "../db/repository.js";
+import { ContentDistiller } from "../ingestion/distiller.js";
+import { ContentFetcher } from "../ingestion/fetcher.js";
+import { IngestionService } from "../ingestion/service.js";
 import { CrossReferenceService } from "../wiki/cross-reference.js";
 import { PageManager } from "../wiki/page-manager.js";
 import { reviewWikiPage, WIKI_REVIEW_ACTIONS } from "../wiki/review.js";
@@ -303,6 +306,16 @@ export function createMCPServer({
   const pageManager = new PageManager(repository);
   const synthesisEngine = new SynthesisEngine(repository, pageManager, config);
   const crossReferenceService = new CrossReferenceService(pageManager);
+  const contentFetcher = new ContentFetcher();
+  const contentDistiller = new ContentDistiller(config);
+  const ingestionService = new IngestionService(
+    contentFetcher,
+    contentDistiller,
+    pageManager,
+    memoryService,
+    synthesisEngine,
+    config
+  );
 
   server.tool(
     "memory_graph",
@@ -624,6 +637,31 @@ export function createMCPServer({
         })
     );
   }
+
+  server.tool(
+    "wiki_ingest",
+    "Ingest content into content sources and distilled memories.",
+    {
+      url: z.string().trim().url().optional(),
+      content: z.string().trim().min(1).optional(),
+      title: z.string().trim().min(1).optional(),
+      tags: z.array(z.string().trim().min(1)).optional(),
+      project: z.string().trim().min(1).optional()
+    },
+    async (args) =>
+      runTool(repository, "wiki_ingest", args, observer, async () => {
+        const result = await ingestionService.ingest(args);
+
+        return {
+          result: {
+            source_id: result.source_id,
+            memories_created: result.memories_created,
+            synthesis_queued: result.synthesis_queued
+          },
+          resultCount: result.memories_created + 1
+        };
+      })
+  );
 
   server.tool(
     "wiki_search",

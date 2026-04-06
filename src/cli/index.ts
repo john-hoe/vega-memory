@@ -15,15 +15,18 @@ import { registerDocGeneratorCommand } from "./commands/generate-docs.js";
 import { registerGitImportCommand } from "./commands/git-import.js";
 import { registerGraphCommand } from "./commands/graph.js";
 import { registerHealthCommand } from "./commands/health.js";
+import { registerIngestCommand } from "./commands/ingest.js";
 import { registerCodeIndexCommand } from "./commands/index-code.js";
 import { registerDocIndexCommand } from "./commands/index-docs.js";
 import { registerImportExportCommands } from "./commands/import-export.js";
 import { registerListCommand } from "./commands/list.js";
 import { registerMaintenanceCommands } from "./commands/maintenance.js";
 import { registerMigrateCommand } from "./commands/migrate.js";
+import { registerNoteCommand } from "./commands/note.js";
 import { registerQualityCommand } from "./commands/quality.js";
 import { registerRecallCommand } from "./commands/recall.js";
 import { registerReindexCommand } from "./commands/reindex.js";
+import { registerRSSCommands } from "./commands/rss.js";
 import { registerScreenshotCommand } from "./commands/screenshot.js";
 import { registerSessionCommands } from "./commands/session.js";
 import { registerSetupCommand } from "./commands/setup.js";
@@ -55,6 +58,10 @@ import { TemplateMarketplace } from "../plugins/marketplace.js";
 import { SearchEngine } from "../search/engine.js";
 import { RelevanceTuner } from "../search/tuning.js";
 import { resolveConfiguredEncryptionKey } from "../security/keychain.js";
+import { ContentDistiller } from "../ingestion/distiller.js";
+import { ContentFetcher } from "../ingestion/fetcher.js";
+import { RSSService } from "../ingestion/rss.js";
+import { IngestionService } from "../ingestion/service.js";
 import { CrossReferenceService } from "../wiki/cross-reference.js";
 import { PageManager } from "../wiki/page-manager.js";
 import { SynthesisEngine } from "../wiki/synthesis.js";
@@ -128,6 +135,17 @@ async function main(): Promise<void> {
   const crossReferenceService = new CrossReferenceService(pageManager);
   const synthesisEngine = new SynthesisEngine(repository, pageManager, config);
   const stalenessService = new StalenessService(pageManager, repository);
+  const contentFetcher = new ContentFetcher();
+  const contentDistiller = new ContentDistiller(config);
+  const ingestionService = new IngestionService(
+    contentFetcher,
+    contentDistiller,
+    pageManager,
+    memoryService,
+    synthesisEngine,
+    config
+  );
+  const rssService = new RSSService(repository);
 
   registerStoreCommand(program, memoryService);
   registerRecallCommand(program, recallService);
@@ -142,10 +160,12 @@ async function main(): Promise<void> {
   registerDocIndexCommand(program, docIndexService);
   registerSessionCommands(program, sessionService);
   registerHealthCommand(program, repository, config);
+  registerIngestCommand(program, ingestionService);
   registerDiagnoseCommand(program, repository, config);
   registerMaintenanceCommands(program, repository, compactService, config);
   registerImportExportCommands(program, repository, memoryService, config);
   registerMigrateCommand(program, memoryService);
+  registerNoteCommand(program, ingestionService);
   registerQualityCommand(program, qualityService);
   registerAuditCommand(program, repository);
   registerBenchmarkCommand(program, repository, memoryService, recallService, config);
@@ -153,6 +173,7 @@ async function main(): Promise<void> {
   registerTemplateCommands(program, templateMarketplace, repository);
   registerTuneCommand(program, relevanceTuner);
   registerAnalyticsCommand(program, analyticsService);
+  registerRSSCommands(program, rssService);
   registerTenantCommands(program, tenantService);
   registerWikiCommand(
     program,
