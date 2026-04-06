@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { VegaConfig } from "../config.js";
 import { Repository } from "../db/repository.js";
 import { isOllamaAvailable } from "../embedding/ollama.js";
+import { PageManager } from "../wiki/page-manager.js";
 import { ExtractionService } from "./extraction.js";
 import { MemoryService } from "./memory.js";
 import { RecallService } from "./recall.js";
@@ -15,7 +16,8 @@ import type {
   Memory,
   MemoryType,
   SearchResult,
-  SessionStartResult
+  SessionStartResult,
+  SessionStartWikiPage
 } from "./types.js";
 
 const AUTO_EXTRACT_PATTERNS: Array<{ type: MemoryType; pattern: RegExp }> = [
@@ -32,14 +34,34 @@ const SESSION_BUDGET_RATIOS = {
   activeTasks: 0.2,
   context: 0.2
 } as const;
+const SESSION_SYNTHESIS_WARNING_PREFIX = "session-synthesis-warning:";
+
+interface SessionWikiSearchRow {
+  slug: string;
+  title: string;
+  summary: string;
+  page_type: string;
+  updated_at: string;
+  rank: number;
+}
+
+interface CountRow {
+  total: number;
+}
 
 const estimateTextTokens = (value: string): number => value.length / 4;
 
 const estimateMemoryTokens = (memory: Memory): number =>
   estimateTextTokens(memory.summary ?? memory.content);
 
+const estimateWikiPageTokens = (page: SessionStartWikiPage): number =>
+  estimateTextTokens(`${page.title}\n${page.summary}`);
+
 const estimateTokens = (memories: Memory[]): number =>
   memories.reduce((total, memory) => total + estimateMemoryTokens(memory), 0);
+
+const estimateWikiTokens = (pages: SessionStartWikiPage[]): number =>
+  pages.reduce((total, page) => total + estimateWikiPageTokens(page), 0);
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
 
@@ -151,7 +173,8 @@ export class SessionService {
     private readonly repository: Repository,
     private readonly memoryService: MemoryService,
     private readonly recallService: RecallService,
-    private readonly config: VegaConfig
+    private readonly config: VegaConfig,
+    private readonly pageManager?: PageManager | null
   ) {
     this.extractionService = new ExtractionService(config);
   }
@@ -238,6 +261,10 @@ export class SessionService {
       limit: 10_000,
       sort: "created_at DESC"
     });
+    const relevant_wiki_pages = this.pageManager
+      ? this.loadRelevantWikiPages(project, taskHintKeywords)
+      : [];
+    const wiki_drafts_pending = this.pageManager ? this.countWikiDrafts(project) : 0;
     const recent_unverified = allMemories
       .filter(
         (memory) => memory.verified === "unverified" && isInProjectScope(memory, project)
@@ -247,24 +274,27 @@ export class SessionService {
     const conflicts = allMemories.filter(
       (memory) => memory.verified === "conflict" && isInProjectScope(memory, project)
     ).sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
-    const proactive_warnings = taskHintKeywords.length
-      ? this.repository
-          .listMemories({
-            type: "insight",
-            status: "active",
-            limit: 10_000,
-            sort: "importance DESC"
-          })
-          .filter((memory) => {
-            if (!isInProjectScope(memory, project) || !isSessionVisible(memory)) {
-              return false;
-            }
+    const proactive_warnings = [
+      ...(taskHintKeywords.length
+        ? this.repository
+            .listMemories({
+              type: "insight",
+              status: "active",
+              limit: 10_000,
+              sort: "importance DESC"
+            })
+            .filter((memory) => {
+              if (!isInProjectScope(memory, project) || !isSessionVisible(memory)) {
+                return false;
+              }
 
-            const tags = memory.tags.map((tag) => tag.toLowerCase());
-            return taskHintKeywords.some((keyword) => tags.includes(keyword));
-          })
-          .map((memory) => memory.content)
-      : [];
+              const tags = memory.tags.map((tag) => tag.toLowerCase());
+              return taskHintKeywords.some((keyword) => tags.includes(keyword));
+            })
+            .map((memory) => memory.content)
+        : []),
+      ...this.consumePendingSynthesisWarnings(project)
+    ];
 
     const preferenceBudget = Math.floor(this.config.tokenBudget * SESSION_BUDGET_RATIOS.preferences);
     const activeTaskBudget = Math.floor(this.config.tokenBudget * SESSION_BUDGET_RATIOS.activeTasks);
@@ -312,7 +342,7 @@ export class SessionService {
       ...trimmedRelevantResults.map((result) => result.memory),
       ...trimmedRecentUnverified,
       ...trimmedConflicts
-    ]);
+    ]) + estimateWikiTokens(relevant_wiki_pages);
 
     return {
       project,
@@ -322,6 +352,8 @@ export class SessionService {
       relevant: [...trimmedRelevantResults]
         .sort((left, right) => right.finalScore - left.finalScore)
         .map((result) => toSessionMemory(result.memory)),
+      relevant_wiki_pages,
+      wiki_drafts_pending,
       recent_unverified: trimmedRecentUnverified.map(toSessionMemory),
       conflicts: trimmedConflicts.map(toSessionMemory),
       proactive_warnings,
@@ -337,6 +369,7 @@ export class SessionService {
   ): Promise<void> {
     const ended_at = now();
     const started_at = this.sessionStartTimes.get(project) ?? ended_at;
+    const newlyCreatedMemoryIds: string[] = [];
 
     for (const taskId of completedTaskIds ?? []) {
       this.repository.updateMemory(
@@ -370,6 +403,10 @@ export class SessionService {
         if (stored.id && (stored.action === "created" || stored.action === "conflict")) {
           memories_created.push(stored.id);
         }
+
+        if (stored.id && stored.action === "created") {
+          newlyCreatedMemoryIds.push(stored.id);
+        }
       }
     } else {
       for (const sentence of splitSentences(summary)) {
@@ -389,9 +426,15 @@ export class SessionService {
           if (stored.id && (stored.action === "created" || stored.action === "conflict")) {
             memories_created.push(stored.id);
           }
+
+          if (stored.id && stored.action === "created") {
+            newlyCreatedMemoryIds.push(stored.id);
+          }
         }
       }
     }
+
+    this.updatePendingSynthesisWarning(project, newlyCreatedMemoryIds);
 
     this.repository.createSession({
       id: uuidv4(),
@@ -431,5 +474,95 @@ export class SessionService {
     }
 
     return join(dirname(resolve(this.config.dbPath)), `${project}-snapshot.md`);
+  }
+
+  private loadRelevantWikiPages(
+    project: string,
+    taskHintKeywords: string[]
+  ): SessionStartWikiPage[] {
+    if (taskHintKeywords.length === 0) {
+      return [];
+    }
+
+    const query = taskHintKeywords.slice(0, 5).join(" OR ");
+    const rows = this.repository.db
+      .prepare<[string, string, string, string], SessionWikiSearchRow>(
+        `SELECT
+           wiki_pages.slug AS slug,
+           wiki_pages.title AS title,
+           wiki_pages.summary AS summary,
+           wiki_pages.page_type AS page_type,
+           wiki_pages.updated_at AS updated_at,
+           bm25(wiki_pages_fts) AS rank
+         FROM wiki_pages_fts
+         JOIN wiki_pages ON wiki_pages.rowid = wiki_pages_fts.rowid
+         WHERE wiki_pages_fts MATCH ?
+           AND wiki_pages.project = ?
+           AND wiki_pages.status IN (?, ?)
+         ORDER BY rank, wiki_pages.updated_at DESC
+         LIMIT 3`
+      )
+      .all(query, project, "published", "stale");
+
+    return rows.map(({ rank: _rank, updated_at: _updatedAt, ...page }) => page);
+  }
+
+  private countWikiDrafts(project: string): number {
+    const row = this.repository.db
+      .prepare<[string, string], CountRow>(
+        `SELECT COUNT(*) AS total
+         FROM wiki_pages
+         WHERE project = ?
+           AND status = ?`
+      )
+      .get(project, "draft");
+
+    return row?.total ?? 0;
+  }
+
+  private consumePendingSynthesisWarnings(project: string): string[] {
+    const key = `${SESSION_SYNTHESIS_WARNING_PREFIX}${project}`;
+    const warning = this.repository.getMetadata(key);
+
+    if (warning === null) {
+      return [];
+    }
+
+    this.repository.deleteMetadata(key);
+    return [warning];
+  }
+
+  private updatePendingSynthesisWarning(project: string, memoryIds: string[]): void {
+    const key = `${SESSION_SYNTHESIS_WARNING_PREFIX}${project}`;
+    const tagCounts = new Map<string, number>();
+
+    for (const memoryId of memoryIds) {
+      const memory = this.repository.getMemory(memoryId);
+      if (memory === null || memory.status !== "active") {
+        continue;
+      }
+
+      for (const tag of [...new Set(memory.tags.map((item) => item.trim().toLowerCase()))]) {
+        if (tag.length === 0) {
+          continue;
+        }
+
+        tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+      }
+    }
+
+    const candidate = [...tagCounts.entries()]
+      .filter(([, count]) => count >= 3)
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0];
+
+    if (!candidate) {
+      this.repository.deleteMetadata(key);
+      return;
+    }
+
+    this.repository.setMetadata(
+      key,
+      `New memories may warrant Wiki synthesis. Run: vega wiki synthesize --topic ${candidate[0]}`
+    );
   }
 }

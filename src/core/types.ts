@@ -134,12 +134,21 @@ export interface PerformanceLog {
   bm25_result_count?: number;
 }
 
+export interface SessionStartWikiPage {
+  slug: string;
+  title: string;
+  summary: string;
+  page_type: string;
+}
+
 export interface SessionStartResult {
   project: string;
   active_tasks: Memory[];
   preferences: Memory[];
   context: Memory[];
   relevant: Memory[];
+  relevant_wiki_pages: SessionStartWikiPage[];
+  wiki_drafts_pending: number;
   recent_unverified: Memory[];
   conflicts: Memory[];
   proactive_warnings: string[];

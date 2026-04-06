@@ -36,6 +36,8 @@ const serializeSessionStart = (result: SessionStartResult) => ({
   preferences: result.preferences.map(serializeMemory),
   context: result.context.map(serializeMemory),
   relevant: result.relevant.map(serializeMemory),
+  relevant_wiki_pages: result.relevant_wiki_pages,
+  wiki_drafts_pending: result.wiki_drafts_pending,
   recent_unverified: result.recent_unverified.map(serializeMemory),
   conflicts: result.conflicts.map(serializeMemory),
   proactive_warnings: result.proactive_warnings,
@@ -70,6 +72,11 @@ export function registerSessionCommands(program: Command, sessionService: Sessio
       printMemorySection("preferences", result.preferences);
       printMemorySection("context", result.context);
       printMemorySection("relevant", result.relevant);
+      console.log(`wiki_drafts_pending: ${result.wiki_drafts_pending}`);
+      console.log(`relevant_wiki_pages: ${result.relevant_wiki_pages.length}`);
+      for (const page of result.relevant_wiki_pages) {
+        console.log(`- ${page.slug} ${page.title}`);
+      }
       printMemorySection("recent_unverified", result.recent_unverified);
       printMemorySection("conflicts", result.conflicts);
 

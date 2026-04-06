@@ -198,6 +198,18 @@ export function initializeDatabase(db: Database.Database): void {
       UNIQUE(source_page_id, target_page_id)
     );
 
+    CREATE TABLE IF NOT EXISTS wiki_contradictions (
+      id TEXT PRIMARY KEY,
+      page_a_id TEXT NOT NULL,
+      page_b_id TEXT NOT NULL,
+      statement_a TEXT NOT NULL,
+      statement_b TEXT NOT NULL,
+      detected_at TEXT NOT NULL,
+      resolved INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (page_a_id) REFERENCES wiki_pages(id) ON DELETE CASCADE,
+      FOREIGN KEY (page_b_id) REFERENCES wiki_pages(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS content_sources (
       id TEXT PRIMARY KEY,
       source_type TEXT NOT NULL,
@@ -251,6 +263,9 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_wiki_cross_refs_target
       ON wiki_cross_references(target_page_id);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_contradictions_resolved
+      ON wiki_contradictions(resolved);
 
     CREATE INDEX IF NOT EXISTS idx_content_sources_type
       ON content_sources(source_type);

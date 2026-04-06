@@ -87,6 +87,8 @@ const serializeSessionStartResult = (result: SessionStartResult) => ({
   preferences: result.preferences.map(serializeMemory),
   context: result.context.map(serializeMemory),
   relevant: result.relevant.map(serializeMemory),
+  relevant_wiki_pages: result.relevant_wiki_pages,
+  wiki_drafts_pending: result.wiki_drafts_pending,
   recent_unverified: result.recent_unverified.map(serializeMemory),
   conflicts: result.conflicts.map(serializeMemory),
   proactive_warnings: result.proactive_warnings,

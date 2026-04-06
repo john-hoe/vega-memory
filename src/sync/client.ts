@@ -127,6 +127,8 @@ const emptySessionResult = (workingDirectory: string): SessionStartResult => {
     preferences: [],
     context: [],
     relevant: [],
+    relevant_wiki_pages: [],
+    wiki_drafts_pending: 0,
     recent_unverified: [],
     conflicts: [],
     proactive_warnings: [],
@@ -293,6 +295,8 @@ export class VegaSyncClient {
         preferences: result.preferences.map((memory) => this.toMemory(memory)),
         context: result.context.map((memory) => this.toMemory(memory)),
         relevant: result.relevant.map((memory) => this.toMemory(memory)),
+        relevant_wiki_pages: result.relevant_wiki_pages ?? [],
+        wiki_drafts_pending: result.wiki_drafts_pending ?? 0,
         recent_unverified: result.recent_unverified.map((memory) => this.toMemory(memory)),
         conflicts: result.conflicts.map((memory) => this.toMemory(memory))
       };
@@ -648,6 +652,8 @@ export class VegaSyncClient {
       preferences,
       context,
       relevant,
+      relevant_wiki_pages: [],
+      wiki_drafts_pending: 0,
       recent_unverified: [],
       conflicts: [],
       proactive_warnings: [],

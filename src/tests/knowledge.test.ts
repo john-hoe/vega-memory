@@ -525,6 +525,8 @@ test("memory_graph tool omits serialized embeddings", async () => {
         preferences: [],
         context: [],
         relevant: [],
+        relevant_wiki_pages: [],
+        wiki_drafts_pending: 0,
         recent_unverified: [],
         conflicts: [],
         proactive_warnings: [],
