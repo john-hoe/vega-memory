@@ -26,6 +26,7 @@ interface MemoryRow {
   project: string;
   title: string;
   content: string;
+  summary: string | null;
   embedding: Buffer | null;
   importance: number;
   source: Memory["source"];
@@ -134,6 +135,7 @@ function serializeJsonArray(value: string[]): string {
 function mapMemory(row: MemoryRow): Memory {
   return {
     ...row,
+    summary: row.summary ?? null,
     tags: parseJsonArray(row.tags),
     accessed_projects: parseJsonArray(row.accessed_projects)
   };
@@ -255,6 +257,7 @@ export class Repository {
         string,
         string,
         string,
+        string | null,
         Buffer | null,
         number,
         Memory["source"],
@@ -269,9 +272,9 @@ export class Repository {
       ]
     >(
       `INSERT INTO memories (
-        id, tenant_id, type, project, title, content, embedding, importance, source, tags,
-        created_at, updated_at, accessed_at, status, verified, scope, accessed_projects
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        id, tenant_id, type, project, title, content, summary, embedding, importance, source,
+        tags, created_at, updated_at, accessed_at, status, verified, scope, accessed_projects
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertFts = this.db.prepare<[number, string, string, string]>(
       "INSERT INTO memories_fts(rowid, title, content, tags) VALUES (?, ?, ?, ?)"
@@ -285,6 +288,7 @@ export class Repository {
         memory.project,
         memory.title,
         memory.content,
+        memory.summary ?? null,
         memory.embedding,
         memory.importance,
         memory.source,
@@ -381,6 +385,7 @@ export class Repository {
         string,
         string,
         string,
+        string | null,
         Buffer | null,
         number,
         Memory["source"],
@@ -396,7 +401,7 @@ export class Repository {
       ]
     >(
       `UPDATE memories
-       SET type = ?, tenant_id = ?, project = ?, title = ?, content = ?, embedding = ?, importance = ?,
+       SET type = ?, tenant_id = ?, project = ?, title = ?, content = ?, summary = ?, embedding = ?, importance = ?,
            source = ?, tags = ?, updated_at = ?, accessed_at = ?, access_count = ?,
            status = ?, verified = ?, scope = ?, accessed_projects = ?
        WHERE id = ?`
@@ -419,6 +424,7 @@ export class Repository {
         nextMemory.project,
         nextMemory.title,
         nextMemory.content,
+        nextMemory.summary,
         nextMemory.embedding,
         nextMemory.importance,
         nextMemory.source,

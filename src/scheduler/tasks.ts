@@ -6,6 +6,7 @@ import { CompactService } from "../core/compact.js";
 import { LifecycleManager } from "../core/lifecycle.js";
 import { MemoryService } from "../core/memory.js";
 import { exportSnapshot } from "../core/snapshot.js";
+import { generateSummary } from "../core/summarize.js";
 import type { MemoryStatus, MemoryType } from "../core/types.js";
 import { cleanOldBackups, createBackup, shouldBackup } from "../db/backup.js";
 import { Repository } from "../db/repository.js";
@@ -180,9 +181,46 @@ const rebuildMissingEmbeddings = async (
   return { rebuilt, failed };
 };
 
+export async function backfillSummaries(
+  repository: Repository,
+  _memoryService: MemoryService,
+  config: VegaConfig
+): Promise<{ updated: number; failed: number }> {
+  const memories = repository
+    .listMemories({
+      status: "active",
+      limit: 1_000_000,
+      sort: "updated_at DESC"
+    })
+    .filter((memory) => memory.summary === null && memory.content.length > 200);
+  let updated = 0;
+  let failed = 0;
+
+  for (const memory of memories) {
+    const summary = await generateSummary(memory.content, config);
+
+    if (summary !== null) {
+      repository.updateMemory(
+        memory.id,
+        {
+          summary,
+          updated_at: timestamp()
+        },
+        { skipVersion: true }
+      );
+      updated += 1;
+    } else {
+      failed += 1;
+    }
+  }
+
+  return { updated, failed };
+}
+
 export async function dailyMaintenance(
   repository: Repository,
   compactService: CompactService,
+  memoryService: MemoryService,
   config: VegaConfig,
   notificationManager?: NotificationManager
 ): Promise<void> {
@@ -237,6 +275,14 @@ export async function dailyMaintenance(
     }
   } catch (error) {
     recordError(`Embedding rebuild step failed: ${getErrorMessage(error)}`);
+  }
+
+  log("Backfilling missing summaries");
+  try {
+    const summaryResult = await backfillSummaries(repository, memoryService, config);
+    log(`Summary backfill: ${summaryResult.updated} updated, ${summaryResult.failed} failed`);
+  } catch (error) {
+    recordError(`Summary backfill failed: ${getErrorMessage(error)}`);
   }
 
   log("Exporting snapshot");

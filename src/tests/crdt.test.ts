@@ -4,26 +4,31 @@ import test from "node:test";
 import type { Memory } from "../core/types.js";
 import { CRDTMerger } from "../db/crdt.js";
 
-const createMemory = (overrides: Partial<Memory> = {}): Memory => ({
-  id: "memory-1",
-  type: "decision",
-  project: "vega",
-  title: "Memory",
-  content: "Initial content",
-  embedding: null,
-  importance: 0.5,
-  source: "explicit",
-  tags: ["vega"],
-  created_at: "2026-04-04T00:00:00.000Z",
-  updated_at: "2026-04-04T00:00:00.000Z",
-  accessed_at: "2026-04-04T00:00:00.000Z",
-  access_count: 0,
-  status: "active",
-  verified: "unverified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+const createMemory = (overrides: Partial<Memory> = {}): Memory => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id: "memory-1",
+    type: "decision",
+    project: "vega",
+    title: "Memory",
+    content: "Initial content",
+    embedding: null,
+    importance: 0.5,
+    source: "explicit",
+    tags: ["vega"],
+    created_at: "2026-04-04T00:00:00.000Z",
+    updated_at: "2026-04-04T00:00:00.000Z",
+    accessed_at: "2026-04-04T00:00:00.000Z",
+    access_count: 0,
+    status: "active",
+    verified: "unverified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 test("mergeMemories keeps newer version", () => {
   const merger = new CRDTMerger();

@@ -33,7 +33,10 @@ const SESSION_BUDGET_RATIOS = {
   context: 0.2
 } as const;
 
-const estimateMemoryTokens = (memory: Memory): number => memory.content.length / 4;
+const estimateTextTokens = (value: string): number => value.length / 4;
+
+const estimateMemoryTokens = (memory: Memory): number =>
+  estimateTextTokens(memory.summary ?? memory.content);
 
 const estimateTokens = (memories: Memory[]): number =>
   memories.reduce((total, memory) => total + estimateMemoryTokens(memory), 0);

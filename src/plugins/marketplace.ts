@@ -91,6 +91,7 @@ export class TemplateMarketplace {
         project: template.name,
         title: `Template ${template.name} Rule ${index + 1}`,
         content: rule,
+        summary: null,
         embedding: null,
         importance: 0.95,
         source: "explicit",

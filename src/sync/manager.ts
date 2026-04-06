@@ -12,6 +12,7 @@ const memoriesEqual = (left: Memory, right: Memory): boolean =>
   left.project === right.project &&
   left.title === right.title &&
   left.content === right.content &&
+  left.summary === right.summary &&
   left.importance === right.importance &&
   left.source === right.source &&
   left.created_at === right.created_at &&

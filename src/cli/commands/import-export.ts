@@ -22,6 +22,7 @@ import { requireConfiguredEncryptionKey } from "../../security/keychain.js";
 interface PortableMemory {
   id?: string;
   content: string;
+  summary?: string | null;
   type: MemoryType;
   project: string;
   title?: string;
@@ -182,9 +183,14 @@ const validatePortableMemory = (value: unknown): PortableMemory => {
     typeof candidate.title === "string" && candidate.title.trim().length > 0
       ? candidate.title
       : undefined;
+  const summary =
+    candidate.summary === null || typeof candidate.summary === "string"
+      ? candidate.summary
+      : undefined;
 
   return {
     content: candidate.content,
+    summary,
     type: validateType(candidate.type),
     project: candidate.project,
     id: typeof candidate.id === "string" && candidate.id.trim().length > 0 ? candidate.id : undefined,
@@ -212,6 +218,7 @@ const validatePortableMemory = (value: unknown): PortableMemory => {
 const serializePortableMemory = (memory: Memory): PortableMemory => ({
   id: memory.id,
   content: memory.content,
+  summary: memory.summary,
   type: memory.type,
   project: memory.project,
   title: memory.title,
@@ -392,6 +399,7 @@ const buildImportedMemory = (entry: PortableMemory): Memory | null => {
     project: entry.project,
     title,
     content: entry.content,
+    summary: entry.summary ?? null,
     embedding: entry.embedding ? Buffer.from(entry.embedding, "base64") : null,
     importance: entry.importance ?? 0.5,
     source,
@@ -548,6 +556,7 @@ export function registerImportExportCommands(
             project: importedMemory.project,
             title: importedMemory.title,
             content: importedMemory.content,
+            summary: importedMemory.summary,
             embedding: importedMemory.embedding,
             importance: importedMemory.importance,
             source: importedMemory.source,

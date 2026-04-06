@@ -16,26 +16,31 @@ import { renderDashboardPage } from "../web/dashboard.js";
 
 const timestamp = "2026-04-05T12:00:00.000Z";
 
-const createStoredMemory = (id: string, overrides: Partial<Memory> = {}): Memory => ({
-  id,
-  type: "decision",
-  project: "vega",
-  title: `Memory ${id}`,
-  content: `Content for ${id}`,
-  embedding: null,
-  importance: 0.5,
-  source: "explicit",
-  tags: ["enterprise"],
-  created_at: timestamp,
-  updated_at: timestamp,
-  accessed_at: timestamp,
-  access_count: 0,
-  status: "active",
-  verified: "verified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+const createStoredMemory = (id: string, overrides: Partial<Memory> = {}): Memory => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id,
+    type: "decision",
+    project: "vega",
+    title: `Memory ${id}`,
+    content: `Content for ${id}`,
+    embedding: null,
+    importance: 0.5,
+    source: "explicit",
+    tags: ["enterprise"],
+    created_at: timestamp,
+    updated_at: timestamp,
+    accessed_at: timestamp,
+    access_count: 0,
+    status: "active",
+    verified: "verified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 const createRepositoryHarness = (): {
   repository: Repository;

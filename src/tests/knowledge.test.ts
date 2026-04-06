@@ -44,25 +44,30 @@ const baseConfig: VegaConfig = {
 
 const createMemory = (
   overrides: Partial<Omit<Memory, "access_count">> = {}
-): Omit<Memory, "access_count"> => ({
-  id: "memory-1",
-  type: "project_context",
-  project: "vega",
-  title: "Vega Memory uses SQLite",
-  content: "Vega Memory uses SQLite for local storage.",
-  embedding: null,
-  importance: 0.7,
-  source: "explicit",
-  tags: ["vega", "sqlite"],
-  created_at: "2026-04-05T00:00:00.000Z",
-  updated_at: "2026-04-05T00:00:00.000Z",
-  accessed_at: "2026-04-05T00:00:00.000Z",
-  status: "active",
-  verified: "verified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+): Omit<Memory, "access_count"> => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id: "memory-1",
+    type: "project_context",
+    project: "vega",
+    title: "Vega Memory uses SQLite",
+    content: "Vega Memory uses SQLite for local storage.",
+    embedding: null,
+    importance: 0.7,
+    source: "explicit",
+    tags: ["vega", "sqlite"],
+    created_at: "2026-04-05T00:00:00.000Z",
+    updated_at: "2026-04-05T00:00:00.000Z",
+    accessed_at: "2026-04-05T00:00:00.000Z",
+    status: "active",
+    verified: "verified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 const installEmbeddingMock = (): (() => void) => {
   const originalFetch = globalThis.fetch;

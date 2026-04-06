@@ -10,26 +10,33 @@ import { generateKey } from "../security/encryption.js";
 
 const now = "2026-04-06T00:00:00.000Z";
 
-const createMemory = (overrides: Partial<Omit<Memory, "access_count">> = {}): Omit<Memory, "access_count"> => ({
-  id: "encrypted-memory",
-  tenant_id: null,
-  type: "decision",
-  project: "vega",
-  title: "Encrypted Memory",
-  content: "Persist this record in an encrypted database.",
-  embedding: null,
-  importance: 0.8,
-  source: "explicit",
-  tags: ["encryption"],
-  created_at: now,
-  updated_at: now,
-  accessed_at: now,
-  status: "active",
-  verified: "unverified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+const createMemory = (
+  overrides: Partial<Omit<Memory, "access_count">> = {}
+): Omit<Memory, "access_count"> => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id: "encrypted-memory",
+    tenant_id: null,
+    type: "decision",
+    project: "vega",
+    title: "Encrypted Memory",
+    content: "Persist this record in an encrypted database.",
+    embedding: null,
+    importance: 0.8,
+    source: "explicit",
+    tags: ["encryption"],
+    created_at: now,
+    updated_at: now,
+    accessed_at: now,
+    status: "active",
+    verified: "unverified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 test("Repository opens encrypted database and reads/writes", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-enc-db-"));

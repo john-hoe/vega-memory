@@ -6,6 +6,7 @@ import test from "node:test";
 
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
+import { MemoryService } from "../core/memory.js";
 import type { Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { AlertFileWriter } from "../notify/alert-file.js";
@@ -33,26 +34,31 @@ const createConfig = (overrides: Partial<VegaConfig> = {}): VegaConfig => ({
   observerEnabled: overrides.observerEnabled ?? false
 });
 
-const createMemory = (overrides: Partial<Memory> = {}): Memory => ({
-  id: "memory-1",
-  type: "decision",
-  project: "vega",
-  title: "Memory",
-  content: "Content",
-  embedding: Buffer.from([1, 2, 3]),
-  importance: 0.8,
-  source: "explicit",
-  tags: ["vega"],
-  created_at: "2026-04-04T00:00:00.000Z",
-  updated_at: "2026-04-04T00:00:00.000Z",
-  accessed_at: "2026-04-04T00:00:00.000Z",
-  access_count: 0,
-  status: "active",
-  verified: "verified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+const createMemory = (overrides: Partial<Memory> = {}): Memory => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id: "memory-1",
+    type: "decision",
+    project: "vega",
+    title: "Memory",
+    content: "Content",
+    embedding: Buffer.from([1, 2, 3]),
+    importance: 0.8,
+    source: "explicit",
+    tags: ["vega"],
+    created_at: "2026-04-04T00:00:00.000Z",
+    updated_at: "2026-04-04T00:00:00.000Z",
+    accessed_at: "2026-04-04T00:00:00.000Z",
+    access_count: 0,
+    status: "active",
+    verified: "verified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 test("AlertFileWriter supports write/read/clear", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-alert-file-"));
@@ -122,6 +128,7 @@ test("NotificationManager clears alert after successful maintenance", async () =
   });
   const repository = new Repository(config.dbPath);
   const compactService = new CompactService(repository, config);
+  const memoryService = new MemoryService(repository, config);
   const manager = new NotificationManager(config, alertDir);
   const alertPath = join(alertDir, "active-alert.md");
 
@@ -130,7 +137,7 @@ test("NotificationManager clears alert after successful maintenance", async () =
     await manager.notifyError("Previous Error", "Clear me after maintenance");
     assert.equal(existsSync(alertPath), true);
 
-    await dailyMaintenance(repository, compactService, config, manager);
+    await dailyMaintenance(repository, compactService, memoryService, config, manager);
 
     assert.equal(existsSync(alertPath), false);
   } finally {

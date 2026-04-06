@@ -42,25 +42,30 @@ const baseConfig: VegaConfig = {
 
 const createStoredMemory = (
   overrides: Partial<Omit<Memory, "access_count">> = {}
-): Omit<Memory, "access_count"> => ({
-  id: "memory-1",
-  type: "pitfall",
-  project: "vega",
-  title: "Stored Memory",
-  content: "Auth flow failed during deploy.",
-  embedding: null,
-  importance: 0.7,
-  source: "auto",
-  tags: ["auth"],
-  created_at: "2026-04-03T00:00:00.000Z",
-  updated_at: "2026-04-03T00:00:00.000Z",
-  accessed_at: "2026-04-03T00:00:00.000Z",
-  status: "active",
-  verified: "unverified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+): Omit<Memory, "access_count"> => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id: "memory-1",
+    type: "pitfall",
+    project: "vega",
+    title: "Stored Memory",
+    content: "Auth flow failed during deploy.",
+    embedding: null,
+    importance: 0.7,
+    source: "auto",
+    tags: ["auth"],
+    created_at: "2026-04-03T00:00:00.000Z",
+    updated_at: "2026-04-03T00:00:00.000Z",
+    accessed_at: "2026-04-03T00:00:00.000Z",
+    status: "active",
+    verified: "unverified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 const installEmbeddingMock = (): (() => void) => {
   const originalFetch = globalThis.fetch;

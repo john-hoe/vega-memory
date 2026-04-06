@@ -34,26 +34,31 @@ const baseConfig: VegaConfig = {
 const createEmbeddingBuffer = (values: number[]): Buffer =>
   Buffer.from(new Float32Array(values).buffer);
 
-const createMemory = (id: string, overrides: Partial<Memory> = {}): Memory => ({
-  id,
-  type: "decision",
-  project: "vega",
-  title: id,
-  content: `content for ${id}`,
-  embedding: createEmbeddingBuffer([1, 0]),
-  importance: 0.8,
-  source: "explicit",
-  tags: [],
-  created_at: "2026-04-05T00:00:00.000Z",
-  updated_at: "2026-04-05T00:00:00.000Z",
-  accessed_at: "2026-04-05T00:00:00.000Z",
-  access_count: 0,
-  status: "active",
-  verified: "verified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+const createMemory = (id: string, overrides: Partial<Memory> = {}): Memory => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id,
+    type: "decision",
+    project: "vega",
+    title: id,
+    content: `content for ${id}`,
+    embedding: createEmbeddingBuffer([1, 0]),
+    importance: 0.8,
+    source: "explicit",
+    tags: [],
+    created_at: "2026-04-05T00:00:00.000Z",
+    updated_at: "2026-04-05T00:00:00.000Z",
+    accessed_at: "2026-04-05T00:00:00.000Z",
+    access_count: 0,
+    status: "active",
+    verified: "verified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 test("EmbeddingCache supports get, set, and LRU eviction", () => {
   const cache = new EmbeddingCache(2);

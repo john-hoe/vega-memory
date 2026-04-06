@@ -15,6 +15,7 @@ import { generateEmbedding, cosineSimilarity } from "../embedding/ollama.js";
 import { shouldExclude } from "../security/exclusion.js";
 import { redactSensitiveData } from "../security/redactor.js";
 import { KnowledgeGraphService } from "./knowledge-graph.js";
+import { generateSummary } from "./summarize.js";
 
 const DEFAULT_IMPORTANCE: Record<MemoryType, number> = {
   preference: 0.95,
@@ -265,6 +266,7 @@ export class MemoryService {
             embedding
           );
     const timestamp = now();
+    const summary = await generateSummary(redacted, this.config);
 
     if (
       matched !== null &&
@@ -279,6 +281,7 @@ export class MemoryService {
           project: params.project,
           title,
           content: redacted,
+          summary,
           embedding: toEmbeddingBuffer(embedding),
           importance,
           source,
@@ -327,12 +330,19 @@ export class MemoryService {
                 ? embedding
                 : await generateEmbedding(mergedContent, this.config)
             );
+      const nextSummary =
+        mergedContent === matched.memory.content
+          ? matched.memory.summary
+          : mergedContent === redacted
+            ? summary
+            : await generateSummary(mergedContent, this.config);
 
       this.repository.updateMemory(
         matched.memory.id,
         {
           title: nextTitle,
           content: mergedContent,
+          summary: nextSummary,
           embedding: nextEmbedding,
           importance: Math.max(matched.memory.importance, importance),
           source: nextSource,
@@ -373,6 +383,7 @@ export class MemoryService {
         project: params.project,
         title,
         content: redacted,
+        summary,
         embedding: toEmbeddingBuffer(embedding),
         importance,
         source,
@@ -416,6 +427,7 @@ export class MemoryService {
     if (updates.content !== undefined) {
       const { redacted } = redactSensitiveData(updates.content);
       nextUpdates.content = redacted;
+      nextUpdates.summary = await generateSummary(redacted, this.config);
       nextUpdates.embedding = toEmbeddingBuffer(await generateEmbedding(redacted, this.config));
       nextUpdates.tags =
         updates.tags !== undefined

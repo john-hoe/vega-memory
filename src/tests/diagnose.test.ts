@@ -9,26 +9,31 @@ import { DiagnoseService } from "../core/diagnose.js";
 import type { Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 
-const createMemory = (overrides: Partial<Memory> = {}): Memory => ({
-  id: "memory-1",
-  type: "decision",
-  project: "vega",
-  title: "SQLite Decision",
-  content: "Use SQLite for durable memory storage.",
-  embedding: null,
-  importance: 0.9,
-  source: "explicit",
-  tags: ["sqlite"],
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-  accessed_at: new Date().toISOString(),
-  access_count: 0,
-  status: "active",
-  verified: "verified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+const createMemory = (overrides: Partial<Memory> = {}): Memory => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id: "memory-1",
+    type: "decision",
+    project: "vega",
+    title: "SQLite Decision",
+    content: "Use SQLite for durable memory storage.",
+    embedding: null,
+    importance: 0.9,
+    source: "explicit",
+    tags: ["sqlite"],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    accessed_at: new Date().toISOString(),
+    access_count: 0,
+    status: "active",
+    verified: "verified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 const createHarness = () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-diagnose-"));

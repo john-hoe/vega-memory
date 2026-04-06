@@ -32,26 +32,31 @@ import {
   setKey
 } from "../security/keychain.js";
 
-const createMemory = (overrides: Partial<Memory> = {}): Memory => ({
-  id: "memory-1",
-  type: "decision",
-  project: "vega",
-  title: "SQLite Decision",
-  content: "Use SQLite for durable memory storage.",
-  embedding: null,
-  importance: 0.9,
-  source: "explicit",
-  tags: ["sqlite"],
-  created_at: "2026-04-01T00:00:00.000Z",
-  updated_at: "2026-04-01T00:00:00.000Z",
-  accessed_at: "2026-04-01T00:00:00.000Z",
-  access_count: 0,
-  status: "active",
-  verified: "verified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+const createMemory = (overrides: Partial<Memory> = {}): Memory => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id: "memory-1",
+    type: "decision",
+    project: "vega",
+    title: "SQLite Decision",
+    content: "Use SQLite for durable memory storage.",
+    embedding: null,
+    importance: 0.9,
+    source: "explicit",
+    tags: ["sqlite"],
+    created_at: "2026-04-01T00:00:00.000Z",
+    updated_at: "2026-04-01T00:00:00.000Z",
+    accessed_at: "2026-04-01T00:00:00.000Z",
+    access_count: 0,
+    status: "active",
+    verified: "verified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 const installEmbeddingMock = (vector: number[]): (() => void) => {
   const originalFetch = globalThis.fetch;
@@ -209,6 +214,7 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
   };
   const repository = new Repository(dbPath);
   const compactService = new CompactService(repository, config);
+  const memoryService = new MemoryService(repository, config);
 
   try {
     repository.createMemory(createMemory());
@@ -216,7 +222,7 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
     writeFileSync(join(backupDir, "memory-2000-01-01.db"), "stale", "utf8");
     utimesSync(join(backupDir, "memory-2000-01-01.db"), new Date("2000-01-01"), new Date("2000-01-01"));
 
-    await dailyMaintenance(repository, compactService, config);
+    await dailyMaintenance(repository, compactService, memoryService, config);
 
     const stored = repository.getMemory("memory-1");
     const snapshotPath = join(dataDir, "snapshots", `snapshot-${new Date().toISOString().slice(0, 10)}.md`);
@@ -262,10 +268,11 @@ test(
       telegramChatId: undefined,
       observerEnabled: false,
       dbEncryption: false
-    };
-    const repository = new Repository(dbPath);
-    const compactService = new CompactService(repository, config);
-    const encryptionKey =
+  };
+  const repository = new Repository(dbPath);
+  const compactService = new CompactService(repository, config);
+  const memoryService = new MemoryService(repository, config);
+  const encryptionKey =
       "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
     const originalKey = await getKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT);
 
@@ -274,7 +281,7 @@ test(
       repository.createMemory(createMemory());
       mkdirSync(backupDir, { recursive: true });
 
-      await dailyMaintenance(repository, compactService, config);
+      await dailyMaintenance(repository, compactService, memoryService, config);
 
       assert.ok(readdirSync(backupDir).some((entry) => entry.endsWith(".db.enc")));
     } finally {

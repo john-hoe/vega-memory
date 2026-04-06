@@ -13,26 +13,31 @@ import {
   hybridSearch
 } from "../search/ranking.js";
 
-const createMemory = (overrides: Partial<Memory> = {}): Memory => ({
-  id: "memory-1",
-  type: "insight",
-  project: "vega",
-  title: "Memory",
-  content: "Content",
-  embedding: null,
-  importance: 0.8,
-  source: "explicit",
-  tags: [],
-  created_at: "2026-01-01T00:00:00.000Z",
-  updated_at: "2026-01-01T00:00:00.000Z",
-  accessed_at: "2026-01-01T00:00:00.000Z",
-  access_count: 0,
-  status: "active",
-  verified: "verified",
-  scope: "project",
-  accessed_projects: [],
-  ...overrides
-});
+const createMemory = (overrides: Partial<Memory> = {}): Memory => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id: "memory-1",
+    type: "insight",
+    project: "vega",
+    title: "Memory",
+    content: "Content",
+    embedding: null,
+    importance: 0.8,
+    source: "explicit",
+    tags: [],
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    accessed_at: "2026-01-01T00:00:00.000Z",
+    access_count: 0,
+    status: "active",
+    verified: "verified",
+    scope: "project",
+    accessed_projects: [],
+    ...rest,
+    summary
+  };
+};
 
 const createEmbeddingBuffer = (values: number[]): Buffer => Buffer.from(new Float32Array(values).buffer);
 

@@ -44,25 +44,30 @@ const baseConfig: VegaConfig = {
 
 const createArchivedMemory = (
   overrides: Partial<Omit<Memory, "access_count">> = {}
-): Omit<Memory, "access_count"> => ({
-  id: "archived-memory",
-  type: "decision",
-  project: "vega",
-  title: "Archived Memory",
-  content: "Archived content",
-  embedding: null,
-  importance: 0.4,
-  source: "auto",
-  tags: ["archive"],
-  created_at: new Date(Date.now() - 100 * DAY_MS).toISOString(),
-  updated_at: new Date(Date.now() - 100 * DAY_MS).toISOString(),
-  accessed_at: new Date(Date.now() - 100 * DAY_MS).toISOString(),
-  status: "archived",
-  verified: "unverified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+): Omit<Memory, "access_count"> => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id: "archived-memory",
+    type: "decision",
+    project: "vega",
+    title: "Archived Memory",
+    content: "Archived content",
+    embedding: null,
+    importance: 0.4,
+    source: "auto",
+    tags: ["archive"],
+    created_at: new Date(Date.now() - 100 * DAY_MS).toISOString(),
+    updated_at: new Date(Date.now() - 100 * DAY_MS).toISOString(),
+    accessed_at: new Date(Date.now() - 100 * DAY_MS).toISOString(),
+    status: "archived",
+    verified: "unverified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 const createLifecycleHarness = () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-lifecycle-"));

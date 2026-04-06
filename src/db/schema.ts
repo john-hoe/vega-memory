@@ -31,6 +31,7 @@ export function initializeDatabase(db: Database.Database): void {
       project TEXT NOT NULL,
       title TEXT NOT NULL,
       content TEXT NOT NULL,
+      summary TEXT,
       embedding BLOB,
       importance REAL NOT NULL,
       source TEXT NOT NULL,
@@ -172,6 +173,7 @@ export function initializeDatabase(db: Database.Database): void {
   `);
 
   ensureColumn(db, "memories", "tenant_id", "TEXT");
+  ensureColumn(db, "memories", "summary", "TEXT");
   ensureColumn(db, "performance_log", "avg_similarity", "REAL");
   ensureColumn(db, "performance_log", "tenant_id", "TEXT");
   ensureColumn(db, "performance_log", "result_types", "TEXT NOT NULL DEFAULT '[]'");

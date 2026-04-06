@@ -156,7 +156,7 @@ async function main(): Promise<void> {
     config
   );
   const runDaily = createGuardedRunner("daily maintenance", async () => {
-    await dailyMaintenance(repository, compactService, config, notificationManager);
+    await dailyMaintenance(repository, compactService, memoryService, config, notificationManager);
   });
   const runWeekly = createGuardedRunner("weekly health report", async () => {
     await weeklyHealthReport(repository, config, memoryService, notificationManager);

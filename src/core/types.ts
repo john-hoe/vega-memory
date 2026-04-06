@@ -30,6 +30,7 @@ export interface Memory {
   project: string;
   title: string;
   content: string;
+  summary: string | null;
   embedding: Buffer | null;
   importance: number;
   source: MemorySource;

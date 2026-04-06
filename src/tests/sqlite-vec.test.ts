@@ -29,26 +29,31 @@ const baseConfig: VegaConfig = {
 
 const createEmbeddingBuffer = (values: number[]): Buffer => Buffer.from(new Float32Array(values).buffer);
 
-const createMemory = (overrides: Partial<Memory> = {}): Memory => ({
-  id: "memory-1",
-  type: "decision",
-  project: "vega",
-  title: "Memory",
-  content: "Content",
-  embedding: createEmbeddingBuffer([1, 0]),
-  importance: 0.8,
-  source: "explicit",
-  tags: [],
-  created_at: "2026-04-04T00:00:00.000Z",
-  updated_at: "2026-04-04T00:00:00.000Z",
-  accessed_at: "2026-04-04T00:00:00.000Z",
-  access_count: 0,
-  status: "active",
-  verified: "verified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+const createMemory = (overrides: Partial<Memory> = {}): Memory => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id: "memory-1",
+    type: "decision",
+    project: "vega",
+    title: "Memory",
+    content: "Content",
+    embedding: createEmbeddingBuffer([1, 0]),
+    importance: 0.8,
+    source: "explicit",
+    tags: [],
+    created_at: "2026-04-04T00:00:00.000Z",
+    updated_at: "2026-04-04T00:00:00.000Z",
+    accessed_at: "2026-04-04T00:00:00.000Z",
+    access_count: 0,
+    status: "active",
+    verified: "verified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 const forceMissingExtension = (repository: Repository): (() => void) => {
   const database = repository.db as unknown as { loadExtension: (path: string) => unknown };

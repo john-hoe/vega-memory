@@ -24,6 +24,7 @@ interface RemoteMemory {
   project: string;
   title: string;
   content: string;
+  summary?: string | null;
   importance?: number;
   source?: Memory["source"];
   tags?: string[];
@@ -139,6 +140,7 @@ const memoriesEqual = (left: Memory, right: Memory): boolean =>
   left.project === right.project &&
   left.title === right.title &&
   left.content === right.content &&
+  left.summary === right.summary &&
   left.importance === right.importance &&
   left.source === right.source &&
   left.created_at === right.created_at &&
@@ -583,6 +585,7 @@ export class VegaSyncClient {
       project: params.project,
       title: buildPendingTitle(params),
       content: params.content,
+      summary: null,
       embedding: null,
       importance: defaultImportanceFor(params.type, source, params.importance),
       source,
@@ -729,6 +732,7 @@ export class VegaSyncClient {
       project: remote.project,
       title: remote.title,
       content: remote.content,
+      summary: remote.summary ?? existing?.summary ?? null,
       embedding: existing?.embedding ?? null,
       importance: remote.importance ?? existing?.importance ?? 0,
       source: remote.source ?? existing?.source ?? "auto",

@@ -33,25 +33,30 @@ const baseConfig: VegaConfig = {
 
 const createStoredMemory = (
   overrides: Partial<Omit<Memory, "access_count">> = {}
-): Omit<Memory, "access_count"> => ({
-  id: "memory-1",
-  type: "decision",
-  project: "vega",
-  title: "Stored Memory",
-  content: "Use SQLite for memory storage.",
-  embedding: null,
-  importance: 0.5,
-  source: "auto",
-  tags: ["sqlite"],
-  created_at: "2026-04-03T00:00:00.000Z",
-  updated_at: "2026-04-03T00:00:00.000Z",
-  accessed_at: "2026-04-03T00:00:00.000Z",
-  status: "active",
-  verified: "unverified",
-  scope: "project",
-  accessed_projects: ["vega"],
-  ...overrides
-});
+): Omit<Memory, "access_count"> => {
+  const { summary = null, ...rest } = overrides;
+
+  return {
+    id: "memory-1",
+    type: "decision",
+    project: "vega",
+    title: "Stored Memory",
+    content: "Use SQLite for memory storage.",
+    embedding: null,
+    importance: 0.5,
+    source: "auto",
+    tags: ["sqlite"],
+    created_at: "2026-04-03T00:00:00.000Z",
+    updated_at: "2026-04-03T00:00:00.000Z",
+    accessed_at: "2026-04-03T00:00:00.000Z",
+    status: "active",
+    verified: "unverified",
+    scope: "project",
+    accessed_projects: ["vega"],
+    ...rest,
+    summary
+  };
+};
 
 const installFetchMock = (
   handler: (url: string, init?: RequestInit) => Response | Promise<Response>

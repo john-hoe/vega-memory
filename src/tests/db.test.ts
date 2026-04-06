@@ -23,6 +23,8 @@ import { generateKey } from "../security/encryption.js";
 const now = "2026-04-03T12:00:00.000Z";
 
 function createMemory(overrides: Partial<Memory> = {}): Memory {
+  const { summary = null, ...rest } = overrides;
+
   return {
     id: "mem-1",
     tenant_id: null,
@@ -42,7 +44,8 @@ function createMemory(overrides: Partial<Memory> = {}): Memory {
     verified: "unverified",
     scope: "project",
     accessed_projects: ["vega"],
-    ...overrides
+    ...rest,
+    summary
   };
 }
 
