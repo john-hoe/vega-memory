@@ -25,15 +25,22 @@ export class ObsidianPublisher {
   publishPage(page: WikiPage): string {
     const relativePath = getPageOutputPath(page);
     const filePath = join(this.vaultPath, relativePath);
-    const publishedPage = this.pageManager.updatePage(
-      page.id,
-      { published_at: timestamp() },
-      "Published wiki page to Obsidian"
-    );
+    const publishedAt = timestamp();
+    const publishedPage: WikiPage = {
+      ...page,
+      published_at: publishedAt,
+      updated_at: publishedAt,
+      version: page.version + 1
+    };
 
     mkdirSync(this.vaultPath, { recursive: true });
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, buildPublishedDocument(publishedPage), "utf8");
+    this.pageManager.updatePage(
+      page.id,
+      { published_at: publishedAt },
+      "Published wiki page to Obsidian"
+    );
 
     return filePath;
   }

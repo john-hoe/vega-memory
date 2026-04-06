@@ -45,6 +45,7 @@ const MAX_BLOCK_BATCH_SIZE = 100;
 const MAX_RICH_TEXT_LENGTH = 2000;
 
 const timestamp = (): string => new Date().toISOString();
+const encodeNotionPathSegment = (value: string): string => encodeURIComponent(value);
 
 const chunkRichText = (value: string): NotionRichText[] => {
   if (value.length === 0) {
@@ -165,32 +166,37 @@ export class NotionPublisher {
   private async getDatabaseProperties(): Promise<Record<string, NotionPropertyDefinition>> {
     if (this.databasePropertiesPromise === null) {
       this.databasePropertiesPromise = this.request<NotionDatabaseResponse>(
-        `/databases/${this.config.databaseId}`,
+        `/databases/${encodeNotionPathSegment(this.config.databaseId)}`,
         { method: "GET" }
-      ).then((response) => {
-        const propertyEntries = Object.entries(response.properties ?? {});
-        const properties = Object.fromEntries(
-          propertyEntries
-            .map(([name, definition]) => {
-              const type = definition.type;
+      )
+        .then((response) => {
+          const propertyEntries = Object.entries(response.properties ?? {});
+          const properties = Object.fromEntries(
+            propertyEntries
+              .map(([name, definition]) => {
+                const type = definition.type;
 
-              if (
-                type !== "title" &&
-                type !== "rich_text" &&
-                type !== "select" &&
-                type !== "status" &&
-                type !== "multi_select"
-              ) {
-                return null;
-              }
+                if (
+                  type !== "title" &&
+                  type !== "rich_text" &&
+                  type !== "select" &&
+                  type !== "status" &&
+                  type !== "multi_select"
+                ) {
+                  return null;
+                }
 
-              return [name, { type }] as const;
-            })
-            .filter((entry): entry is [string, NotionPropertyDefinition] => entry !== null)
-        );
+                return [name, { type }] as const;
+              })
+              .filter((entry): entry is [string, NotionPropertyDefinition] => entry !== null)
+          );
 
-        return properties;
-      });
+          return properties;
+        })
+        .catch((error: unknown) => {
+          this.databasePropertiesPromise = null;
+          throw error;
+        });
     }
 
     return this.databasePropertiesPromise;
@@ -272,6 +278,7 @@ export class NotionPublisher {
     properties: Record<string, unknown>,
     contentBlocks: NotionBlock[]
   ): Promise<string> {
+    const initialChildren = contentBlocks.slice(0, MAX_BLOCK_BATCH_SIZE);
     const response = await this.request<NotionPageResponse>("/pages", {
       method: "POST",
       body: JSON.stringify({
@@ -279,9 +286,11 @@ export class NotionPublisher {
           database_id: this.config.databaseId
         },
         properties,
-        children: contentBlocks
+        ...(initialChildren.length > 0 ? { children: initialChildren } : {})
       })
     });
+
+    await this.appendBlockChildren(response.id, contentBlocks.slice(MAX_BLOCK_BATCH_SIZE));
 
     return response.id;
   }
@@ -291,7 +300,7 @@ export class NotionPublisher {
     properties: Record<string, unknown>,
     contentBlocks: NotionBlock[]
   ): Promise<string> {
-    await this.request(`/pages/${pageId}`, {
+    await this.request(`/pages/${encodeNotionPathSegment(pageId)}`, {
       method: "PATCH",
       body: JSON.stringify({
         properties
@@ -301,23 +310,27 @@ export class NotionPublisher {
     const childIds = await this.listBlockChildren(pageId);
 
     for (const childId of childIds) {
-      await this.request(`/blocks/${childId}`, {
+      await this.request(`/blocks/${encodeNotionPathSegment(childId)}`, {
         method: "DELETE"
       });
     }
 
+    await this.appendBlockChildren(pageId, contentBlocks);
+
+    return pageId;
+  }
+
+  private async appendBlockChildren(pageId: string, contentBlocks: NotionBlock[]): Promise<void> {
     for (let index = 0; index < contentBlocks.length; index += MAX_BLOCK_BATCH_SIZE) {
       const chunk = contentBlocks.slice(index, index + MAX_BLOCK_BATCH_SIZE);
 
-      await this.request(`/blocks/${pageId}/children`, {
+      await this.request(`/blocks/${encodeNotionPathSegment(pageId)}/children`, {
         method: "PATCH",
         body: JSON.stringify({
           children: chunk
         })
       });
     }
-
-    return pageId;
   }
 
   private async listBlockChildren(pageId: string): Promise<string[]> {
@@ -334,7 +347,7 @@ export class NotionPublisher {
       }
 
       const response = await this.request<NotionBlockListResponse>(
-        `/blocks/${pageId}/children?${search.toString()}`,
+        `/blocks/${encodeNotionPathSegment(pageId)}/children?${search.toString()}`,
         { method: "GET" }
       );
 

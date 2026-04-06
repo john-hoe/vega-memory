@@ -212,6 +212,174 @@ test("NotionPublisher.publishPage calls Notion API", async () => {
   }
 });
 
+test("NotionPublisher.publishPage batches create children above 100 blocks", async () => {
+  const repository = new Repository(":memory:");
+  const pageManager = new PageManager(repository);
+  const createPayloads: Array<{ children?: Array<{ type: string }> }> = [];
+  const appendPayloads: Array<{ children: Array<{ type: string }> }> = [];
+  const restoreFetch = withFetchMock(async (input, init) => {
+    const url = String(input);
+
+    if (url.endsWith("/databases/notion-db")) {
+      return new Response(
+        JSON.stringify({
+          properties: {
+            Title: { type: "title" },
+            Type: { type: "rich_text" },
+            Project: { type: "rich_text" },
+            Status: { type: "rich_text" },
+            Tags: { type: "multi_select" }
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (url.endsWith("/pages")) {
+      createPayloads.push(
+        JSON.parse(String(init?.body ?? "{}")) as { children?: Array<{ type: string }> }
+      );
+      return new Response(
+        JSON.stringify({
+          id: "notion-page-1"
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (url.endsWith("/blocks/notion-page-1/children")) {
+      appendPayloads.push(
+        JSON.parse(String(init?.body ?? "{}")) as { children: Array<{ type: string }> }
+      );
+      return new Response(
+        JSON.stringify({
+          results: []
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }
+
+    throw new Error(`Unexpected fetch call: ${url}`);
+  });
+
+  try {
+    const content = Array.from({ length: 101 }, (_, index) => `- Item ${index + 1}`).join("\n");
+    const page = createPublishedPage(pageManager, "Large Publish Topic", "topic", content);
+    const publisher = new NotionPublisher(pageManager, {
+      apiKey: "secret",
+      databaseId: "notion-db"
+    });
+
+    await publisher.publishPage(page);
+
+    assert.equal(createPayloads.length, 1);
+    assert.equal(createPayloads[0]?.children?.length, 100);
+    assert.equal(appendPayloads.length, 1);
+    assert.equal(appendPayloads[0]?.children.length, 1);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("NotionPublisher.publishAll retries database schema fetch after a transient failure", async () => {
+  const repository = new Repository(":memory:");
+  const pageManager = new PageManager(repository);
+  let databaseRequestCount = 0;
+  let pageCreateCount = 0;
+  const restoreFetch = withFetchMock(async (input, init) => {
+    const url = String(input);
+
+    if (url.endsWith("/databases/notion-db")) {
+      databaseRequestCount += 1;
+
+      if (databaseRequestCount === 1) {
+        return new Response("temporary failure", { status: 500 });
+      }
+
+      return new Response(
+        JSON.stringify({
+          properties: {
+            Title: { type: "title" },
+            Type: { type: "rich_text" },
+            Project: { type: "rich_text" },
+            Status: { type: "rich_text" },
+            Tags: { type: "multi_select" }
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (url.endsWith("/pages")) {
+      pageCreateCount += 1;
+      const payload = JSON.parse(String(init?.body ?? "{}")) as {
+        properties: {
+          Title?: {
+            title?: Array<{ text?: { content?: string } }>;
+          };
+        };
+      };
+      const title =
+        payload.properties.Title?.title?.[0]?.text?.content ?? `notion-page-${pageCreateCount}`;
+
+      return new Response(
+        JSON.stringify({
+          id: `${title.toLowerCase().replace(/\s+/g, "-")}-id`
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }
+
+    throw new Error(`Unexpected fetch call: ${url}`);
+  });
+
+  try {
+    createPublishedPage(pageManager, "Retry Topic One", "topic", "First topic content.");
+    createPublishedPage(pageManager, "Retry Topic Two", "topic", "Second topic content.");
+    const publisher = new NotionPublisher(pageManager, {
+      apiKey: "secret",
+      databaseId: "notion-db"
+    });
+
+    const result = await publisher.publishAll();
+
+    assert.equal(databaseRequestCount, 2);
+    assert.equal(pageCreateCount, 1);
+    assert.equal(result.published, 1);
+    assert.equal(result.errors.length, 1);
+    assert.match(result.errors[0] ?? "", /temporary failure/);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
 test("NotionPublisher handles missing config", () => {
   const repository = new Repository(":memory:");
   const pageManager = new PageManager(repository);
