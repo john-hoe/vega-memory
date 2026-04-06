@@ -150,6 +150,66 @@ export function initializeDatabase(db: Database.Database): void {
       FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS wiki_pages (
+      id TEXT PRIMARY KEY,
+      slug TEXT UNIQUE NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      page_type TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'project',
+      project TEXT,
+      tags TEXT NOT NULL DEFAULT '[]',
+      source_memory_ids TEXT NOT NULL DEFAULT '[]',
+      embedding BLOB,
+      status TEXT NOT NULL DEFAULT 'draft',
+      auto_generated INTEGER NOT NULL DEFAULT 1,
+      reviewed INTEGER NOT NULL DEFAULT 0,
+      version INTEGER NOT NULL DEFAULT 1,
+      parent_id TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      reviewed_at TEXT,
+      published_at TEXT,
+      FOREIGN KEY (parent_id) REFERENCES wiki_pages(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS wiki_page_versions (
+      id TEXT PRIMARY KEY,
+      page_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      change_reason TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS wiki_cross_references (
+      id TEXT PRIMARY KEY,
+      source_page_id TEXT NOT NULL,
+      target_page_id TEXT NOT NULL,
+      context TEXT NOT NULL,
+      auto_generated INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (source_page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE,
+      FOREIGN KEY (target_page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE,
+      UNIQUE(source_page_id, target_page_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS content_sources (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      url TEXT,
+      title TEXT NOT NULL,
+      raw_content TEXT NOT NULL,
+      extracted_at TEXT NOT NULL,
+      processed INTEGER NOT NULL DEFAULT 0,
+      project TEXT,
+      tags TEXT NOT NULL DEFAULT '[]'
+    );
+
     CREATE INDEX IF NOT EXISTS idx_relations_source_entity
       ON relations(source_entity_id);
 
@@ -168,8 +228,41 @@ export function initializeDatabase(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_tenants_active
       ON tenants(active);
 
+    CREATE INDEX IF NOT EXISTS idx_wiki_pages_slug
+      ON wiki_pages(slug);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_pages_project
+      ON wiki_pages(project);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_pages_status
+      ON wiki_pages(status);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_pages_page_type
+      ON wiki_pages(page_type);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_pages_parent
+      ON wiki_pages(parent_id);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_page_versions_page
+      ON wiki_page_versions(page_id);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_cross_refs_source
+      ON wiki_cross_references(source_page_id);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_cross_refs_target
+      ON wiki_cross_references(target_page_id);
+
+    CREATE INDEX IF NOT EXISTS idx_content_sources_type
+      ON content_sources(source_type);
+
+    CREATE INDEX IF NOT EXISTS idx_content_sources_processed
+      ON content_sources(processed);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
     USING fts5(title, content, tags, content=memories, content_rowid=rowid);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS wiki_pages_fts
+    USING fts5(title, content, summary, tags, content=wiki_pages, content_rowid=rowid);
   `);
 
   ensureColumn(db, "memories", "tenant_id", "TEXT");
