@@ -184,7 +184,7 @@ function mapContentSource(row: ContentSourceRow): ContentSource {
 }
 
 export class PageManager {
-  constructor(private readonly repository: Repository) {}
+  constructor(readonly repository: Repository) {}
 
   private getPageById(id: string): WikiPage | null {
     const row = this.repository.db

@@ -13,6 +13,7 @@ import { Repository } from "../db/repository.js";
 import { ContentDistiller } from "../ingestion/distiller.js";
 import { ContentFetcher } from "../ingestion/fetcher.js";
 import { IngestionService } from "../ingestion/service.js";
+import { publishWikiPages } from "../publishing/service.js";
 import { CrossReferenceService } from "../wiki/cross-reference.js";
 import { PageManager } from "../wiki/page-manager.js";
 import { reviewWikiPage, WIKI_REVIEW_ACTIONS } from "../wiki/review.js";
@@ -754,6 +755,25 @@ export function createMCPServer({
         return {
           result,
           resultCount: result.length
+        };
+      })
+  );
+
+  server.tool(
+    "wiki_publish",
+    "Publish one wiki page or all published wiki pages to Notion, Obsidian, or both.",
+    {
+      slug: z.string().trim().min(1).optional(),
+      target: z.enum(["notion", "obsidian", "all"]),
+      all: z.boolean().default(false)
+    },
+    async (args) =>
+      runTool(repository, "wiki_publish", args, observer, async () => {
+        const result = await publishWikiPages(pageManager, args);
+
+        return {
+          result,
+          resultCount: result.published_count
         };
       })
   );

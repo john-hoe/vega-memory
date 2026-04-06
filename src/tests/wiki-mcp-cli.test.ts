@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import type { VegaConfig } from "../config.js";
@@ -379,6 +382,62 @@ test("wiki_synthesize MCP tool returns synthesis result", async () => {
     assert.equal(page.slug, "auth");
   } finally {
     restoreFetch();
+    repository.close();
+    await server.close();
+  }
+});
+
+test("wiki_publish MCP tool publishes a page to Obsidian", async () => {
+  const { repository, pageManager, server } = createServerHarness();
+  const vaultDir = mkdtempSync(join(tmpdir(), "vega-mcp-publish-"));
+  const previousVault = process.env.VEGA_OBSIDIAN_VAULT;
+
+  process.env.VEGA_OBSIDIAN_VAULT = vaultDir;
+
+  try {
+    const page = pageManager.createPage({
+      title: "Published Wiki Topic",
+      content: "Ship the wiki page to Obsidian.",
+      summary: "Publish this page.",
+      page_type: "topic"
+    });
+
+    pageManager.updatePage(
+      page.id,
+      {
+        status: "published",
+        reviewed: true,
+        published_at: "2026-04-07T00:00:00.000Z"
+      },
+      "Seed published page"
+    );
+
+    const result = await getRegisteredTools(server).wiki_publish.handler(
+      {
+        slug: page.slug,
+        target: "obsidian",
+        all: false
+      },
+      {}
+    );
+    const payload = parseToolPayload<{
+      published_count: number;
+      target: string;
+      errors: string[];
+    }>(result);
+
+    assert.equal(payload.published_count, 1);
+    assert.equal(payload.target, "obsidian");
+    assert.deepEqual(payload.errors, []);
+    assert.equal(existsSync(join(vaultDir, "topics", "published-wiki-topic.md")), true);
+  } finally {
+    if (previousVault === undefined) {
+      delete process.env.VEGA_OBSIDIAN_VAULT;
+    } else {
+      process.env.VEGA_OBSIDIAN_VAULT = previousVault;
+    }
+
+    rmSync(vaultDir, { recursive: true, force: true });
     repository.close();
     await server.close();
   }

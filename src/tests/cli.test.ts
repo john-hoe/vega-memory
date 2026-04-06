@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { Repository } from "../db/repository.js";
+import { PageManager } from "../wiki/page-manager.js";
 
 const projectRoot = process.cwd();
 const cliPath = join(projectRoot, "dist", "cli", "index.js");
@@ -247,6 +248,68 @@ test("CLI export and import round-trip JSON", () => {
     assert.match(readFileSync(exportPath, "utf8"), /Prefer concise output/);
     assert.match(listed, /Prefer concise output for CLI responses/);
   } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CLI wiki publish and export commands support JSON output", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-wiki-publish-"));
+  const dbPath = join(tempDir, "memory.db");
+  const vaultDir = join(tempDir, "vault");
+  const exportDir = join(tempDir, "export");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    VEGA_OBSIDIAN_VAULT: vaultDir,
+    OLLAMA_BASE_URL: "http://localhost:99999"
+  };
+  const repository = new Repository(dbPath);
+  const pageManager = new PageManager(repository);
+
+  try {
+    const page = pageManager.createPage({
+      title: "CLI Publish Topic",
+      content: "Publish from the CLI.",
+      summary: "CLI publish page.",
+      page_type: "topic"
+    });
+
+    pageManager.updatePage(
+      page.id,
+      {
+        status: "published",
+        reviewed: true,
+        published_at: "2026-04-07T00:00:00.000Z"
+      },
+      "Seed published page"
+    );
+
+    const publishResult = JSON.parse(
+      runCli(
+        ["wiki", "publish", "--slug", page.slug, "--target", "obsidian", "--json"],
+        env
+      )
+    ) as {
+      published_count: number;
+      errors: string[];
+    };
+    const exportResult = JSON.parse(
+      runCli(
+        ["wiki", "export", "--format", "markdown", "--output", exportDir, "--json"],
+        env
+      )
+    ) as {
+      exported: number;
+      outputDir: string;
+    };
+
+    assert.equal(publishResult.published_count, 1);
+    assert.deepEqual(publishResult.errors, []);
+    assert.equal(existsSync(join(vaultDir, "topics", "cli-publish-topic.md")), true);
+    assert.equal(exportResult.exported, 1);
+    assert.equal(exportResult.outputDir, exportDir);
+    assert.equal(existsSync(join(exportDir, "topics", "cli-publish-topic.md")), true);
+  } finally {
+    repository.close();
     rmSync(tempDir, { recursive: true, force: true });
   }
 });

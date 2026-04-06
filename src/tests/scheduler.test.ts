@@ -31,6 +31,7 @@ import {
   getKey,
   setKey
 } from "../security/keychain.js";
+import { PageManager } from "../wiki/page-manager.js";
 
 const createMemory = (overrides: Partial<Memory> = {}): Memory => {
   const { summary = null, ...rest } = overrides;
@@ -235,6 +236,108 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
     assert.ok(backups.some((entry) => /^memory-\d{4}-\d{2}-\d{2}\.db$/.test(entry)));
   } finally {
     restoreFetch();
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("dailyMaintenance polls RSS feeds, synthesizes wiki pages, and marks stale pages", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-scheduler-wiki-"));
+  const dataDir = join(tempDir, "data");
+  const dbPath = join(dataDir, "memory.db");
+  const config: VegaConfig = {
+    dbPath,
+    ollamaBaseUrl: "http://localhost:11434",
+    ollamaModel: "bge-m3",
+    tokenBudget: 2000,
+    similarityThreshold: 0.85,
+    shardingEnabled: false,
+    backupRetentionDays: 7,
+    apiPort: 3271,
+    apiKey: undefined,
+    mode: "server",
+    serverUrl: undefined,
+    cacheDbPath: "./data/cache.db",
+    telegramBotToken: undefined,
+    telegramChatId: undefined,
+    observerEnabled: false,
+    dbEncryption: false
+  };
+  const repository = new Repository(dbPath);
+  const compactService = new CompactService(repository, config);
+  const memoryService = new MemoryService(repository, config);
+  const pageManager = new PageManager(repository);
+  const page = pageManager.createPage({
+    title: "Scheduler Wiki Page",
+    content: "Generated from scheduler tasks.",
+    summary: "Scheduler wiki page.",
+    page_type: "topic"
+  });
+  const publishedPage = pageManager.updatePage(
+    page.id,
+    {
+      status: "published",
+      reviewed: true,
+      published_at: "2026-04-07T00:00:00.000Z"
+    },
+    "Seed published page"
+  );
+  let polledFeedCount = 0;
+  let synthesizedUpdates = 0;
+  const staleMarks: string[] = [];
+
+  try {
+    await dailyMaintenance(repository, compactService, memoryService, config, {
+      rssService: {
+        listFeeds: () => [
+          {
+            id: "feed-1",
+            url: "https://example.com/feed.xml",
+            title: "Example Feed",
+            project: "vega",
+            last_polled_at: null,
+            last_entry_at: null,
+            active: true,
+            created_at: "2026-04-07T00:00:00.000Z"
+          }
+        ],
+        pollFeed: async () => {
+          polledFeedCount += 1;
+          return 2;
+        }
+      } as unknown as NonNullable<Parameters<typeof dailyMaintenance>[4]>["rssService"],
+      contentFetcher:
+        {} as unknown as NonNullable<Parameters<typeof dailyMaintenance>[4]>["contentFetcher"],
+      contentDistiller:
+        {} as unknown as NonNullable<Parameters<typeof dailyMaintenance>[4]>["contentDistiller"],
+      pageManager,
+      synthesisEngine: {
+        synthesizeAll: async () => [
+          {
+            page_id: publishedPage.id,
+            slug: publishedPage.slug,
+            action: "created",
+            memories_used: 3
+          }
+        ]
+      } as unknown as NonNullable<Parameters<typeof dailyMaintenance>[4]>["synthesisEngine"],
+      crossReferenceService: {
+        updateCrossReferences: () => {
+          synthesizedUpdates += 1;
+        }
+      } as unknown as NonNullable<Parameters<typeof dailyMaintenance>[4]>["crossReferenceService"],
+      stalenessService: {
+        detectStalePages: () => [pageManager.getPage(publishedPage.id) ?? publishedPage],
+        markStale: (pageId: string) => {
+          staleMarks.push(pageId);
+        }
+      } as unknown as NonNullable<Parameters<typeof dailyMaintenance>[4]>["stalenessService"]
+    });
+
+    assert.equal(polledFeedCount, 1);
+    assert.equal(synthesizedUpdates, 1);
+    assert.deepEqual(staleMarks, [publishedPage.id]);
+  } finally {
     repository.close();
     rmSync(tempDir, { recursive: true, force: true });
   }

@@ -11,9 +11,16 @@ import type { MemoryStatus, MemoryType } from "../core/types.js";
 import { cleanOldBackups, createBackup, shouldBackup } from "../db/backup.js";
 import { Repository } from "../db/repository.js";
 import { generateEmbedding, isOllamaAvailable } from "../embedding/ollama.js";
+import { ContentDistiller } from "../ingestion/distiller.js";
+import { ContentFetcher } from "../ingestion/fetcher.js";
+import { RSSService } from "../ingestion/rss.js";
 import { InsightGenerator } from "../insights/generator.js";
 import type { NotificationManager } from "../notify/manager.js";
 import { resolveConfiguredEncryptionKey } from "../security/keychain.js";
+import { CrossReferenceService } from "../wiki/cross-reference.js";
+import { PageManager } from "../wiki/page-manager.js";
+import { SynthesisEngine } from "../wiki/synthesis.js";
+import { StalenessService } from "../wiki/staleness.js";
 
 interface CountRow<TName extends string> {
   name: TName;
@@ -34,6 +41,17 @@ interface TopAccessedMemoryRow {
   title: string;
   access_count: number;
   accessed_at: string;
+}
+
+export interface DailyMaintenanceOptions {
+  notificationManager?: NotificationManager;
+  rssService?: RSSService;
+  contentFetcher?: ContentFetcher;
+  contentDistiller?: ContentDistiller;
+  pageManager?: PageManager;
+  synthesisEngine?: SynthesisEngine;
+  crossReferenceService?: CrossReferenceService;
+  stalenessService?: StalenessService;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -216,11 +234,12 @@ export async function dailyMaintenance(
   compactService: CompactService,
   memoryService: MemoryService,
   config: VegaConfig,
-  notificationManager?: NotificationManager
+  options: DailyMaintenanceOptions = {}
 ): Promise<void> {
   const backupDir = getBackupDir(config);
   const errors: string[] = [];
   let preserveAlert = false;
+  const notificationManager = options.notificationManager;
   const recordError = (message: string): void => {
     errors.push(message);
     logError(message);
@@ -332,6 +351,83 @@ export async function dailyMaintenance(
     recordError(`Graceful deletion step failed: ${getErrorMessage(error)}`);
   }
 
+  if (
+    options.rssService &&
+    options.contentFetcher &&
+    options.contentDistiller &&
+    options.pageManager
+  ) {
+    log("Polling RSS feeds");
+    try {
+      const result = await pollAllFeeds(
+        options.rssService,
+        options.contentFetcher,
+        options.contentDistiller,
+        options.pageManager,
+        memoryService,
+        config
+      );
+
+      log(
+        `RSS polling finished with ${result.processed} new items across ${result.polled_feeds} feeds`
+      );
+
+      for (const error of result.errors) {
+        recordError(error);
+      }
+    } catch (error) {
+      recordError(`RSS polling step failed: ${getErrorMessage(error)}`);
+    }
+  }
+
+  if (options.synthesisEngine) {
+    log("Running wiki synthesis batch");
+    try {
+      const results = await options.synthesisEngine.synthesizeAll();
+
+      if (options.crossReferenceService && options.pageManager) {
+        for (const result of results) {
+          if (result.action === "unchanged" || result.page_id.length === 0) {
+            continue;
+          }
+
+          const page = options.pageManager.getPage(result.page_id);
+
+          if (page) {
+            options.crossReferenceService.updateCrossReferences(page);
+          }
+        }
+      }
+
+      log(`Wiki synthesis batch finished with ${results.length} candidate topics`);
+    } catch (error) {
+      recordError(`Wiki synthesis batch failed: ${getErrorMessage(error)}`);
+    }
+  }
+
+  if (options.stalenessService) {
+    log("Scanning for stale wiki pages");
+    try {
+      const stalePages = options.stalenessService.detectStalePages();
+      let newlyMarked = 0;
+
+      for (const page of stalePages) {
+        if (page.status === "stale") {
+          continue;
+        }
+
+        options.stalenessService.markStale(page.id);
+        newlyMarked += 1;
+      }
+
+      log(
+        `Staleness scan finished with ${stalePages.length} stale pages and ${newlyMarked} newly marked`
+      );
+    } catch (error) {
+      recordError(`Staleness scan failed: ${getErrorMessage(error)}`);
+    }
+  }
+
   if (errors.length > 0) {
     await notifySafely(
       "Daily maintenance notification",
@@ -351,6 +447,44 @@ export async function dailyMaintenance(
     notificationManager?.clearAlert();
   }
   log("Daily maintenance finished");
+}
+
+export async function pollAllFeeds(
+  rssService: RSSService,
+  fetcher: ContentFetcher,
+  distiller: ContentDistiller,
+  pageManager: PageManager,
+  memoryService: MemoryService,
+  config: VegaConfig
+): Promise<{ polled_feeds: number; processed: number; errors: string[] }> {
+  const feeds = rssService.listFeeds();
+  const errors: string[] = [];
+  let processed = 0;
+
+  for (const feed of feeds) {
+    try {
+      processed += await rssService.pollFeed(
+        feed,
+        fetcher,
+        distiller,
+        pageManager,
+        memoryService,
+        config
+      );
+    } catch (error) {
+      errors.push(
+        `RSS feed ${feed.id} (${feed.url}) failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  return {
+    polled_feeds: feeds.length,
+    processed,
+    errors
+  };
 }
 
 export async function weeklyHealthReport(

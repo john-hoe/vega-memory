@@ -1,5 +1,13 @@
+import { resolve } from "node:path";
+
 import { Command, Option } from "commander";
 
+import { expandHomePath } from "../../config.js";
+import { StaticExporter } from "../../publishing/static-export.js";
+import {
+  publishWikiPages,
+  type WikiPublishTarget
+} from "../../publishing/service.js";
 import type { Repository } from "../../db/repository.js";
 import { CrossReferenceService } from "../../wiki/cross-reference.js";
 import { PageManager } from "../../wiki/page-manager.js";
@@ -35,6 +43,13 @@ interface WikiStats {
   stale_pages: number;
   orphan_pages: number;
 }
+
+const WIKI_PUBLISH_TARGETS = [
+  "notion",
+  "obsidian",
+  "all"
+] as const satisfies readonly WikiPublishTarget[];
+const WIKI_EXPORT_FORMATS = ["obsidian", "markdown"] as const;
 
 const countBy = (values: string[]): Array<{ name: string; count: number }> => {
   const counts = new Map<string, number>();
@@ -409,6 +424,68 @@ export function registerWikiCommand(
         }
 
         console.log(`${result.new_status} ${result.page_id}`);
+      }
+    );
+
+  wikiCommand
+    .command("publish")
+    .description("Publish wiki pages to Notion or Obsidian")
+    .option("--slug <slug>", "page slug or id")
+    .option("--all", "publish all published pages")
+    .addOption(new Option("--target <target>", "publish target").choices([...WIKI_PUBLISH_TARGETS]).makeOptionMandatory())
+    .option("--json", "print JSON")
+    .action(
+      async (options: {
+        slug?: string;
+        all?: boolean;
+        target: WikiPublishTarget;
+        json?: boolean;
+      }) => {
+        const result = await publishWikiPages(pageManager, {
+          slug: options.slug,
+          all: options.all ?? false,
+          target: options.target
+        });
+
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+
+        console.log(`published_count: ${result.published_count}`);
+        console.log(`target: ${result.target}`);
+
+        if (result.errors.length > 0) {
+          console.log("errors:");
+          result.errors.forEach((error) => console.log(error));
+        }
+      }
+    );
+
+  wikiCommand
+    .command("export")
+    .description("Export published wiki pages as static Markdown")
+    .addOption(new Option("--format <format>", "export format").choices([...WIKI_EXPORT_FORMATS]).makeOptionMandatory())
+    .requiredOption("--output <dir>", "output directory")
+    .option("--json", "print JSON")
+    .action(
+      (options: {
+        format: "obsidian" | "markdown";
+        output: string;
+        json?: boolean;
+      }) => {
+        const exporter = new StaticExporter(pageManager);
+        const result = exporter.exportAll(
+          resolve(expandHomePath(options.output)),
+          options.format
+        );
+
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+
+        console.log(`exported ${result.exported} wiki pages to ${result.outputDir}`);
       }
     );
 

@@ -14,10 +14,17 @@ import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import { Repository } from "../db/repository.js";
+import { ContentDistiller } from "../ingestion/distiller.js";
+import { ContentFetcher } from "../ingestion/fetcher.js";
+import { RSSService } from "../ingestion/rss.js";
 import { NotificationManager } from "../notify/manager.js";
 import { SearchEngine } from "../search/engine.js";
 import { resolveConfiguredEncryptionKey } from "../security/keychain.js";
 import { mountDashboard } from "../web/dashboard.js";
+import { CrossReferenceService } from "../wiki/cross-reference.js";
+import { PageManager } from "../wiki/page-manager.js";
+import { SynthesisEngine } from "../wiki/synthesis.js";
+import { StalenessService } from "../wiki/staleness.js";
 import {
   dailyMaintenance,
   monitorOllamaAvailability,
@@ -150,6 +157,13 @@ async function main(): Promise<void> {
     config
   );
   const compactService = new CompactService(repository, config);
+  const pageManager = new PageManager(repository);
+  const crossReferenceService = new CrossReferenceService(pageManager);
+  const synthesisEngine = new SynthesisEngine(repository, pageManager, config);
+  const stalenessService = new StalenessService(pageManager, repository);
+  const contentFetcher = new ContentFetcher();
+  const contentDistiller = new ContentDistiller(config);
+  const rssService = new RSSService(repository);
   const apiRuntime = await startSchedulerApiServer(
     {
       repository,
@@ -161,7 +175,16 @@ async function main(): Promise<void> {
     config
   );
   const runDaily = createGuardedRunner("daily maintenance", async () => {
-    await dailyMaintenance(repository, compactService, memoryService, config, notificationManager);
+    await dailyMaintenance(repository, compactService, memoryService, config, {
+      notificationManager,
+      rssService,
+      contentFetcher,
+      contentDistiller,
+      pageManager,
+      synthesisEngine,
+      crossReferenceService,
+      stalenessService
+    });
   });
   const runWeekly = createGuardedRunner("weekly health report", async () => {
     await weeklyHealthReport(repository, config, memoryService, notificationManager);

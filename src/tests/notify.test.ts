@@ -137,7 +137,9 @@ test("NotificationManager clears alert after successful maintenance", async () =
     await manager.notifyError("Previous Error", "Clear me after maintenance");
     assert.equal(existsSync(alertPath), true);
 
-    await dailyMaintenance(repository, compactService, memoryService, config, manager);
+    await dailyMaintenance(repository, compactService, memoryService, config, {
+      notificationManager: manager
+    });
 
     assert.equal(existsSync(alertPath), false);
   } finally {
