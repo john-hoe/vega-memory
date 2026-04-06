@@ -1,4 +1,4 @@
-import { Router, type RequestHandler, type Response } from "express";
+import { Router, type Request, type RequestHandler, type Response } from "express";
 
 import type { VegaConfig } from "../config.js";
 import { AnalyticsService } from "../core/analytics.js";
@@ -8,6 +8,7 @@ import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import type {
+  AuditContext,
   Memory,
   MemorySource,
   MemoryType,
@@ -284,6 +285,11 @@ const parseDateString = (value: unknown, field: string): string | undefined => {
   return parsed;
 };
 
+const getRequestAuditContext = (req: Request): AuditContext => ({
+  actor: "api",
+  ip: req.ip ?? null
+});
+
 export function createRouter(services: APIRouterServices): Router {
   const router = Router();
   const analyticsService = new AnalyticsService(services.repository);
@@ -304,7 +310,8 @@ export function createRouter(services: APIRouterServices): Router {
           min: 0,
           max: 1
         }),
-        source: parseMemorySource(body.source, "source")
+        source: parseMemorySource(body.source, "source"),
+        auditContext: getRequestAuditContext(req)
       });
 
       res.status(200).json(result);
@@ -424,14 +431,18 @@ export function createRouter(services: APIRouterServices): Router {
       const body = requireBody(req.body);
       const id = requireString(req.params.id, "id");
 
-      await services.memoryService.update(id, {
-        content: parseSingleValue(body.content, "content"),
-        importance: parseNumber(body.importance, "importance", {
-          min: 0,
-          max: 1
-        }),
-        tags: parseStringArray(body.tags, "tags")
-      });
+      await services.memoryService.update(
+        id,
+        {
+          content: parseSingleValue(body.content, "content"),
+          importance: parseNumber(body.importance, "importance", {
+            min: 0,
+            max: 1
+          }),
+          tags: parseStringArray(body.tags, "tags")
+        },
+        getRequestAuditContext(req)
+      );
 
       res.status(200).json({
         id,
@@ -444,7 +455,7 @@ export function createRouter(services: APIRouterServices): Router {
     "/api/memory/:id",
     handleRoute(async (req, res) => {
       const id = requireString(req.params.id, "id");
-      await services.memoryService.delete(id);
+      await services.memoryService.delete(id, getRequestAuditContext(req));
 
       res.status(200).json({
         id,
@@ -474,7 +485,8 @@ export function createRouter(services: APIRouterServices): Router {
       await services.sessionService.sessionEnd(
         project,
         requireString(body.summary, "summary"),
-        parseStringArray(body.completed_tasks, "completed_tasks")
+        parseStringArray(body.completed_tasks, "completed_tasks"),
+        getRequestAuditContext(req)
       );
 
       res.status(200).json({
@@ -507,7 +519,10 @@ export function createRouter(services: APIRouterServices): Router {
     "/api/compact",
     handleRoute((req, res) => {
       const body = req.body === undefined ? {} : requireBody(req.body);
-      const result = services.compactService.compact(parseSingleValue(body.project, "project"));
+      const result = services.compactService.compact(
+        parseSingleValue(body.project, "project"),
+        getRequestAuditContext(req)
+      );
 
       res.status(200).json(result);
     })

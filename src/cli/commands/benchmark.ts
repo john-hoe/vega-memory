@@ -14,6 +14,7 @@ import { MemoryService } from "../../core/memory.js";
 import { RecallService } from "../../core/recall.js";
 import { SessionService } from "../../core/session.js";
 import { CompactService } from "../../core/compact.js";
+import type { AuditContext } from "../../core/types.js";
 import type { Repository } from "../../db/repository.js";
 import { Repository as BenchmarkRepository } from "../../db/repository.js";
 import { isOllamaAvailable } from "../../embedding/ollama.js";
@@ -47,6 +48,7 @@ const WRITE_ITERATIONS = 1_000;
 const RECALL_QUERY_COUNT = 50;
 const RECALL_DB_SIZES = [100, 500, 1_000] as const;
 const CONCURRENT_PAIRS = 25;
+const CLI_AUDIT_CONTEXT: AuditContext = { actor: "cli", ip: null };
 
 const toFixedNumber = (value: number): number => Number(value.toFixed(2));
 
@@ -100,7 +102,10 @@ const seedMemories = async (
   alreadySeeded = 0
 ): Promise<void> => {
   for (let index = alreadySeeded; index < targetCount; index += 1) {
-    await memoryService.store(createBenchmarkMemory(index, project));
+    await memoryService.store({
+      ...createBenchmarkMemory(index, project),
+      auditContext: CLI_AUDIT_CONTEXT
+    });
   }
 };
 
@@ -167,7 +172,10 @@ const runWriteBenchmark = async (config: VegaConfig): Promise<BenchmarkResultRow
     const startedAt = performance.now();
 
     for (let index = 0; index < WRITE_ITERATIONS; index += 1) {
-      await runtime.memoryService.store(createBenchmarkMemory(index, "benchmark-write"));
+      await runtime.memoryService.store({
+        ...createBenchmarkMemory(index, "benchmark-write"),
+        auditContext: CLI_AUDIT_CONTEXT
+      });
     }
 
     const total = performance.now() - startedAt;
@@ -270,7 +278,10 @@ const runConcurrentBenchmark = async (config: VegaConfig): Promise<BenchmarkResu
     let lockingErrors = 0;
 
     for (let index = 0; index < CONCURRENT_PAIRS; index += 1) {
-      const cliStore = cliRuntime.memoryService.store(createBenchmarkMemory(index, "benchmark-cli"));
+      const cliStore = cliRuntime.memoryService.store({
+        ...createBenchmarkMemory(index, "benchmark-cli"),
+        auditContext: CLI_AUDIT_CONTEXT
+      });
       const mcpStore = client.callTool({
         name: "memory_store",
         arguments: createBenchmarkMemory(index + CONCURRENT_PAIRS, "benchmark-mcp")

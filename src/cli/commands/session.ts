@@ -1,7 +1,9 @@
 import { Command } from "commander";
 
 import { SessionService } from "../../core/session.js";
-import type { Memory, SessionStartResult } from "../../core/types.js";
+import type { AuditContext, Memory, SessionStartResult } from "../../core/types.js";
+
+const CLI_AUDIT_CONTEXT: AuditContext = { actor: "cli", ip: null };
 
 const parseCompleted = (value: string): string[] =>
   value
@@ -91,7 +93,12 @@ export function registerSessionCommands(program: Command, sessionService: Sessio
         summary: string;
         completed?: string[];
       }) => {
-        await sessionService.sessionEnd(options.project, options.summary, options.completed);
+        await sessionService.sessionEnd(
+          options.project,
+          options.summary,
+          options.completed,
+          CLI_AUDIT_CONTEXT
+        );
         console.log(
           `ended session for ${options.project} with ${options.completed?.length ?? 0} completed tasks`
         );

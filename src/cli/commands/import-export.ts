@@ -7,6 +7,7 @@ import type { VegaConfig } from "../../config.js";
 import { ARCHIVED_EXPORT_METADATA_KEY } from "../../core/lifecycle.js";
 import { MemoryService } from "../../core/memory.js";
 import type {
+  AuditContext,
   Memory,
   MemoryScope,
   MemorySource,
@@ -65,6 +66,7 @@ const MEMORY_SCOPES = ["project", "global"] as const satisfies readonly MemorySc
 const ENTRY_START = "<!-- vega-memory-entry:start -->";
 const ENTRY_END = "<!-- vega-memory-entry:end -->";
 const DAY_MS = 24 * 60 * 60 * 1000;
+const CLI_AUDIT_CONTEXT: AuditContext = { actor: "cli", ip: null };
 
 const validateType = (value: unknown): MemoryType => {
   if (typeof value !== "string" || !MEMORY_TYPES.includes(value as MemoryType)) {
@@ -531,7 +533,8 @@ export function registerImportExportCommands(
             title: entry.title,
             tags: entry.tags,
             importance: entry.importance,
-            source: entry.source
+            source: entry.source,
+            auditContext: CLI_AUDIT_CONTEXT
           });
           continue;
         }
@@ -556,7 +559,7 @@ export function registerImportExportCommands(
             verified: importedMemory.verified,
             scope: importedMemory.scope,
             accessed_projects: importedMemory.accessed_projects
-          });
+          }, CLI_AUDIT_CONTEXT);
         }
 
         repository.updateMemory(
@@ -580,7 +583,8 @@ export function registerImportExportCommands(
             accessed_projects: importedMemory.accessed_projects
           },
           {
-            skipVersion: true
+            skipVersion: true,
+            auditContext: CLI_AUDIT_CONTEXT
           }
         );
       }

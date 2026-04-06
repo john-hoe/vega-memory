@@ -4,6 +4,7 @@ import { basename, resolve } from "node:path";
 import { Command } from "commander";
 
 import { MemoryService } from "../../core/memory.js";
+import type { AuditContext } from "../../core/types.js";
 
 interface MarkdownSection {
   title: string;
@@ -11,6 +12,7 @@ interface MarkdownSection {
 }
 
 const CONTENT_FACTORY_PROJECT = "content-factory";
+const CLI_AUDIT_CONTEXT: AuditContext = { actor: "cli", ip: null };
 
 const parseSections = (content: string): MarkdownSection[] => {
   const lines = content.split(/\r?\n/);
@@ -82,7 +84,8 @@ export function registerMigrateCommand(program: Command, memoryService: MemorySe
           content: section.content,
           type: "pitfall",
           project: inferProject(section.title, inputPath),
-          source: "explicit"
+          source: "explicit",
+          auditContext: CLI_AUDIT_CONTEXT
         });
       }
 

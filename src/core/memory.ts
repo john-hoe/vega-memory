@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 
 import type { VegaConfig } from "../config.js";
 import type {
+  AuditContext,
   Memory,
   MemorySource,
   MemoryType,
@@ -60,6 +61,11 @@ const toFloat32Array = (embedding: Buffer): Float32Array =>
   );
 
 const now = (): string => new Date().toISOString();
+
+const resolveAuditContext = (auditContext?: AuditContext): AuditContext => ({
+  actor: auditContext?.actor ?? "system",
+  ip: auditContext?.ip ?? null
+});
 
 const unique = (values: string[]): string[] => [...new Set(values)];
 
@@ -186,7 +192,12 @@ export class MemoryService {
     return bestMatch;
   }
 
-  private archiveSupersededTaskStates(project: string, keepId: string, title: string): void {
+  private archiveSupersededTaskStates(
+    project: string,
+    keepId: string,
+    title: string,
+    auditContext?: AuditContext
+  ): void {
     const normalizedTitle = normalizeTitle(title);
 
     if (normalizedTitle.length === 0) {
@@ -210,14 +221,19 @@ export class MemoryService {
         continue;
       }
 
-      this.repository.updateMemory(memory.id, {
-        status: "archived",
-        updated_at: archivedAt
-      });
+      this.repository.updateMemory(
+        memory.id,
+        {
+          status: "archived",
+          updated_at: archivedAt
+        },
+        { auditContext }
+      );
     }
   }
 
   async store(params: StoreParams): Promise<StoreResult> {
+    const auditContext = resolveAuditContext(params.auditContext);
     const source = params.source ?? "auto";
 
     if (source !== "explicit") {
@@ -256,36 +272,39 @@ export class MemoryService {
       contradicts(matched.memory.content, redacted)
     ) {
       const id = uuidv4();
-      this.repository.createMemory({
-        id,
-        type: params.type,
-        project: params.project,
-        title,
-        content: redacted,
-        embedding: toEmbeddingBuffer(embedding),
-        importance,
-        source,
-        tags,
-        created_at: timestamp,
-        updated_at: timestamp,
-        accessed_at: timestamp,
-        status: "active",
-        verified: "conflict",
-        scope,
-        accessed_projects: [params.project]
-      });
+      this.repository.createMemory(
+        {
+          id,
+          type: params.type,
+          project: params.project,
+          title,
+          content: redacted,
+          embedding: toEmbeddingBuffer(embedding),
+          importance,
+          source,
+          tags,
+          created_at: timestamp,
+          updated_at: timestamp,
+          accessed_at: timestamp,
+          status: "active",
+          verified: "conflict",
+          scope,
+          accessed_projects: [params.project]
+        },
+        auditContext
+      );
 
       if (params.type === "task_state") {
-        this.archiveSupersededTaskStates(params.project, id, title);
+        this.archiveSupersededTaskStates(params.project, id, title, auditContext);
       }
 
       this.repository.logAudit({
         timestamp,
-        actor: "system",
+        actor: auditContext.actor,
         action: "store_conflict",
         memory_id: id,
         detail: `Stored conflicting ${params.type} memory${wasRedacted ? " after redaction" : ""}`,
-        ip: null
+        ip: auditContext.ip
       });
 
       this.linkKnowledgeGraph(id, redacted, tags);
@@ -309,30 +328,34 @@ export class MemoryService {
                 : await generateEmbedding(mergedContent, this.config)
             );
 
-      this.repository.updateMemory(matched.memory.id, {
-        title: nextTitle,
-        content: mergedContent,
-        embedding: nextEmbedding,
-        importance: Math.max(matched.memory.importance, importance),
-        source: nextSource,
-        tags: mergedTags,
-        updated_at: timestamp,
-        accessed_at: timestamp,
-        verified,
-        accessed_projects: unique([...matched.memory.accessed_projects, params.project])
-      });
+      this.repository.updateMemory(
+        matched.memory.id,
+        {
+          title: nextTitle,
+          content: mergedContent,
+          embedding: nextEmbedding,
+          importance: Math.max(matched.memory.importance, importance),
+          source: nextSource,
+          tags: mergedTags,
+          updated_at: timestamp,
+          accessed_at: timestamp,
+          verified,
+          accessed_projects: unique([...matched.memory.accessed_projects, params.project])
+        },
+        { auditContext }
+      );
 
       if (params.type === "task_state") {
-        this.archiveSupersededTaskStates(params.project, matched.memory.id, nextTitle);
+        this.archiveSupersededTaskStates(params.project, matched.memory.id, nextTitle, auditContext);
       }
 
       this.repository.logAudit({
         timestamp,
-        actor: "system",
+        actor: auditContext.actor,
         action: "store_updated",
         memory_id: matched.memory.id,
         detail: `Updated ${params.type} memory from store pipeline${wasRedacted ? " after redaction" : ""}`,
-        ip: null
+        ip: auditContext.ip
       });
 
       this.linkKnowledgeGraph(matched.memory.id, mergedContent, mergedTags);
@@ -343,36 +366,39 @@ export class MemoryService {
     const id = uuidv4();
     const verified = source === "explicit" ? "verified" : "unverified";
 
-    this.repository.createMemory({
-      id,
-      type: params.type,
-      project: params.project,
-      title,
-      content: redacted,
-      embedding: toEmbeddingBuffer(embedding),
-      importance,
-      source,
-      tags,
-      created_at: timestamp,
-      updated_at: timestamp,
-      accessed_at: timestamp,
-      status: "active",
-      verified,
-      scope,
-      accessed_projects: [params.project]
-    });
+    this.repository.createMemory(
+      {
+        id,
+        type: params.type,
+        project: params.project,
+        title,
+        content: redacted,
+        embedding: toEmbeddingBuffer(embedding),
+        importance,
+        source,
+        tags,
+        created_at: timestamp,
+        updated_at: timestamp,
+        accessed_at: timestamp,
+        status: "active",
+        verified,
+        scope,
+        accessed_projects: [params.project]
+      },
+      auditContext
+    );
 
     if (params.type === "task_state") {
-      this.archiveSupersededTaskStates(params.project, id, title);
+      this.archiveSupersededTaskStates(params.project, id, title, auditContext);
     }
 
     this.repository.logAudit({
       timestamp,
-      actor: "system",
+      actor: auditContext.actor,
       action: "store_created",
       memory_id: id,
       detail: `Created ${params.type} memory from store pipeline${wasRedacted ? " after redaction" : ""}`,
-      ip: null
+      ip: auditContext.ip
     });
 
     this.linkKnowledgeGraph(id, redacted, tags);
@@ -380,7 +406,7 @@ export class MemoryService {
     return { id, action: "created", title };
   }
 
-  async update(id: string, updates: MemoryUpdateParams): Promise<void> {
+  async update(id: string, updates: MemoryUpdateParams, auditContext?: AuditContext): Promise<void> {
     const existing = this.repository.getMemory(id);
     if (!existing) {
       throw new Error(`Memory not found: ${id}`);
@@ -410,7 +436,7 @@ export class MemoryService {
     }
 
     nextUpdates.updated_at = now();
-    this.repository.updateMemory(id, nextUpdates);
+    this.repository.updateMemory(id, nextUpdates, { auditContext });
 
     const refreshed = this.repository.getMemory(id);
     if (refreshed) {
@@ -418,7 +444,7 @@ export class MemoryService {
     }
   }
 
-  async delete(id: string): Promise<void> {
-    this.repository.deleteMemory(id);
+  async delete(id: string, auditContext?: AuditContext): Promise<void> {
+    this.repository.deleteMemory(id, auditContext);
   }
 }

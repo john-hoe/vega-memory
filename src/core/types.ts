@@ -184,6 +184,7 @@ export interface StoreParams {
   importance?: number;
   source?: MemorySource;
   skipSimilarityCheck?: boolean;
+  auditContext?: AuditContext;
 }
 
 export interface StoreResult {
@@ -227,6 +228,11 @@ export interface MemoryUpdateParams {
   content?: string;
   importance?: number;
   tags?: string[];
+}
+
+export interface AuditContext {
+  actor: string;
+  ip: string | null;
 }
 
 export type HealthInfo = HealthReport | { status: "offline" | "unauthorized" };

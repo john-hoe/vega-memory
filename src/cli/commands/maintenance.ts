@@ -6,9 +6,12 @@ import type { VegaConfig } from "../../config.js";
 import { exportSnapshot } from "../../core/snapshot.js";
 import { createBackup } from "../../db/backup.js";
 import { CloudBackupProvider } from "../../db/cloud-backup.js";
+import type { AuditContext } from "../../core/types.js";
 import type { Repository } from "../../db/repository.js";
 import { CompactService } from "../../core/compact.js";
 import { resolveConfiguredEncryptionKey } from "../../security/keychain.js";
+
+const CLI_AUDIT_CONTEXT: AuditContext = { actor: "cli", ip: null };
 
 const countBy = <T extends string>(values: T[]): Array<{ name: T; count: number }> => {
   const counts = new Map<T, number>();
@@ -41,7 +44,7 @@ export function registerMaintenanceCommands(
     .description("Merge duplicates and archive stale memories")
     .option("--project <project>", "project name")
     .action((options: { project?: string }) => {
-      const result = compactService.compact(options.project);
+      const result = compactService.compact(options.project, CLI_AUDIT_CONTEXT);
       console.log(`merged: ${result.merged}`);
       console.log(`archived: ${result.archived}`);
     });

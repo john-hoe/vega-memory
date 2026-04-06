@@ -11,6 +11,7 @@ import { DiagnoseService } from "../core/diagnose.js";
 import { getHealthReport } from "../core/health.js";
 import { Repository } from "../db/repository.js";
 import type {
+  AuditContext,
   CompactResult,
   GraphQueryResult,
   HealthInfo,
@@ -36,6 +37,7 @@ const MEMORY_TYPES = [
 ] as const satisfies readonly MemoryType[];
 
 const MEMORY_SOURCES = ["auto", "explicit"] as const satisfies readonly MemorySource[];
+const MCP_AUDIT_CONTEXT: AuditContext = { actor: "mcp", ip: null };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -206,8 +208,8 @@ export interface CreateMCPServerOptions {
   };
   memoryService: {
     store(params: StoreParams): Promise<StoreResult>;
-    update(id: string, updates: MemoryUpdateParams): Promise<void>;
-    delete(id: string): Promise<void>;
+    update(id: string, updates: MemoryUpdateParams, auditContext?: AuditContext): Promise<void>;
+    delete(id: string, auditContext?: AuditContext): Promise<void>;
   };
   recallService: {
     recall(query: string, options: SearchOptions): Promise<SearchResult[]>;
@@ -218,10 +220,15 @@ export interface CreateMCPServerOptions {
       workingDirectory: string,
       taskHint?: string
     ): Promise<SessionStartResult>;
-    sessionEnd(project: string, summary: string, completedTasks?: string[]): Promise<void>;
+    sessionEnd(
+      project: string,
+      summary: string,
+      completedTasks?: string[],
+      auditContext?: AuditContext
+    ): Promise<void>;
   };
   compactService: {
-    compact(project?: string): CompactResult | Promise<CompactResult>;
+    compact(project?: string, auditContext?: AuditContext): CompactResult | Promise<CompactResult>;
   };
   compressionService?: {
     compressMemory(memoryId: string): Promise<{
@@ -303,7 +310,8 @@ export function createMCPServer({
       runTool(repository, "memory_store", args, observer, async () => {
         const result = await memoryService.store({
           ...args,
-          project: args.project ?? "global"
+          project: args.project ?? "global",
+          auditContext: MCP_AUDIT_CONTEXT
         });
 
         return {
@@ -383,12 +391,16 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "memory_update", args, observer, async () => {
-        await memoryService.update(args.id, {
-          title: args.title,
-          content: args.content,
-          importance: args.importance,
-          tags: args.tags
-        });
+        await memoryService.update(
+          args.id,
+          {
+            title: args.title,
+            content: args.content,
+            importance: args.importance,
+            tags: args.tags
+          },
+          MCP_AUDIT_CONTEXT
+        );
 
         return {
           result: {
@@ -408,7 +420,7 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "memory_delete", args, observer, async () => {
-        await memoryService.delete(args.id);
+        await memoryService.delete(args.id, MCP_AUDIT_CONTEXT);
 
         return {
           result: {
@@ -451,7 +463,12 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "session_end", args, observer, async () => {
-        await sessionService.sessionEnd(args.project, args.summary, args.completed_tasks);
+        await sessionService.sessionEnd(
+          args.project,
+          args.summary,
+          args.completed_tasks,
+          MCP_AUDIT_CONTEXT
+        );
 
         return {
           result: {
@@ -506,7 +523,9 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "memory_compact", args, observer, async () => {
-        const result = await Promise.resolve(compactService.compact(args.project));
+        const result = await Promise.resolve(
+          compactService.compact(args.project, MCP_AUDIT_CONTEXT)
+        );
 
         return {
           result,

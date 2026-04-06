@@ -1,5 +1,5 @@
 import type { VegaConfig } from "../config.js";
-import type { Memory } from "./types.js";
+import type { AuditContext, Memory } from "./types.js";
 import { Repository } from "../db/repository.js";
 import { cosineSimilarity } from "../embedding/ollama.js";
 
@@ -45,7 +45,7 @@ export class CompactService {
     private readonly _config: VegaConfig
   ) {}
 
-  compact(project?: string): { merged: number; archived: number } {
+  compact(project?: string, auditContext?: AuditContext): { merged: number; archived: number } {
     const embeddings = this.repository
       .getAllEmbeddings(project)
       .filter(({ memory }) => memory.status === "active");
@@ -84,18 +84,26 @@ export class CompactService {
         const older = newer.id === left.memory.id ? right.memory : left.memory;
         const timestamp = now();
 
-        this.repository.updateMemory(newer.id, {
-          content: mergeContent(newer.content, older.content),
-          embedding: null,
-          importance: Math.max(newer.importance, older.importance),
-          tags: unique([...newer.tags, ...older.tags]),
-          updated_at: timestamp,
-          accessed_projects: unique([...newer.accessed_projects, ...older.accessed_projects])
-        });
-        this.repository.updateMemory(older.id, {
-          status: "archived",
-          updated_at: timestamp
-        });
+        this.repository.updateMemory(
+          newer.id,
+          {
+            content: mergeContent(newer.content, older.content),
+            embedding: null,
+            importance: Math.max(newer.importance, older.importance),
+            tags: unique([...newer.tags, ...older.tags]),
+            updated_at: timestamp,
+            accessed_projects: unique([...newer.accessed_projects, ...older.accessed_projects])
+          },
+          { auditContext }
+        );
+        this.repository.updateMemory(
+          older.id,
+          {
+            status: "archived",
+            updated_at: timestamp
+          },
+          { auditContext }
+        );
 
         archivedIds.add(older.id);
         merged += 1;
@@ -123,10 +131,14 @@ export class CompactService {
         continue;
       }
 
-      this.repository.updateMemory(memory.id, {
-        status: "archived",
-        updated_at: timestamp
-      });
+      this.repository.updateMemory(
+        memory.id,
+        {
+          status: "archived",
+          updated_at: timestamp
+        },
+        { auditContext }
+      );
       archivedIds.add(memory.id);
       archived += 1;
     }

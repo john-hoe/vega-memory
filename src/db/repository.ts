@@ -5,6 +5,7 @@ import BetterSqlite3 from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
 
 import type {
+  AuditContext,
   AuditEntry,
   Entity,
   EntityRelation,
@@ -212,6 +213,11 @@ function timestamp(): string {
   return new Date().toISOString();
 }
 
+const resolveAuditContext = (auditContext?: AuditContext): AuditContext => ({
+  actor: auditContext?.actor ?? "system",
+  ip: auditContext?.ip ?? null
+});
+
 function arraysEqual(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -236,7 +242,8 @@ export class Repository {
     initializeDatabase(this.db);
   }
 
-  createMemory(memory: Omit<Memory, "access_count">): void {
+  createMemory(memory: Omit<Memory, "access_count">, auditContext?: AuditContext): void {
+    const resolvedAuditContext = resolveAuditContext(auditContext);
     const insertMemory = this.db.prepare<
       [
         string,
@@ -297,11 +304,11 @@ export class Repository {
 
       this.logAudit({
         timestamp: timestamp(),
-        actor: "system",
+        actor: resolvedAuditContext.actor,
         action: "create",
         memory_id: memory.id,
         detail: `Created memory ${memory.id}`,
-        ip: null
+        ip: resolvedAuditContext.ip
       });
     });
 
@@ -331,11 +338,16 @@ export class Repository {
     return rows.map(mapMemory);
   }
 
-  updateMemory(id: string, updates: Partial<Memory>, options?: { skipVersion?: boolean }): void {
+  updateMemory(
+    id: string,
+    updates: Partial<Memory>,
+    options?: { skipVersion?: boolean; auditContext?: AuditContext }
+  ): void {
     const existing = this.getMemory(id);
     if (!existing) {
       throw new Error(`Memory not found: ${id}`);
     }
+    const resolvedAuditContext = resolveAuditContext(options?.auditContext);
 
     const nextMemory: Memory = {
       ...existing,
@@ -433,22 +445,23 @@ export class Repository {
 
       this.logAudit({
         timestamp: timestamp(),
-        actor: "system",
+        actor: resolvedAuditContext.actor,
         action: "update",
         memory_id: id,
         detail: `Updated memory ${id}`,
-        ip: null
+        ip: resolvedAuditContext.ip
       });
     });
 
     transaction();
   }
 
-  deleteMemory(id: string): void {
+  deleteMemory(id: string, auditContext?: AuditContext): void {
     const existing = this.getMemory(id);
     const rowid = this.db
       .prepare<[string], { rowid: number }>("SELECT rowid FROM memories WHERE id = ?")
       .get(id);
+    const resolvedAuditContext = resolveAuditContext(auditContext);
 
     if (!existing || !rowid) {
       return;
@@ -470,11 +483,11 @@ export class Repository {
 
       this.logAudit({
         timestamp: timestamp(),
-        actor: "system",
+        actor: resolvedAuditContext.actor,
         action: "delete",
         memory_id: id,
         detail: `Deleted memory ${id}`,
-        ip: null
+        ip: resolvedAuditContext.ip
       });
     });
 

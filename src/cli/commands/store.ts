@@ -1,7 +1,7 @@
 import { Command, InvalidArgumentError, Option } from "commander";
 
 import { MemoryService } from "../../core/memory.js";
-import type { MemorySource, MemoryType } from "../../core/types.js";
+import type { AuditContext, MemorySource, MemoryType } from "../../core/types.js";
 
 const MEMORY_TYPES = [
   "task_state",
@@ -13,6 +13,7 @@ const MEMORY_TYPES = [
 ] as const satisfies readonly MemoryType[];
 
 const MEMORY_SOURCES = ["auto", "explicit"] as const satisfies readonly MemorySource[];
+const CLI_AUDIT_CONTEXT: AuditContext = { actor: "cli", ip: null };
 
 const parseTags = (value: string): string[] =>
   value
@@ -59,7 +60,8 @@ export function registerStoreCommand(program: Command, memoryService: MemoryServ
           title: options.title,
           tags: options.tags,
           importance: options.importance,
-          source: options.source
+          source: options.source,
+          auditContext: CLI_AUDIT_CONTEXT
         });
 
         console.log(`${result.action} ${result.id} ${JSON.stringify(result.title)}`);

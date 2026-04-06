@@ -10,7 +10,13 @@ import { ExtractionService } from "./extraction.js";
 import { MemoryService } from "./memory.js";
 import { RecallService } from "./recall.js";
 import { exportSnapshot } from "./snapshot.js";
-import type { Memory, MemoryType, SearchResult, SessionStartResult } from "./types.js";
+import type {
+  AuditContext,
+  Memory,
+  MemoryType,
+  SearchResult,
+  SessionStartResult
+} from "./types.js";
 
 const AUTO_EXTRACT_PATTERNS: Array<{ type: MemoryType; pattern: RegExp }> = [
   { type: "decision", pattern: /决定|选择|因为|chose|decided/i },
@@ -315,15 +321,24 @@ export class SessionService {
     };
   }
 
-  async sessionEnd(project: string, summary: string, completedTaskIds?: string[]): Promise<void> {
+  async sessionEnd(
+    project: string,
+    summary: string,
+    completedTaskIds?: string[],
+    auditContext?: AuditContext
+  ): Promise<void> {
     const ended_at = now();
     const started_at = this.sessionStartTimes.get(project) ?? ended_at;
 
     for (const taskId of completedTaskIds ?? []) {
-      this.repository.updateMemory(taskId, {
-        importance: 0.2,
-        updated_at: ended_at
-      });
+      this.repository.updateMemory(
+        taskId,
+        {
+          importance: 0.2,
+          updated_at: ended_at
+        },
+        { auditContext }
+      );
     }
 
     const memories_created: string[] = [];
@@ -340,7 +355,8 @@ export class SessionService {
           project,
           title: candidate.title,
           tags: candidate.tags,
-          source: "auto"
+          source: "auto",
+          auditContext
         });
 
         if (stored.id && (stored.action === "created" || stored.action === "conflict")) {
@@ -358,7 +374,8 @@ export class SessionService {
             content: sentence,
             type,
             project,
-            source: "auto"
+            source: "auto",
+            auditContext
           });
 
           if (stored.id && (stored.action === "created" || stored.action === "conflict")) {
