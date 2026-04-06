@@ -8,6 +8,22 @@ export type WikiPageType =
 
 export type WikiPageStatus = "draft" | "published" | "stale" | "archived";
 
+export const WIKI_PAGE_TYPES = [
+  "topic",
+  "project",
+  "decision_log",
+  "pitfall_guide",
+  "runbook",
+  "reference"
+] as const satisfies readonly WikiPageType[];
+
+export const WIKI_PAGE_STATUSES = [
+  "draft",
+  "published",
+  "stale",
+  "archived"
+] as const satisfies readonly WikiPageStatus[];
+
 export type ContentSourceType =
   | "web_article"
   | "wechat"

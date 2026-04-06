@@ -10,6 +10,11 @@ import type { VegaConfig } from "../config.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { getHealthReport } from "../core/health.js";
 import { Repository } from "../db/repository.js";
+import { CrossReferenceService } from "../wiki/cross-reference.js";
+import { PageManager } from "../wiki/page-manager.js";
+import { reviewWikiPage, WIKI_REVIEW_ACTIONS } from "../wiki/review.js";
+import { searchWikiPages } from "../wiki/search.js";
+import { SynthesisEngine } from "../wiki/synthesis.js";
 import type {
   AuditContext,
   CompactResult,
@@ -26,6 +31,7 @@ import type {
   StoreParams,
   StoreResult
 } from "../core/types.js";
+import { WIKI_PAGE_STATUSES, WIKI_PAGE_TYPES } from "../wiki/types.js";
 
 const MEMORY_TYPES = [
   "task_state",
@@ -92,6 +98,22 @@ const serializeGraphQueryResult = (result: GraphQueryResult) => ({
   entity: result.entity,
   relations: result.relations,
   memories: result.memories.map(serializeMemory)
+});
+
+const serializeWikiPageListEntry = (page: {
+  id: string;
+  slug: string;
+  title: string;
+  page_type: string;
+  status: string;
+  updated_at: string;
+}) => ({
+  id: page.id,
+  slug: page.slug,
+  title: page.title,
+  page_type: page.page_type,
+  status: page.status,
+  updated_at: page.updated_at
 });
 
 const resultCountForSessionStart = (result: SessionStartResult): number =>
@@ -275,6 +297,9 @@ export function createMCPServer({
     enabled: config.observerEnabled,
     service: observerService
   };
+  const pageManager = new PageManager(repository);
+  const synthesisEngine = new SynthesisEngine(repository, pageManager, config);
+  const crossReferenceService = new CrossReferenceService(pageManager);
 
   server.tool(
     "memory_graph",
@@ -596,6 +621,126 @@ export function createMCPServer({
         })
     );
   }
+
+  server.tool(
+    "wiki_search",
+    "Search wiki pages using full-text search.",
+    {
+      query: z.string().trim().min(1),
+      project: z.string().trim().min(1).optional(),
+      page_type: z.enum(WIKI_PAGE_TYPES).optional(),
+      limit: z.number().int().positive().default(10)
+    },
+    async (args) =>
+      runTool(repository, "wiki_search", args, observer, async () => {
+        const result = searchWikiPages(repository, args);
+
+        return {
+          result,
+          resultCount: result.length
+        };
+      })
+  );
+
+  server.tool(
+    "wiki_read",
+    "Read a wiki page and its backlinks.",
+    {
+      slug: z.string().trim().min(1)
+    },
+    async (args) =>
+      runTool(repository, "wiki_read", args, observer, async () => {
+        const result = pageManager.getPageWithBacklinks(args.slug);
+
+        if (!result) {
+          throw new Error(`Wiki page not found: ${args.slug}`);
+        }
+
+        return {
+          result,
+          resultCount: result.backlinks.length + 1
+        };
+      })
+  );
+
+  server.tool(
+    "wiki_synthesize",
+    "Synthesize a wiki page from related memories.",
+    {
+      topic: z.string().trim().min(1),
+      project: z.string().trim().min(1).optional(),
+      force: z.boolean().default(false)
+    },
+    async (args) =>
+      runTool(repository, "wiki_synthesize", args, observer, async () => {
+        const result = await synthesisEngine.synthesize(args.topic, args.project, args.force);
+
+        if (result.action !== "unchanged" && result.page_id.length > 0) {
+          const page = pageManager.getPage(result.page_id);
+
+          if (page) {
+            crossReferenceService.updateCrossReferences(page);
+          }
+        }
+
+        return {
+          result,
+          resultCount: result.action === "unchanged" ? 0 : 1
+        };
+      })
+  );
+
+  server.tool(
+    "wiki_list",
+    "List wiki pages by project, type, or status.",
+    {
+      project: z.string().trim().min(1).optional(),
+      page_type: z.enum(WIKI_PAGE_TYPES).optional(),
+      status: z.enum(WIKI_PAGE_STATUSES).optional(),
+      limit: z.number().int().positive().default(20)
+    },
+    async (args) =>
+      runTool(repository, "wiki_list", args, observer, async () => {
+        const result = pageManager
+          .listPages({
+            project: args.project,
+            page_type: args.page_type,
+            status: args.status,
+            limit: args.limit
+          })
+          .map(serializeWikiPageListEntry);
+
+        return {
+          result,
+          resultCount: result.length
+        };
+      })
+  );
+
+  server.tool(
+    "wiki_review",
+    "Review a wiki page by approving, rejecting, or editing it.",
+    {
+      slug: z.string().trim().min(1),
+      action: z.enum(WIKI_REVIEW_ACTIONS),
+      content: z.string().trim().min(1).optional()
+    },
+    async (args) =>
+      runTool(repository, "wiki_review", args, observer, async () => {
+        const result = reviewWikiPage(
+          pageManager,
+          crossReferenceService,
+          args.slug,
+          args.action,
+          args.content
+        );
+
+        return {
+          result,
+          resultCount: 1
+        };
+      })
+  );
 
   return server;
 }

@@ -32,6 +32,7 @@ import { registerPluginCommands } from "./commands/plugins.js";
 import { registerTenantCommands } from "./commands/tenant.js";
 import { registerTemplateCommands } from "./commands/templates.js";
 import { registerTuneCommand } from "./commands/tune.js";
+import { registerWikiCommand } from "./commands/wiki.js";
 import { registerWhiteLabelCommand } from "./commands/whitelabel.js";
 import { AnalyticsService } from "../core/analytics.js";
 import { CompactService } from "../core/compact.js";
@@ -54,6 +55,10 @@ import { TemplateMarketplace } from "../plugins/marketplace.js";
 import { SearchEngine } from "../search/engine.js";
 import { RelevanceTuner } from "../search/tuning.js";
 import { resolveConfiguredEncryptionKey } from "../security/keychain.js";
+import { CrossReferenceService } from "../wiki/cross-reference.js";
+import { PageManager } from "../wiki/page-manager.js";
+import { SynthesisEngine } from "../wiki/synthesis.js";
+import { StalenessService } from "../wiki/staleness.js";
 
 const ensureDataDirectory = (dbPath: string): void => {
   if (dbPath === ":memory:") {
@@ -119,6 +124,10 @@ async function main(): Promise<void> {
   const analyticsService = new AnalyticsService(repository);
   const tenantService = new TenantService(repository);
   const whiteLabelConfig = new WhiteLabelConfig();
+  const pageManager = new PageManager(repository);
+  const crossReferenceService = new CrossReferenceService(pageManager);
+  const synthesisEngine = new SynthesisEngine(repository, pageManager, config);
+  const stalenessService = new StalenessService(pageManager, repository);
 
   registerStoreCommand(program, memoryService);
   registerRecallCommand(program, recallService);
@@ -145,6 +154,14 @@ async function main(): Promise<void> {
   registerTuneCommand(program, relevanceTuner);
   registerAnalyticsCommand(program, analyticsService);
   registerTenantCommands(program, tenantService);
+  registerWikiCommand(
+    program,
+    repository,
+    pageManager,
+    synthesisEngine,
+    crossReferenceService,
+    stalenessService
+  );
   registerWhiteLabelCommand(program, whiteLabelConfig);
 
   try {
