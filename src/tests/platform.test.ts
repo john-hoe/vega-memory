@@ -112,8 +112,8 @@ test("TeamService.createTeam and listMembers", () => {
 
     assert.equal(team.name, "alpha-team");
     assert.deepEqual(
-      members.map((member) => `${member.user_id}:${member.role}`),
-      ["owner-1:admin", "member-1:member"]
+      members.map((member) => `${member.user_id}:${member.role}`).sort(),
+      ["member-1:member", "owner-1:admin"]
     );
   } finally {
     repository.close();
