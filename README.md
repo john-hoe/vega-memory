@@ -1,3 +1,5 @@
+**English** | [中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
+
 # Vega Memory System
 
 A local-first memory server that gives AI coding tools **persistent, cross-session memory**. Connect Cursor, Claude Code, Codex, OpenClaw, or any MCP-compatible client — they all share the same knowledge base, so nothing learned in one session is lost in the next.
