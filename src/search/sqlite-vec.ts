@@ -156,12 +156,18 @@ export class SqliteVecEngine {
       `CREATE VIRTUAL TABLE temp.${this.indexTableName} USING vec0(embedding float[${dimension}])`
     );
     const insertStatement = this.repository.db.prepare<[number, string]>(
-      `INSERT INTO temp.${this.indexTableName}(rowid, embedding) VALUES (?, ?)`
+      `INSERT INTO temp.${this.indexTableName}(rowid, embedding) VALUES (CAST(? AS INTEGER), ?)`
     );
 
     this.repository.db.transaction(() => {
       usableCandidates.forEach((candidate, index) => {
-        insertStatement.run(index + 1, toVectorJson(candidate.vector));
+        const rowid = index + 1;
+
+        if (!Number.isSafeInteger(rowid)) {
+          throw new Error(`vec0 rowid must be a safe integer: ${rowid}`);
+        }
+
+        insertStatement.run(rowid, toVectorJson(candidate.vector));
       });
     })();
 
@@ -189,24 +195,45 @@ export class SqliteVecEngine {
     if (this.createIndex() === 0 || this.indexDimension !== queryEmbedding.length) {
       return [];
     }
-    const queryStatement = this.repository.db.prepare<[string, number, number], { rowid: number; distance: number }>(
+    const queryStatement = this.repository.db.prepare<[string, number], { rowid: number; distance: number }>(
       `SELECT rowid, distance
        FROM temp.${this.indexTableName}
        WHERE embedding MATCH ?
+         AND k = CAST(? AS INTEGER)
        ORDER BY distance
-       LIMIT ? OFFSET ?`
+      `
     );
     const batchSize = Math.max(options.limit * 4, 32);
     const results: SearchResult[] = [];
+    let processedCount = 0;
+    const queryVector = toVectorJson(queryEmbedding);
+    const usesOffsetBatches = queryStatement.all.length >= 3;
+    const queryBatch = (neighborCount: number): Array<{ rowid: number; distance: number }> =>
+      usesOffsetBatches
+        ? (
+            queryStatement.all as (
+              query: string,
+              limit: number,
+              offset: number
+            ) => Array<{ rowid: number; distance: number }>
+          )(queryVector, neighborCount, processedCount)
+        : queryStatement.all(queryVector, neighborCount);
 
-    for (let offset = 0; offset < this.indexedCount; offset += batchSize) {
-      const batch = queryStatement.all(toVectorJson(queryEmbedding), batchSize, offset);
+    for (let requestedCount = batchSize; processedCount < this.indexedCount; requestedCount += batchSize) {
+      const neighborCount = Math.min(requestedCount, this.indexedCount);
+      const batch = queryBatch(neighborCount);
 
       if (batch.length === 0) {
         break;
       }
 
-      for (const { rowid } of batch) {
+      const nextMatches = usesOffsetBatches ? batch : batch.slice(processedCount);
+
+      if (nextMatches.length === 0) {
+        break;
+      }
+
+      for (const { rowid } of nextMatches) {
         const candidate = this.indexedCandidates[rowid - 1];
 
         if (!candidate) {
@@ -225,6 +252,8 @@ export class SqliteVecEngine {
 
         results.push(result);
       }
+
+      processedCount = usesOffsetBatches ? processedCount + nextMatches.length : batch.length;
     }
 
     return results.sort((left, right) => right.similarity - left.similarity).slice(0, options.limit);
