@@ -19,7 +19,9 @@ import type {
 } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { PageManager } from "../wiki/page-manager.js";
+import { PagePermissionService } from "../wiki/permissions.js";
 import { searchWikiPages } from "../wiki/search.js";
+import { SpaceService } from "../wiki/spaces.js";
 import {
   WIKI_PAGE_STATUSES,
   WIKI_PAGE_TYPES,
@@ -27,7 +29,10 @@ import {
   type WikiPage,
   type WikiPageStatus,
   type WikiPageType,
-  type WikiPageVersion
+  type WikiPageVersion,
+  WIKI_SPACE_VISIBILITIES,
+  type WikiSpace,
+  type WikiSpaceVisibility
 } from "../wiki/types.js";
 
 const MEMORY_TYPES = new Set<MemoryType>([
@@ -42,6 +47,7 @@ const MEMORY_TYPES = new Set<MemoryType>([
 const MEMORY_SOURCES = new Set<MemorySource>(["auto", "explicit"]);
 const WIKI_PAGE_TYPE_VALUES = new Set<WikiPageType>(WIKI_PAGE_TYPES);
 const WIKI_PAGE_STATUS_VALUES = new Set<WikiPageStatus>(WIKI_PAGE_STATUSES);
+const WIKI_SPACE_VISIBILITY_VALUES = new Set<WikiSpaceVisibility>(WIKI_SPACE_VISIBILITIES);
 
 class ApiError extends Error {
   constructor(
@@ -110,6 +116,7 @@ const serializeWikiPageListEntry = (page: WikiPage) => ({
   page_type: page.page_type,
   status: page.status,
   project: page.project,
+  space_id: page.space_id,
   updated_at: page.updated_at,
   summary: page.summary
 });
@@ -129,6 +136,7 @@ const serializeWikiPage = (page: WikiPage) => ({
   auto_generated: page.auto_generated,
   reviewed: page.reviewed,
   version: page.version,
+  space_id: page.space_id,
   parent_id: page.parent_id,
   sort_order: page.sort_order,
   created_at: page.created_at,
@@ -136,6 +144,8 @@ const serializeWikiPage = (page: WikiPage) => ({
   reviewed_at: page.reviewed_at,
   published_at: page.published_at
 });
+
+const serializeWikiSpace = (space: WikiSpace) => space;
 
 const serializePageWithBacklinks = (result: PageWithBacklinks) => ({
   page: serializeWikiPage(result.page),
@@ -344,6 +354,38 @@ const parseWikiPageStatus = (value: unknown, field: string): WikiPageStatus | un
   return parsed as WikiPageStatus;
 };
 
+const parseWikiSpaceVisibility = (
+  value: unknown,
+  field: string
+): WikiSpaceVisibility | undefined => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  if (!WIKI_SPACE_VISIBILITY_VALUES.has(parsed as WikiSpaceVisibility)) {
+    throw new ApiError(400, `${field} must be a supported wiki space visibility`);
+  }
+
+  return parsed as WikiSpaceVisibility;
+};
+
+const parsePagePermissionLevel = (
+  value: unknown,
+  field: string
+): "read" | "write" | "admin" | undefined => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  if (parsed !== "read" && parsed !== "write" && parsed !== "admin") {
+    throw new ApiError(400, `${field} must be one of read, write, admin`);
+  }
+
+  return parsed;
+};
+
 const parseIntegerString = (value: unknown, field: string): number | undefined => {
   const parsed = parseSingleValue(value, field);
   if (parsed === undefined) {
@@ -388,10 +430,38 @@ const assertTenantAccess = (
   }
 };
 
+const requireTenantId = (res: Response, candidate: unknown): string => {
+  const tenantId = getRequestTenantId(res) ?? parseSingleValue(candidate, "tenant_id");
+
+  if (tenantId === undefined) {
+    throw new ApiError(400, "tenant_id is required");
+  }
+
+  return tenantId;
+};
+
+const assertSpaceAccess = (
+  space: WikiSpace | null,
+  tenantId: string,
+  id: string
+): WikiSpace => {
+  if (!space) {
+    throw new ApiError(404, `Wiki space not found: ${id}`);
+  }
+
+  if (space.tenant_id !== tenantId) {
+    throw new ApiError(403, "forbidden");
+  }
+
+  return space;
+};
+
 export function createRouter(services: APIRouterServices): Router {
   const router = Router();
   const analyticsService = new AnalyticsService(services.repository);
   const pageManager = new PageManager(services.repository);
+  const spaceService = new SpaceService(services.repository);
+  const pagePermissionService = new PagePermissionService(services.repository);
 
   router.use(requireTenantAccess());
 
@@ -651,6 +721,67 @@ export function createRouter(services: APIRouterServices): Router {
     })
   );
 
+  router.post(
+    "/api/wiki/spaces",
+    handleRoute((req, res) => {
+      const body = requireBody(req.body);
+      const space = spaceService.createSpace(
+        requireString(body.name, "name"),
+        requireString(body.slug, "slug"),
+        requireTenantId(res, body.tenant_id),
+        parseWikiSpaceVisibility(body.visibility, "visibility")
+      );
+
+      res.status(201).json(serializeWikiSpace(space));
+    })
+  );
+
+  router.get(
+    "/api/wiki/spaces",
+    handleRoute((req, res) => {
+      const tenantId = requireTenantId(res, req.query.tenant_id);
+
+      res.status(200).json(spaceService.listSpaces(tenantId).map(serializeWikiSpace));
+    })
+  );
+
+  router.patch(
+    "/api/wiki/spaces/:id",
+    handleRoute((req, res) => {
+      const body = requireBody(req.body);
+      const id = requireString(req.params.id, "id");
+      const tenantId = requireTenantId(res, body.tenant_id ?? req.query.tenant_id);
+
+      assertSpaceAccess(spaceService.getSpace(id), tenantId, id);
+      spaceService.updateSpace(id, {
+        name: parseSingleValue(body.name, "name"),
+        slug: parseSingleValue(body.slug, "slug"),
+        visibility: parseWikiSpaceVisibility(body.visibility, "visibility")
+      });
+
+      res.status(200).json(serializeWikiSpace(assertSpaceAccess(spaceService.getSpace(id), tenantId, id)));
+    })
+  );
+
+  router.get(
+    "/api/wiki/spaces/:id/pages",
+    handleRoute((req, res) => {
+      const id = requireString(req.params.id, "id");
+      const tenantId = requireTenantId(res, req.query.tenant_id);
+
+      assertSpaceAccess(spaceService.getSpace(id), tenantId, id);
+      const pages = pageManager.listPages({
+        project: parseSingleValue(req.query.project, "project"),
+        page_type: parseWikiPageType(req.query.page_type, "page_type"),
+        status: parseWikiPageStatus(req.query.status, "status"),
+        space_id: id,
+        limit: parseIntegerString(req.query.limit, "limit") ?? 50
+      });
+
+      res.status(200).json(pages.map(serializeWikiPageListEntry));
+    })
+  );
+
   router.get(
     "/api/wiki/pages",
     handleRoute((req, res) => {
@@ -676,6 +807,47 @@ export function createRouter(services: APIRouterServices): Router {
       }
 
       res.status(200).json(pageManager.getVersions(page.id).map(serializeWikiPageVersion));
+    })
+  );
+
+  router.post(
+    "/api/wiki/pages/:id/permissions",
+    handleRoute((req, res) => {
+      const body = requireBody(req.body);
+      const pageId = requireString(req.params.id, "id");
+      const level = parsePagePermissionLevel(body.level, "level") ?? (() => {
+        throw new ApiError(400, "level is required");
+      })();
+      const userId = parseSingleValue(body.user_id, "user_id");
+      const role = parseSingleValue(body.role, "role");
+      const page = pageManager.getPage(pageId);
+
+      if (!page) {
+        throw new ApiError(404, `Wiki page not found: ${pageId}`);
+      }
+
+      if (page.space_id !== null) {
+        const tenantId = getRequestTenantId(res);
+        if (tenantId !== null) {
+          assertSpaceAccess(spaceService.getSpace(page.space_id), tenantId, page.space_id);
+        }
+      }
+
+      if ((userId === undefined && role === undefined) || (userId !== undefined && role !== undefined)) {
+        throw new ApiError(400, "provide exactly one of user_id or role");
+      }
+
+      if (userId !== undefined) {
+        pagePermissionService.setPermission(pageId, userId, level);
+      } else {
+        pagePermissionService.setRolePermission(pageId, role as string, level);
+      }
+
+      res.status(200).json({
+        page_id: pageId,
+        action: "updated",
+        permissions: pagePermissionService.getPermissions(pageId)
+      });
     })
   );
 

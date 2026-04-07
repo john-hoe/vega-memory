@@ -18,6 +18,7 @@ import type {
   Session
 } from "../core/types.js";
 import type { User, UserRole } from "../core/user.js";
+import type { WikiSpace, WikiSpaceVisibility } from "../wiki/types.js";
 import { initializeDatabase } from "./schema.js";
 
 interface MemoryRow {
@@ -125,6 +126,26 @@ interface UserRow {
   created_at: string;
 }
 
+interface WikiSpaceRow {
+  id: string;
+  name: string;
+  slug: string;
+  tenant_id: string;
+  visibility: WikiSpaceVisibility;
+  created_at: string;
+}
+
+interface WikiPagePermissionRow {
+  page_id: string;
+  user_id: string | null;
+  role: string | null;
+  level: "read" | "write" | "admin";
+}
+
+interface WikiPageSpaceVisibilityRow {
+  visibility: WikiSpaceVisibility | null;
+}
+
 const SORT_COLUMNS = new Set([
   "id",
   "type",
@@ -191,6 +212,10 @@ function mapUser(row: UserRow): User {
     ...(row.sso_provider === null ? {} : { sso_provider: row.sso_provider }),
     ...(row.sso_subject === null ? {} : { sso_subject: row.sso_subject })
   };
+}
+
+function mapWikiSpace(row: WikiSpaceRow): WikiSpace {
+  return row;
 }
 
 function appendScopedClauses(
@@ -868,6 +893,151 @@ export class Repository {
             .all(tenantId);
 
     return rows.map(mapUser);
+  }
+
+  createWikiSpace(space: WikiSpace): void {
+    this.db
+      .prepare<[string, string, string, string, WikiSpaceVisibility, string]>(
+        `INSERT INTO wiki_spaces (id, name, slug, tenant_id, visibility, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        space.id,
+        space.name,
+        space.slug,
+        space.tenant_id,
+        space.visibility,
+        space.created_at
+      );
+  }
+
+  getWikiSpace(id: string): WikiSpace | null {
+    const row = this.db
+      .prepare<[string], WikiSpaceRow>("SELECT * FROM wiki_spaces WHERE id = ?")
+      .get(id);
+
+    return row ? mapWikiSpace(row) : null;
+  }
+
+  getWikiSpaceBySlug(slug: string, tenantId: string): WikiSpace | null {
+    const row = this.db
+      .prepare<[string, string], WikiSpaceRow>(
+        `SELECT *
+         FROM wiki_spaces
+         WHERE slug = ? AND tenant_id = ?`
+      )
+      .get(slug, tenantId);
+
+    return row ? mapWikiSpace(row) : null;
+  }
+
+  listWikiSpaces(tenantId: string): WikiSpace[] {
+    const rows = this.db
+      .prepare<[string], WikiSpaceRow>(
+        `SELECT *
+         FROM wiki_spaces
+         WHERE tenant_id = ?
+         ORDER BY created_at ASC, name ASC`
+      )
+      .all(tenantId);
+
+    return rows.map(mapWikiSpace);
+  }
+
+  updateWikiSpace(
+    id: string,
+    updates: Partial<Pick<WikiSpace, "name" | "slug" | "visibility">>
+  ): void {
+    const existing = this.getWikiSpace(id);
+
+    if (!existing) {
+      throw new Error(`Wiki space not found: ${id}`);
+    }
+
+    const nextSpace: WikiSpace = {
+      ...existing,
+      ...updates,
+      id: existing.id,
+      tenant_id: existing.tenant_id,
+      created_at: existing.created_at
+    };
+
+    const result = this.db
+      .prepare<[string, string, WikiSpaceVisibility, string]>(
+        `UPDATE wiki_spaces
+         SET name = ?, slug = ?, visibility = ?
+         WHERE id = ?`
+      )
+      .run(nextSpace.name, nextSpace.slug, nextSpace.visibility, id);
+
+    if (result.changes === 0) {
+      throw new Error(`Wiki space not found: ${id}`);
+    }
+  }
+
+  deleteWikiSpace(id: string): void {
+    this.db.prepare<[string]>("DELETE FROM wiki_spaces WHERE id = ?").run(id);
+  }
+
+  setWikiPageUserPermission(
+    pageId: string,
+    userId: string,
+    level: "read" | "write" | "admin"
+  ): void {
+    this.db
+      .prepare<[string, string, "read" | "write" | "admin"]>(
+        `INSERT INTO wiki_page_permissions (page_id, user_id, role, level)
+         VALUES (?, ?, NULL, ?)
+         ON CONFLICT(page_id, user_id) DO UPDATE SET level = excluded.level, role = NULL`
+      )
+      .run(pageId, userId, level);
+  }
+
+  setWikiPageRolePermission(
+    pageId: string,
+    role: string,
+    level: "read" | "write" | "admin"
+  ): void {
+    this.db
+      .prepare<[string, string, "read" | "write" | "admin"]>(
+        `INSERT INTO wiki_page_permissions (page_id, user_id, role, level)
+         VALUES (?, NULL, ?, ?)
+         ON CONFLICT(page_id, role) DO UPDATE SET level = excluded.level, user_id = NULL`
+      )
+      .run(pageId, role, level);
+  }
+
+  listWikiPagePermissions(pageId: string): WikiPagePermissionRow[] {
+    return this.db
+      .prepare<[string], WikiPagePermissionRow>(
+        `SELECT page_id, user_id, role, level
+         FROM wiki_page_permissions
+         WHERE page_id = ?
+         ORDER BY user_id ASC, role ASC`
+      )
+      .all(pageId);
+  }
+
+  getWikiPageSpaceVisibility(pageId: string): WikiSpaceVisibility | null {
+    const row = this.db
+      .prepare<[string], WikiPageSpaceVisibilityRow>(
+        `SELECT wiki_spaces.visibility AS visibility
+         FROM wiki_pages
+         LEFT JOIN wiki_spaces ON wiki_spaces.id = wiki_pages.space_id
+         WHERE wiki_pages.id = ?`
+      )
+      .get(pageId);
+
+    return row?.visibility ?? null;
+  }
+
+  deleteWikiPageUserPermission(pageId: string, userId: string): void {
+    this.db
+      .prepare<[string, string]>(
+        `DELETE FROM wiki_page_permissions
+         WHERE page_id = ? AND user_id = ?`
+      )
+      .run(pageId, userId);
   }
 
   createEntity(name: string, type: Entity["type"]): Entity {

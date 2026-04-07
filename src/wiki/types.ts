@@ -7,6 +7,7 @@ export type WikiPageType =
   | "reference";
 
 export type WikiPageStatus = "draft" | "published" | "stale" | "archived";
+export type WikiSpaceVisibility = "private" | "internal" | "public";
 
 export const WIKI_PAGE_TYPES = [
   "topic",
@@ -23,6 +24,12 @@ export const WIKI_PAGE_STATUSES = [
   "stale",
   "archived"
 ] as const satisfies readonly WikiPageStatus[];
+
+export const WIKI_SPACE_VISIBILITIES = [
+  "private",
+  "internal",
+  "public"
+] as const satisfies readonly WikiSpaceVisibility[];
 
 export type ContentSourceType =
   | "web_article"
@@ -55,6 +62,15 @@ export interface WikiPage {
   updated_at: string;
   reviewed_at: string | null;
   published_at: string | null;
+}
+
+export interface WikiSpace {
+  id: string;
+  name: string;
+  slug: string;
+  tenant_id: string;
+  visibility: WikiSpaceVisibility;
+  created_at: string;
 }
 
 export interface WikiPageVersion {
