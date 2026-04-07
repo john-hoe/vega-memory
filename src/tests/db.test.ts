@@ -83,6 +83,7 @@ test("database initialization creates all tables", () => {
     assert.ok(tables.includes("performance_log"));
     assert.ok(tables.includes("metadata"));
     assert.ok(tables.includes("memories_fts"));
+    assert.ok(tables.includes("users"));
 
     const journalMode = db.pragma("journal_mode", { simple: true });
     const foreignKeys = db.pragma("foreign_keys", { simple: true });

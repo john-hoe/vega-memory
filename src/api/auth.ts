@@ -4,6 +4,7 @@ import type { Request, RequestHandler, Response } from "express";
 
 import type { VegaConfig } from "../config.js";
 import { TenantService } from "../core/tenant.js";
+import type { User } from "../core/user.js";
 import { Repository } from "../db/repository.js";
 
 export const DASHBOARD_AUTH_COOKIE = "vega_dashboard_auth";
@@ -13,7 +14,12 @@ const UNAUTHORIZED_RESPONSE = {
   error: "unauthorized"
 } as const;
 const DASHBOARD_SESSION_PRUNE_INTERVAL_MS = 60 * 1000;
-const dashboardSessions = new WeakMap<VegaConfig, Map<string, number>>();
+interface DashboardSession {
+  issuedAt: number;
+  user: User | null;
+}
+
+const dashboardSessions = new WeakMap<VegaConfig, Map<string, DashboardSession>>();
 const dashboardSessionPruneTimes = new WeakMap<VegaConfig, number>();
 
 const parseCookies = (cookieHeader: string | undefined): Record<string, string> => {
@@ -48,13 +54,27 @@ const parseCookies = (cookieHeader: string | undefined): Record<string, string> 
     }, {});
 };
 
-const getDashboardSessionStore = (config: VegaConfig): Map<string, number> => {
+const clearRequestAuth = (res: Response): void => {
+  delete res.locals.tenantId;
+  delete res.locals.user;
+};
+
+const setRequestUser = (res: Response, user: User | null): void => {
+  if (user === null) {
+    delete res.locals.user;
+    return;
+  }
+
+  res.locals.user = user;
+};
+
+const getDashboardSessionStore = (config: VegaConfig): Map<string, DashboardSession> => {
   const existingStore = dashboardSessions.get(config);
   if (existingStore) {
     return existingStore;
   }
 
-  const nextStore = new Map<string, number>();
+  const nextStore = new Map<string, DashboardSession>();
   dashboardSessions.set(config, nextStore);
   return nextStore;
 };
@@ -94,8 +114,15 @@ export const getDashboardSessionToken = (req: Request): string | undefined => {
   return cookies[DASHBOARD_AUTH_COOKIE];
 };
 
-export const registerDashboardSession = (config: VegaConfig, sessionToken: string): void => {
-  getDashboardSessionStore(config).set(sessionToken, Date.now());
+export const registerDashboardSession = (
+  config: VegaConfig,
+  sessionToken: string,
+  user?: User
+): void => {
+  getDashboardSessionStore(config).set(sessionToken, {
+    issuedAt: Date.now(),
+    user: user ?? null
+  });
 };
 
 export const revokeDashboardSession = (
@@ -116,8 +143,8 @@ export const pruneStaleSessions = (config: VegaConfig, now = Date.now()): void =
     return;
   }
 
-  for (const [sessionToken, issuedAt] of store) {
-    if (now - issuedAt > DASHBOARD_SESSION_MAX_AGE_MS) {
+  for (const [sessionToken, session] of store) {
+    if (now - session.issuedAt > DASHBOARD_SESSION_MAX_AGE_MS) {
       store.delete(sessionToken);
     }
   }
@@ -130,8 +157,16 @@ export const hasDashboardSession = (
   sessionToken: string | undefined,
   now = Date.now()
 ): boolean => {
+  return getDashboardSession(config, sessionToken, now) !== null;
+};
+
+export const getDashboardSession = (
+  config: VegaConfig,
+  sessionToken: string | undefined,
+  now = Date.now()
+): DashboardSession | null => {
   if (sessionToken === undefined) {
-    return false;
+    return null;
   }
 
   const lastPrunedAt = dashboardSessionPruneTimes.get(config) ?? 0;
@@ -139,22 +174,27 @@ export const hasDashboardSession = (
     pruneStaleSessions(config, now);
   }
 
-  const issuedAt = dashboardSessions.get(config)?.get(sessionToken);
-  if (issuedAt === undefined) {
-    return false;
+  const session = dashboardSessions.get(config)?.get(sessionToken);
+  if (session === undefined) {
+    return null;
   }
 
-  if (now - issuedAt > DASHBOARD_SESSION_MAX_AGE_MS) {
+  if (now - session.issuedAt > DASHBOARD_SESSION_MAX_AGE_MS) {
     dashboardSessions.get(config)?.delete(sessionToken);
-    return false;
+    return null;
   }
 
-  return true;
+  return session;
 };
 
 export const getRequestTenantId = (res: Response): string | null => {
   const tenantId = res.locals.tenantId;
   return typeof tenantId === "string" && tenantId.length > 0 ? tenantId : null;
+};
+
+export const getRequestUser = (res: Response): User | null => {
+  const user = res.locals.user;
+  return typeof user === "object" && user !== null ? (user as User) : null;
 };
 
 export const isAuthorizedBearerRequest = (
@@ -168,17 +208,20 @@ export const isAuthorizedBearerRequest = (
     const bearerToken = authorization.slice("Bearer ".length).trim();
 
     if (config.apiKey !== undefined && matchesConfiguredApiKey(bearerToken, config.apiKey)) {
+      setRequestUser(res, null);
       setRequestTenantId(res, null);
       return true;
     }
 
     const tenant = getTenantService(repository)?.getTenantByApiKey(bearerToken) ?? null;
     if (tenant !== null) {
+      setRequestUser(res, null);
       setRequestTenantId(res, tenant.id);
       return true;
     }
   }
 
+  setRequestUser(res, null);
   setRequestTenantId(res, null);
 
   if (config.apiKey === undefined) {
@@ -207,13 +250,20 @@ export const createAuthMiddleware = (config: VegaConfig, repository?: Repository
       return;
     }
 
-    if (config.apiKey !== undefined && !isAuthorizedRequest(req, res, config, repository)) {
-      res.status(401).json(UNAUTHORIZED_RESPONSE);
-      return;
+    clearRequestAuth(res);
+
+    const hasBearerToken = req.get("authorization")?.startsWith("Bearer ") ?? false;
+    const bearerAuthorized = isAuthorizedBearerRequest(req, res, config, repository);
+    const session = getDashboardSession(config, getDashboardSessionToken(req));
+
+    if (session !== null && (!hasBearerToken || !bearerAuthorized)) {
+      setRequestUser(res, session.user);
+      setRequestTenantId(res, session.user?.tenant_id ?? null);
     }
 
-    if (config.apiKey === undefined) {
-      isAuthorizedBearerRequest(req, res, config, repository);
+    if (config.apiKey !== undefined && !bearerAuthorized && session === null) {
+      res.status(401).json(UNAUTHORIZED_RESPONSE);
+      return;
     }
 
     next();

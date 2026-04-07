@@ -17,6 +17,7 @@ import type {
   RelationType,
   Session
 } from "../core/types.js";
+import type { User, UserRole } from "../core/user.js";
 import { initializeDatabase } from "./schema.js";
 
 interface MemoryRow {
@@ -113,6 +114,17 @@ interface EntityRelationRow {
   target_entity_type: Entity["type"];
 }
 
+interface UserRow {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  tenant_id: string;
+  sso_provider: string | null;
+  sso_subject: string | null;
+  created_at: string;
+}
+
 const SORT_COLUMNS = new Set([
   "id",
   "type",
@@ -165,6 +177,19 @@ function mapPerformanceLog(row: PerformanceLogRow): PerformanceLog {
     avg_similarity: row.avg_similarity,
     result_types: parseJsonArray(row.result_types ?? "[]") as PerformanceLog["result_types"],
     bm25_result_count: row.bm25_result_count ?? 0
+  };
+}
+
+function mapUser(row: UserRow): User {
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    role: row.role,
+    tenant_id: row.tenant_id,
+    created_at: row.created_at,
+    ...(row.sso_provider === null ? {} : { sso_provider: row.sso_provider }),
+    ...(row.sso_subject === null ? {} : { sso_subject: row.sso_subject })
   };
 }
 
@@ -732,6 +757,117 @@ export class Repository {
         session.ended_at,
         serializeJsonArray(session.memories_created)
       );
+  }
+
+  createUser(user: User): void {
+    this.db
+      .prepare<[string, string, string, UserRole, string, string | null, string | null, string]>(
+        `INSERT INTO users (
+           id,
+           email,
+           name,
+           role,
+           tenant_id,
+           sso_provider,
+           sso_subject,
+           created_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        user.id,
+        user.email,
+        user.name,
+        user.role,
+        user.tenant_id,
+        user.sso_provider ?? null,
+        user.sso_subject ?? null,
+        user.created_at
+      );
+  }
+
+  getUser(id: string): User | null {
+    const row = this.db
+      .prepare<[string], UserRow>("SELECT * FROM users WHERE id = ?")
+      .get(id);
+
+    return row ? mapUser(row) : null;
+  }
+
+  getUserByEmail(email: string): User | null {
+    const row = this.db
+      .prepare<[string], UserRow>("SELECT * FROM users WHERE lower(email) = lower(?)")
+      .get(email);
+
+    return row ? mapUser(row) : null;
+  }
+
+  getUserBySsoSubject(provider: string, subject: string): User | null {
+    const row = this.db
+      .prepare<[string, string], UserRow>(
+        `SELECT *
+         FROM users
+         WHERE sso_provider = ? AND sso_subject = ?`
+      )
+      .get(provider, subject);
+
+    return row ? mapUser(row) : null;
+  }
+
+  updateUser(
+    id: string,
+    updates: Partial<Pick<User, "email" | "name" | "role" | "tenant_id" | "sso_provider" | "sso_subject">>
+  ): void {
+    const existing = this.getUser(id);
+
+    if (!existing) {
+      throw new Error(`User not found: ${id}`);
+    }
+
+    const nextUser: User = {
+      ...existing,
+      ...updates,
+      id: existing.id,
+      created_at: existing.created_at
+    };
+
+    const result = this.db
+      .prepare<[string, string, UserRole, string, string | null, string | null, string]>(
+        `UPDATE users
+         SET email = ?, name = ?, role = ?, tenant_id = ?, sso_provider = ?, sso_subject = ?
+         WHERE id = ?`
+      )
+      .run(
+        nextUser.email,
+        nextUser.name,
+        nextUser.role,
+        nextUser.tenant_id,
+        nextUser.sso_provider ?? null,
+        nextUser.sso_subject ?? null,
+        id
+      );
+
+    if (result.changes === 0) {
+      throw new Error(`User not found: ${id}`);
+    }
+  }
+
+  listUsers(tenantId?: string): User[] {
+    const rows =
+      tenantId === undefined
+        ? this.db
+            .prepare<[], UserRow>("SELECT * FROM users ORDER BY created_at ASC, email ASC")
+            .all()
+        : this.db
+            .prepare<[string], UserRow>(
+              `SELECT *
+               FROM users
+               WHERE tenant_id = ?
+               ORDER BY created_at ASC, email ASC`
+            )
+            .all(tenantId);
+
+    return rows.map(mapUser);
   }
 
   createEntity(name: string, type: Entity["type"]): Entity {

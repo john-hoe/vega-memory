@@ -2,6 +2,7 @@ import { Router, type Request, type RequestHandler, type Response } from "expres
 
 import type { VegaConfig } from "../config.js";
 import { getRequestTenantId } from "./auth.js";
+import { requireRole, requireTenantAccess } from "./permissions.js";
 import { AnalyticsService } from "../core/analytics.js";
 import { CompactService } from "../core/compact.js";
 import { getHealthReport } from "../core/health.js";
@@ -392,6 +393,8 @@ export function createRouter(services: APIRouterServices): Router {
   const analyticsService = new AnalyticsService(services.repository);
   const pageManager = new PageManager(services.repository);
 
+  router.use(requireTenantAccess());
+
   router.post(
     "/api/store",
     handleRoute(async (req, res) => {
@@ -616,6 +619,7 @@ export function createRouter(services: APIRouterServices): Router {
 
   router.get(
     "/api/analytics",
+    requireRole("admin"),
     handleRoute((req, res) => {
       res.status(200).json(
         analyticsService.getUsageStats(
@@ -635,6 +639,7 @@ export function createRouter(services: APIRouterServices): Router {
 
   router.post(
     "/api/compact",
+    requireRole("admin"),
     handleRoute((req, res) => {
       const body = req.body === undefined ? {} : requireBody(req.body);
       const result = services.compactService.compact(

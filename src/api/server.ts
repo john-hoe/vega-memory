@@ -5,6 +5,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 
 import type { VegaConfig } from "../config.js";
 import { createAuthMiddleware, getRequestTenantId } from "./auth.js";
+import { createOidcRouter } from "./oidc.js";
 import { createRouter, type APIRouterServices } from "./routes.js";
 
 const isAddressInfo = (value: string | AddressInfo | null): value is AddressInfo =>
@@ -48,6 +49,7 @@ export function createAPIServer(
 
     next();
   });
+  app.use(createOidcRouter(config, services.repository));
   app.use(createAuthMiddleware(config, services.repository));
   app.use(
     createRouter({

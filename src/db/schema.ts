@@ -121,6 +121,17 @@ export function initializeDatabase(db: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      sso_provider TEXT,
+      sso_subject TEXT,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS usage_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       tenant_id TEXT,
@@ -167,13 +178,36 @@ export function initializeDatabase(db: Database.Database): void {
       auto_generated INTEGER NOT NULL DEFAULT 1,
       reviewed INTEGER NOT NULL DEFAULT 0,
       version INTEGER NOT NULL DEFAULT 1,
+      space_id TEXT,
       parent_id TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       reviewed_at TEXT,
       published_at TEXT,
+      FOREIGN KEY (space_id) REFERENCES wiki_spaces(id) ON DELETE SET NULL,
       FOREIGN KEY (parent_id) REFERENCES wiki_pages(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS wiki_spaces (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      visibility TEXT NOT NULL DEFAULT 'internal',
+      created_at TEXT NOT NULL,
+      UNIQUE(slug, tenant_id),
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS wiki_page_permissions (
+      page_id TEXT NOT NULL,
+      user_id TEXT,
+      role TEXT,
+      level TEXT NOT NULL,
+      UNIQUE(page_id, user_id),
+      CHECK ((user_id IS NOT NULL AND role IS NULL) OR (user_id IS NULL AND role IS NOT NULL)),
+      FOREIGN KEY (page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS wiki_page_versions (
@@ -252,6 +286,13 @@ export function initializeDatabase(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_tenants_active
       ON tenants(active);
 
+    CREATE INDEX IF NOT EXISTS idx_users_tenant_id
+      ON users(tenant_id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sso_identity
+      ON users(sso_provider, sso_subject)
+      WHERE sso_provider IS NOT NULL AND sso_subject IS NOT NULL;
+
     CREATE INDEX IF NOT EXISTS idx_wiki_pages_slug
       ON wiki_pages(slug);
 
@@ -266,6 +307,18 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_wiki_pages_parent
       ON wiki_pages(parent_id);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_pages_space
+      ON wiki_pages(space_id);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_spaces_tenant
+      ON wiki_spaces(tenant_id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_page_permissions_role
+      ON wiki_page_permissions(page_id, role);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_page_permissions_page
+      ON wiki_page_permissions(page_id);
 
     CREATE INDEX IF NOT EXISTS idx_wiki_page_versions_page
       ON wiki_page_versions(page_id);
@@ -304,6 +357,7 @@ export function initializeDatabase(db: Database.Database): void {
   ensureColumn(db, "performance_log", "tenant_id", "TEXT");
   ensureColumn(db, "performance_log", "result_types", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, "performance_log", "bm25_result_count", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "wiki_pages", "space_id", "TEXT");
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_memories_tenant_status
