@@ -13,8 +13,12 @@ export interface CloudBackupConfig {
 export interface VegaConfig {
   dbPath: string;
   dbEncryption: boolean;
+  embeddingProvider?: "ollama" | "openai";
   ollamaBaseUrl: string;
   ollamaModel: string;
+  openaiApiKey?: string;
+  openaiBaseUrl?: string;
+  openaiEmbeddingModel?: string;
   tokenBudget: number;
   similarityThreshold: number;
   shardingEnabled: boolean;
@@ -27,6 +31,10 @@ export interface VegaConfig {
   cacheDbPath: string;
   telegramBotToken: string | undefined;
   telegramChatId: string | undefined;
+  oidcIssuerUrl?: string;
+  oidcClientId?: string;
+  oidcClientSecret?: string;
+  oidcCallbackUrl?: string;
   encryptionKey?: string;
   cloudBackup?: CloudBackupConfig;
   customRedactionPatterns?: RedactionPattern[];
@@ -196,8 +204,13 @@ export const loadConfig = (): VegaConfig => {
   return {
     dbPath: expandHomePath(process.env.VEGA_DB_PATH ?? "./data/memory.db"),
     dbEncryption,
+    embeddingProvider:
+      process.env.VEGA_EMBEDDING_PROVIDER === "openai" ? "openai" : "ollama",
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
     ollamaModel: process.env.OLLAMA_MODEL ?? "bge-m3",
+    openaiApiKey: process.env.VEGA_OPENAI_API_KEY || undefined,
+    openaiBaseUrl: process.env.VEGA_OPENAI_BASE_URL || undefined,
+    openaiEmbeddingModel: process.env.VEGA_OPENAI_EMBEDDING_MODEL || undefined,
     tokenBudget: clamp(parseNumber(process.env.VEGA_TOKEN_BUDGET, 2000), 500, 10_000),
     similarityThreshold: clamp(parseNumber(process.env.VEGA_SIMILARITY_THRESHOLD, 0.85), 0, 1),
     shardingEnabled: parseBoolean(process.env.VEGA_SHARDING_ENABLED, false),
@@ -216,6 +229,10 @@ export const loadConfig = (): VegaConfig => {
     ),
     telegramBotToken: process.env.VEGA_TG_BOT_TOKEN || undefined,
     telegramChatId: process.env.VEGA_TG_CHAT_ID || undefined,
+    oidcIssuerUrl: process.env.VEGA_OIDC_ISSUER_URL || undefined,
+    oidcClientId: process.env.VEGA_OIDC_CLIENT_ID || undefined,
+    oidcClientSecret: process.env.VEGA_OIDC_CLIENT_SECRET || undefined,
+    oidcCallbackUrl: process.env.VEGA_OIDC_CALLBACK_URL || undefined,
     ...(encryptionKey === undefined ? {} : { encryptionKey }),
     cloudBackup: parseCloudBackup(),
     customRedactionPatterns: fileConfig.customRedactionPatterns ?? []

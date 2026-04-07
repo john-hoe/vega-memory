@@ -9,8 +9,12 @@ import { loadConfig } from "../config.js";
 test("loadConfig returns the documented defaults", () => {
   const previous = {
     VEGA_DB_PATH: process.env.VEGA_DB_PATH,
+    VEGA_EMBEDDING_PROVIDER: process.env.VEGA_EMBEDDING_PROVIDER,
     OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
     OLLAMA_MODEL: process.env.OLLAMA_MODEL,
+    VEGA_OPENAI_API_KEY: process.env.VEGA_OPENAI_API_KEY,
+    VEGA_OPENAI_BASE_URL: process.env.VEGA_OPENAI_BASE_URL,
+    VEGA_OPENAI_EMBEDDING_MODEL: process.env.VEGA_OPENAI_EMBEDDING_MODEL,
     VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
     VEGA_SHARDING_ENABLED: process.env.VEGA_SHARDING_ENABLED,
@@ -23,14 +27,22 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID,
+    VEGA_OIDC_ISSUER_URL: process.env.VEGA_OIDC_ISSUER_URL,
+    VEGA_OIDC_CLIENT_ID: process.env.VEGA_OIDC_CLIENT_ID,
+    VEGA_OIDC_CLIENT_SECRET: process.env.VEGA_OIDC_CLIENT_SECRET,
+    VEGA_OIDC_CALLBACK_URL: process.env.VEGA_OIDC_CALLBACK_URL,
     VEGA_DB_ENCRYPTION: process.env.VEGA_DB_ENCRYPTION,
     VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
     VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR
   };
 
   delete process.env.VEGA_DB_PATH;
+  delete process.env.VEGA_EMBEDDING_PROVIDER;
   delete process.env.OLLAMA_BASE_URL;
   delete process.env.OLLAMA_MODEL;
+  delete process.env.VEGA_OPENAI_API_KEY;
+  delete process.env.VEGA_OPENAI_BASE_URL;
+  delete process.env.VEGA_OPENAI_EMBEDDING_MODEL;
   delete process.env.VEGA_TOKEN_BUDGET;
   delete process.env.VEGA_SIMILARITY_THRESHOLD;
   delete process.env.VEGA_SHARDING_ENABLED;
@@ -43,14 +55,22 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_CACHE_DB;
   delete process.env.VEGA_TG_BOT_TOKEN;
   delete process.env.VEGA_TG_CHAT_ID;
+  delete process.env.VEGA_OIDC_ISSUER_URL;
+  delete process.env.VEGA_OIDC_CLIENT_ID;
+  delete process.env.VEGA_OIDC_CLIENT_SECRET;
+  delete process.env.VEGA_OIDC_CALLBACK_URL;
   delete process.env.VEGA_DB_ENCRYPTION;
   delete process.env.VEGA_ENCRYPTION_KEY;
   delete process.env.VEGA_CLOUD_BACKUP_DIR;
 
   assert.deepEqual(loadConfig(), {
     dbPath: "./data/memory.db",
+    embeddingProvider: "ollama",
     ollamaBaseUrl: "http://localhost:11434",
     ollamaModel: "bge-m3",
+    openaiApiKey: undefined,
+    openaiBaseUrl: undefined,
+    openaiEmbeddingModel: undefined,
     tokenBudget: 2000,
     similarityThreshold: 0.85,
     shardingEnabled: false,
@@ -62,6 +82,10 @@ test("loadConfig returns the documented defaults", () => {
     cacheDbPath: join(homedir(), ".vega", "cache.db"),
     telegramBotToken: undefined,
     telegramChatId: undefined,
+    oidcIssuerUrl: undefined,
+    oidcClientId: undefined,
+    oidcClientSecret: undefined,
+    oidcCallbackUrl: undefined,
     observerEnabled: false,
     dbEncryption: false,
     cloudBackup: undefined,
@@ -74,8 +98,12 @@ test("loadConfig returns the documented defaults", () => {
 test("loadConfig reads overrides from process.env", () => {
   const previous = {
     VEGA_DB_PATH: process.env.VEGA_DB_PATH,
+    VEGA_EMBEDDING_PROVIDER: process.env.VEGA_EMBEDDING_PROVIDER,
     OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
     OLLAMA_MODEL: process.env.OLLAMA_MODEL,
+    VEGA_OPENAI_API_KEY: process.env.VEGA_OPENAI_API_KEY,
+    VEGA_OPENAI_BASE_URL: process.env.VEGA_OPENAI_BASE_URL,
+    VEGA_OPENAI_EMBEDDING_MODEL: process.env.VEGA_OPENAI_EMBEDDING_MODEL,
     VEGA_TOKEN_BUDGET: process.env.VEGA_TOKEN_BUDGET,
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
     VEGA_SHARDING_ENABLED: process.env.VEGA_SHARDING_ENABLED,
@@ -88,14 +116,22 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID,
+    VEGA_OIDC_ISSUER_URL: process.env.VEGA_OIDC_ISSUER_URL,
+    VEGA_OIDC_CLIENT_ID: process.env.VEGA_OIDC_CLIENT_ID,
+    VEGA_OIDC_CLIENT_SECRET: process.env.VEGA_OIDC_CLIENT_SECRET,
+    VEGA_OIDC_CALLBACK_URL: process.env.VEGA_OIDC_CALLBACK_URL,
     VEGA_DB_ENCRYPTION: process.env.VEGA_DB_ENCRYPTION,
     VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
     VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR
   };
 
   process.env.VEGA_DB_PATH = "/tmp/vega.db";
+  process.env.VEGA_EMBEDDING_PROVIDER = "openai";
   process.env.OLLAMA_BASE_URL = "http://localhost:9999";
   process.env.OLLAMA_MODEL = "nomic-embed-text";
+  process.env.VEGA_OPENAI_API_KEY = "openai-secret";
+  process.env.VEGA_OPENAI_BASE_URL = "https://azure.example.com/openai/v1";
+  process.env.VEGA_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
   process.env.VEGA_TOKEN_BUDGET = "4096";
   process.env.VEGA_SIMILARITY_THRESHOLD = "0.91";
   process.env.VEGA_SHARDING_ENABLED = "true";
@@ -108,6 +144,10 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_CACHE_DB = "/tmp/vega-cache.db";
   process.env.VEGA_TG_BOT_TOKEN = "bot-token";
   process.env.VEGA_TG_CHAT_ID = "chat-id";
+  process.env.VEGA_OIDC_ISSUER_URL = "https://issuer.example.com";
+  process.env.VEGA_OIDC_CLIENT_ID = "vega-client";
+  process.env.VEGA_OIDC_CLIENT_SECRET = "vega-secret";
+  process.env.VEGA_OIDC_CALLBACK_URL = "http://127.0.0.1:3271/api/auth/oidc/callback";
   process.env.VEGA_DB_ENCRYPTION = "true";
   process.env.VEGA_ENCRYPTION_KEY =
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -115,8 +155,12 @@ test("loadConfig reads overrides from process.env", () => {
 
   assert.deepEqual(loadConfig(), {
     dbPath: "/tmp/vega.db",
+    embeddingProvider: "openai",
     ollamaBaseUrl: "http://localhost:9999",
     ollamaModel: "nomic-embed-text",
+    openaiApiKey: "openai-secret",
+    openaiBaseUrl: "https://azure.example.com/openai/v1",
+    openaiEmbeddingModel: "text-embedding-3-small",
     tokenBudget: 4096,
     similarityThreshold: 0.91,
     shardingEnabled: true,
@@ -128,6 +172,10 @@ test("loadConfig reads overrides from process.env", () => {
     cacheDbPath: "/tmp/vega-cache.db",
     telegramBotToken: "bot-token",
     telegramChatId: "chat-id",
+    oidcIssuerUrl: "https://issuer.example.com",
+    oidcClientId: "vega-client",
+    oidcClientSecret: "vega-secret",
+    oidcCallbackUrl: "http://127.0.0.1:3271/api/auth/oidc/callback",
     observerEnabled: true,
     dbEncryption: true,
     encryptionKey:
