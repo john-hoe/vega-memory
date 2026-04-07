@@ -8,6 +8,9 @@
   "scripts": {
     "build": "tsc && node scripts/copy-web-public.mjs",
     "dev": "tsc --watch",
+    "docker:build": "docker build -t vega-memory .",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down",
     "test": "node --test dist/tests/**/*.test.js"
   },
   "dependencies": {
