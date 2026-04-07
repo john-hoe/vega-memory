@@ -1,16 +1,21 @@
 import { Router, type Request, type RequestHandler, type Response } from "express";
 
 import type { VegaConfig } from "../config.js";
-import { getRequestTenantId } from "./auth.js";
+import { WebhookService } from "../integrations/webhooks.js";
+import { getRequestTenantId, getRequestUser } from "./auth.js";
 import { requireRole, requireTenantAccess } from "./permissions.js";
 import { AnalyticsService } from "../core/analytics.js";
+import { AuditService, buildAuditFiltersForQuery } from "../core/audit-service.js";
 import { CompactService } from "../core/compact.js";
 import { getHealthReport } from "../core/health.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
+import { UserService, type User, isUserRole } from "../core/user.js";
 import type {
   AuditContext,
+  AuditEntry,
+  AuditQueryFilters,
   Memory,
   MemorySource,
   MemoryType,
@@ -18,6 +23,8 @@ import type {
   SessionStartResult
 } from "../core/types.js";
 import { Repository } from "../db/repository.js";
+import { CommentService, type WikiComment } from "../wiki/comments.js";
+import { NotificationService, type WikiNotification } from "../wiki/notifications.js";
 import { PageManager } from "../wiki/page-manager.js";
 import { PagePermissionService } from "../wiki/permissions.js";
 import { searchWikiPages } from "../wiki/search.js";
@@ -89,6 +96,17 @@ const serializeMemory = (memory: Memory) => ({
   accessed_projects: memory.accessed_projects
 });
 
+const serializeAuditEntry = (entry: AuditEntry) => ({
+  id: entry.id,
+  timestamp: entry.timestamp,
+  actor: entry.actor,
+  action: entry.action,
+  memory_id: entry.memory_id,
+  detail: entry.detail,
+  ip: entry.ip,
+  tenant_id: entry.tenant_id ?? null
+});
+
 const serializeSessionStartResult = (result: SessionStartResult) => ({
   project: result.project,
   active_tasks: result.active_tasks.map(serializeMemory),
@@ -153,6 +171,8 @@ const serializePageWithBacklinks = (result: PageWithBacklinks) => ({
 });
 
 const serializeWikiPageVersion = (version: WikiPageVersion) => version;
+const serializeWikiComment = (comment: WikiComment) => comment;
+const serializeWikiNotification = (notification: WikiNotification) => notification;
 
 const flushResponse = (res: Response): void => {
   (res as Response & { flush?: () => void }).flush?.();
@@ -224,6 +244,14 @@ const requireBody = (body: unknown): Record<string, unknown> => {
   return body;
 };
 
+const requireRecord = (value: unknown, field: string): Record<string, unknown> => {
+  if (!isRecord(value)) {
+    throw new ApiError(400, `${field} must be a JSON object`);
+  }
+
+  return value;
+};
+
 const parseSingleValue = (value: unknown, field: string): string | undefined => {
   if (value === undefined) {
     return undefined;
@@ -248,6 +276,14 @@ const requireString = (value: unknown, field: string): string => {
   }
 
   return parsed;
+};
+
+const requireBoolean = (value: unknown, field: string): boolean => {
+  if (typeof value !== "boolean") {
+    throw new ApiError(400, `${field} must be a boolean`);
+  }
+
+  return value;
 };
 
 const parseNumber = (
@@ -398,6 +434,18 @@ const parseIntegerString = (value: unknown, field: string): number | undefined =
   });
 };
 
+const parseNonNegativeIntegerString = (value: unknown, field: string): number | undefined => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  return parseNumber(Number.parseInt(parsed, 10), field, {
+    integer: true,
+    min: 0
+  });
+};
+
 const parseDateString = (value: unknown, field: string): string | undefined => {
   const parsed = parseSingleValue(value, field);
   if (parsed === undefined) {
@@ -406,6 +454,19 @@ const parseDateString = (value: unknown, field: string): string | undefined => {
 
   if (Number.isNaN(new Date(parsed).getTime())) {
     throw new ApiError(400, `${field} must be a valid date`);
+  }
+
+  return parsed;
+};
+
+const parseUserRole = (value: unknown, field: string) => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    throw new ApiError(400, `${field} is required`);
+  }
+
+  if (!isUserRole(parsed)) {
+    throw new ApiError(400, `${field} must be one of admin, member, viewer`);
   }
 
   return parsed;
@@ -456,12 +517,77 @@ const assertSpaceAccess = (
   return space;
 };
 
+const assertPageAccess = (page: WikiPage, res: Response, spaceService: SpaceService): void => {
+  if (page.space_id === null) {
+    return;
+  }
+
+  const tenantId = getRequestTenantId(res);
+  if (tenantId !== null) {
+    assertSpaceAccess(spaceService.getSpace(page.space_id), tenantId, page.space_id);
+  }
+};
+
+const resolveActorUser = (
+  candidate: unknown,
+  res: Response,
+  repository: Repository
+): User => {
+  const requestUser = getRequestUser(res);
+
+  if (requestUser !== null) {
+    return requestUser;
+  }
+
+  const userId = parseSingleValue(candidate, "user_id");
+  if (userId === undefined) {
+    throw new ApiError(401, "authenticated user or user_id is required");
+  }
+
+  const user = repository.getUser(userId);
+  if (user === null) {
+    throw new ApiError(404, `User not found: ${userId}`);
+  }
+
+  const tenantId = getRequestTenantId(res);
+  if (tenantId !== null && user.tenant_id !== tenantId) {
+    throw new ApiError(403, "forbidden");
+  }
+
+  return user;
+};
+
+const getScopedTenantId = (res: Response, candidate: unknown): string | null => {
+  const requestTenantId = getRequestTenantId(res);
+  if (requestTenantId !== null) {
+    return requestTenantId;
+  }
+
+  return parseSingleValue(candidate, "tenant_id") ?? null;
+};
+
+const getAuditQueryFilters = (req: Request, res: Response): AuditQueryFilters => ({
+  actor: parseSingleValue(req.query.actor, "actor"),
+  action: parseSingleValue(req.query.action, "action"),
+  memoryId: parseSingleValue(req.query.memory_id ?? req.query.memoryId, "memory_id"),
+  since: parseDateString(req.query.since, "since"),
+  until: parseDateString(req.query.until, "until"),
+  tenantId: getRequestTenantId(res) ?? parseSingleValue(req.query.tenant_id, "tenant_id"),
+  limit: parseIntegerString(req.query.limit, "limit"),
+  offset: parseNonNegativeIntegerString(req.query.offset, "offset")
+});
+
 export function createRouter(services: APIRouterServices): Router {
   const router = Router();
   const analyticsService = new AnalyticsService(services.repository);
+  const auditService = new AuditService(services.repository);
   const pageManager = new PageManager(services.repository);
+  const userService = new UserService(services.repository);
+  const commentService = new CommentService(services.repository);
+  const notificationService = new NotificationService(services.repository);
   const spaceService = new SpaceService(services.repository);
   const pagePermissionService = new PagePermissionService(services.repository);
+  const webhookService = new WebhookService(services.config.webhooks);
 
   router.use(requireTenantAccess());
 
@@ -721,6 +847,209 @@ export function createRouter(services: APIRouterServices): Router {
     })
   );
 
+  router.get(
+    "/api/admin/audit",
+    requireRole("admin"),
+    handleRoute((req, res) => {
+      const filters = getAuditQueryFilters(req, res);
+
+      res.status(200).json({
+        total: auditService.count(filters),
+        entries: auditService.query(filters).map(serializeAuditEntry)
+      });
+    })
+  );
+
+  router.get(
+    "/api/admin/audit/stats",
+    requireRole("admin"),
+    handleRoute((req, res) => {
+      const filters = getAuditQueryFilters(req, res);
+      const { where, params } = buildAuditFiltersForQuery(filters);
+      const actionRows = services.repository.db
+        .prepare<unknown[], { name: string; total: number }>(
+          `SELECT action AS name, COUNT(*) AS total
+           FROM audit_log
+           ${where}
+           GROUP BY action
+           ORDER BY total DESC, action ASC`
+        )
+        .all(...params);
+      const actorRows = services.repository.db
+        .prepare<unknown[], { name: string; total: number }>(
+          `SELECT actor AS name, COUNT(*) AS total
+           FROM audit_log
+           ${where}
+           GROUP BY actor
+           ORDER BY total DESC, actor ASC`
+        )
+        .all(...params);
+
+      res.status(200).json({
+        total: auditService.count(filters),
+        by_action: Object.fromEntries(actionRows.map((row) => [row.name, row.total])),
+        by_actor: Object.fromEntries(actorRows.map((row) => [row.name, row.total]))
+      });
+    })
+  );
+
+  router.delete(
+    "/api/admin/audit/purge",
+    requireRole("admin"),
+    handleRoute((req, res) => {
+      const beforeValue =
+        parseDateString(req.query.before, "before") ??
+        parseDateString((isRecord(req.body) ? req.body.before : undefined), "before");
+
+      if (beforeValue === undefined) {
+        throw new ApiError(400, "before is required");
+      }
+
+      res.status(200).json({
+        deleted: auditService.purge(new Date(beforeValue))
+      });
+    })
+  );
+
+  router.get(
+    "/api/admin/users",
+    requireRole("admin"),
+    handleRoute((req, res) => {
+      const tenantId = getScopedTenantId(res, req.query.tenant_id) ?? undefined;
+
+      res.status(200).json(userService.listUsers(tenantId));
+    })
+  );
+
+  router.patch(
+    "/api/admin/users/:id/role",
+    requireRole("admin"),
+    handleRoute((req, res) => {
+      const body = requireBody(req.body);
+      const id = requireString(req.params.id, "id");
+      const existingUser = services.repository.getUser(id);
+
+      if (existingUser === null) {
+        throw new ApiError(404, `User not found: ${id}`);
+      }
+
+      const tenantId = getRequestTenantId(res);
+      if (tenantId !== null && existingUser.tenant_id !== tenantId) {
+        throw new ApiError(403, "forbidden");
+      }
+
+      userService.updateUser(id, {
+        role: parseUserRole(body.role, "role")
+      });
+
+      res.status(200).json(services.repository.getUser(id));
+    })
+  );
+
+  router.post(
+    "/api/webhooks",
+    handleRoute((req, res) => {
+      const body = requireBody(req.body);
+      const secret = parseSingleValue(body.secret, "secret");
+      const webhook = {
+        url: requireString(body.url, "url"),
+        events: parseStringArray(body.events, "events") ?? (() => {
+          throw new ApiError(400, "events is required");
+        })(),
+        enabled: requireBoolean(body.enabled, "enabled"),
+        ...(secret === undefined ? {} : { secret })
+      };
+
+      webhookService.registerWebhook(webhook);
+      res.status(201).json(webhook);
+    })
+  );
+
+  router.get(
+    "/api/webhooks",
+    handleRoute((_req, res) => {
+      res.status(200).json(webhookService.listWebhooks());
+    })
+  );
+
+  router.delete(
+    "/api/webhooks/:url",
+    handleRoute((req, res) => {
+      const url = requireString(req.params.url, "url");
+
+      webhookService.removeWebhook(url);
+      res.status(200).json({
+        url,
+        action: "deleted"
+      });
+    })
+  );
+
+  router.post(
+    "/api/webhooks/test",
+    handleRoute(async (req, res) => {
+      const body = req.body === undefined ? {} : requireBody(req.body);
+      const event = parseSingleValue(body.event, "event") ?? "webhook.test";
+      const data = body.data === undefined ? {} : requireRecord(body.data, "data");
+      const result = await webhookService.emit(event, data);
+
+      res.status(200).json({
+        event,
+        ...result
+      });
+    })
+  );
+
+  router.get(
+    "/api/admin/dashboard",
+    requireRole("admin"),
+    handleRoute(async (req, res) => {
+      const tenantId = getScopedTenantId(res, req.query.tenant_id);
+      const totalUsers = userService.listUsers(tenantId ?? undefined).length;
+      const totalMemories =
+        services.repository.db
+          .prepare<unknown[], { total: number }>(
+            `SELECT COUNT(*) AS total
+             FROM memories
+             ${tenantId === null ? "" : "WHERE tenant_id IS ?"}`
+          )
+          .get(...(tenantId === null ? [] : [tenantId]))?.total ?? 0;
+      const activeTenants =
+        tenantId === null
+          ? services.repository.db
+              .prepare<[], { total: number }>(
+                `SELECT COUNT(*) AS total
+                 FROM tenants
+                 WHERE active = 1`
+              )
+              .get()?.total ?? 0
+          : services.repository.db
+              .prepare<[string], { total: number }>(
+                `SELECT COUNT(*) AS total
+                 FROM tenants
+                 WHERE active = 1 AND id = ?`
+              )
+              .get(tenantId)?.total ?? 0;
+      const health = await getHealthReport(services.repository, services.config);
+      const usage = analyticsService.getUsageStats(tenantId ?? undefined);
+      const recentActivity = services.repository.getRecentPerformanceLogs(10);
+
+      res.status(200).json({
+        health,
+        usage,
+        recent_activity: recentActivity,
+        total_users: totalUsers,
+        total_memories: totalMemories,
+        active_tenants: activeTenants,
+        recent_audit_events: auditService.query({
+          tenantId,
+          limit: 10,
+          offset: 0
+        }).map(serializeAuditEntry)
+      });
+    })
+  );
+
   router.post(
     "/api/wiki/spaces",
     handleRoute((req, res) => {
@@ -847,6 +1176,112 @@ export function createRouter(services: APIRouterServices): Router {
         page_id: pageId,
         action: "updated",
         permissions: pagePermissionService.getPermissions(pageId)
+      });
+    })
+  );
+
+  router.post(
+    "/api/wiki/pages/:id/comments",
+    handleRoute((req, res) => {
+      const body = requireBody(req.body);
+      const pageId = requireString(req.params.id, "id");
+      const page = pageManager.getPage(pageId);
+
+      if (!page) {
+        throw new ApiError(404, `Wiki page not found: ${pageId}`);
+      }
+
+      assertPageAccess(page, res, spaceService);
+      const actor = resolveActorUser(body.user_id, res, services.repository);
+
+      const comment = commentService.addComment(
+        page.id,
+        actor.id,
+        requireString(body.content, "content"),
+        parseSingleValue(body.parent_comment_id, "parent_comment_id")
+      );
+
+      res.status(201).json(serializeWikiComment(comment));
+    })
+  );
+
+  router.get(
+    "/api/wiki/pages/:id/comments",
+    handleRoute((req, res) => {
+      const pageId = requireString(req.params.id, "id");
+      const page = pageManager.getPage(pageId);
+
+      if (!page) {
+        throw new ApiError(404, `Wiki page not found: ${pageId}`);
+      }
+
+      assertPageAccess(page, res, spaceService);
+
+      res.status(200).json(
+        commentService
+          .getComments(page.id, {
+            limit: parseIntegerString(req.query.limit, "limit"),
+            sort: parseSingleValue(req.query.sort, "sort")
+          })
+          .map(serializeWikiComment)
+      );
+    })
+  );
+
+  router.patch(
+    "/api/wiki/comments/:id",
+    handleRoute((req, res) => {
+      const body = requireBody(req.body);
+      const commentId = requireString(req.params.id, "id");
+      const actor = resolveActorUser(body.user_id, res, services.repository);
+      const comment = commentService.updateComment(
+        commentId,
+        actor.id,
+        requireString(body.content, "content")
+      );
+
+      res.status(200).json(serializeWikiComment(comment));
+    })
+  );
+
+  router.delete(
+    "/api/wiki/comments/:id",
+    handleRoute((req, res) => {
+      const body = req.body === undefined ? {} : requireBody(req.body);
+      const commentId = requireString(req.params.id, "id");
+      const actor = resolveActorUser(body.user_id ?? req.query.user_id, res, services.repository);
+
+      commentService.deleteComment(commentId, actor.id);
+
+      res.status(200).json({
+        id: commentId,
+        action: "deleted"
+      });
+    })
+  );
+
+  router.get(
+    "/api/wiki/notifications",
+    handleRoute((req, res) => {
+      const actor = resolveActorUser(req.query.user_id, res, services.repository);
+
+      res.status(200).json(
+        notificationService.getUnread(actor.id).map(serializeWikiNotification)
+      );
+    })
+  );
+
+  router.post(
+    "/api/wiki/notifications/read",
+    handleRoute((req, res) => {
+      const body = req.body === undefined ? {} : requireBody(req.body);
+      const actor = resolveActorUser(body.user_id, res, services.repository);
+
+      notificationService.markAllRead(actor.id);
+
+      res.status(200).json({
+        user_id: actor.id,
+        action: "marked_all_read"
       });
     })
   );

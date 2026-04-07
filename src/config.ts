@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import type { RedactionPattern } from "./core/types.js";
+import type { WebhookConfig } from "./integrations/webhooks.js";
 
 export interface CloudBackupConfig {
   enabled: boolean;
@@ -31,6 +32,10 @@ export interface VegaConfig {
   cacheDbPath: string;
   telegramBotToken: string | undefined;
   telegramChatId: string | undefined;
+  slackWebhookUrl?: string;
+  slackBotToken?: string;
+  slackChannel?: string;
+  slackEnabled?: boolean;
   oidcIssuerUrl?: string;
   oidcClientId?: string;
   oidcClientSecret?: string;
@@ -38,6 +43,7 @@ export interface VegaConfig {
   encryptionKey?: string;
   cloudBackup?: CloudBackupConfig;
   customRedactionPatterns?: RedactionPattern[];
+  webhooks?: WebhookConfig[];
 }
 
 export const DB_ENCRYPTION_KEY_MISSING_MESSAGE =
@@ -134,6 +140,54 @@ const parseCustomRedactionPatterns = (value: unknown): RedactionPattern[] | unde
   });
 };
 
+const parseWebhookConfig = (value: unknown): WebhookConfig => {
+  if (!isRecord(value)) {
+    throw new Error("VEGA_WEBHOOKS entries must be objects");
+  }
+
+  const url = parseOptionalString(value.url);
+
+  if (url === undefined) {
+    throw new Error("VEGA_WEBHOOKS entries must include a non-empty url");
+  }
+
+  if (!Array.isArray(value.events) || value.events.some((event) => typeof event !== "string")) {
+    throw new Error("VEGA_WEBHOOKS entries must include an events string array");
+  }
+
+  const enabled = parseOptionalBoolean(value.enabled);
+
+  if (enabled === undefined) {
+    throw new Error("VEGA_WEBHOOKS entries must include an enabled boolean");
+  }
+
+  const events = value.events
+    .map((event) => event.trim())
+    .filter((event) => event.length > 0);
+  const secret = parseOptionalString(value.secret);
+
+  return {
+    url,
+    events,
+    enabled,
+    ...(secret === undefined ? {} : { secret })
+  };
+};
+
+const parseWebhookConfigs = (value: string | undefined): WebhookConfig[] | undefined => {
+  if (value === undefined || value.trim().length === 0 || value.trim() === "undefined") {
+    return undefined;
+  }
+
+  const parsed = JSON.parse(value) as unknown;
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("VEGA_WEBHOOKS must be a JSON array");
+  }
+
+  return parsed.map((entry) => parseWebhookConfig(entry));
+};
+
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined) {
     return fallback;
@@ -200,6 +254,7 @@ export const loadConfig = (): VegaConfig => {
       ? fileConfig.dbEncryption ?? false
       : process.env.VEGA_DB_ENCRYPTION === "true";
   const encryptionKey = process.env.VEGA_ENCRYPTION_KEY || undefined;
+  const webhooks = parseWebhookConfigs(process.env.VEGA_WEBHOOKS);
 
   return {
     dbPath: expandHomePath(process.env.VEGA_DB_PATH ?? "./data/memory.db"),
@@ -229,13 +284,18 @@ export const loadConfig = (): VegaConfig => {
     ),
     telegramBotToken: process.env.VEGA_TG_BOT_TOKEN || undefined,
     telegramChatId: process.env.VEGA_TG_CHAT_ID || undefined,
+    slackWebhookUrl: process.env.VEGA_SLACK_WEBHOOK_URL || undefined,
+    slackBotToken: process.env.VEGA_SLACK_BOT_TOKEN || undefined,
+    slackChannel: process.env.VEGA_SLACK_CHANNEL || undefined,
+    slackEnabled: parseBoolean(process.env.VEGA_SLACK_ENABLED, false),
     oidcIssuerUrl: process.env.VEGA_OIDC_ISSUER_URL || undefined,
     oidcClientId: process.env.VEGA_OIDC_CLIENT_ID || undefined,
     oidcClientSecret: process.env.VEGA_OIDC_CLIENT_SECRET || undefined,
     oidcCallbackUrl: process.env.VEGA_OIDC_CALLBACK_URL || undefined,
     ...(encryptionKey === undefined ? {} : { encryptionKey }),
     cloudBackup: parseCloudBackup(),
-    customRedactionPatterns: fileConfig.customRedactionPatterns ?? []
+    customRedactionPatterns: fileConfig.customRedactionPatterns ?? [],
+    ...(webhooks === undefined ? {} : { webhooks })
   };
 };
 

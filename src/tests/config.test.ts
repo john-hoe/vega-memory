@@ -27,13 +27,18 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID,
+    VEGA_SLACK_WEBHOOK_URL: process.env.VEGA_SLACK_WEBHOOK_URL,
+    VEGA_SLACK_BOT_TOKEN: process.env.VEGA_SLACK_BOT_TOKEN,
+    VEGA_SLACK_CHANNEL: process.env.VEGA_SLACK_CHANNEL,
+    VEGA_SLACK_ENABLED: process.env.VEGA_SLACK_ENABLED,
     VEGA_OIDC_ISSUER_URL: process.env.VEGA_OIDC_ISSUER_URL,
     VEGA_OIDC_CLIENT_ID: process.env.VEGA_OIDC_CLIENT_ID,
     VEGA_OIDC_CLIENT_SECRET: process.env.VEGA_OIDC_CLIENT_SECRET,
     VEGA_OIDC_CALLBACK_URL: process.env.VEGA_OIDC_CALLBACK_URL,
     VEGA_DB_ENCRYPTION: process.env.VEGA_DB_ENCRYPTION,
     VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
-    VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR
+    VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR,
+    VEGA_WEBHOOKS: process.env.VEGA_WEBHOOKS
   };
 
   delete process.env.VEGA_DB_PATH;
@@ -55,6 +60,10 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_CACHE_DB;
   delete process.env.VEGA_TG_BOT_TOKEN;
   delete process.env.VEGA_TG_CHAT_ID;
+  delete process.env.VEGA_SLACK_WEBHOOK_URL;
+  delete process.env.VEGA_SLACK_BOT_TOKEN;
+  delete process.env.VEGA_SLACK_CHANNEL;
+  delete process.env.VEGA_SLACK_ENABLED;
   delete process.env.VEGA_OIDC_ISSUER_URL;
   delete process.env.VEGA_OIDC_CLIENT_ID;
   delete process.env.VEGA_OIDC_CLIENT_SECRET;
@@ -62,6 +71,7 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_DB_ENCRYPTION;
   delete process.env.VEGA_ENCRYPTION_KEY;
   delete process.env.VEGA_CLOUD_BACKUP_DIR;
+  delete process.env.VEGA_WEBHOOKS;
 
   assert.deepEqual(loadConfig(), {
     dbPath: "./data/memory.db",
@@ -82,6 +92,10 @@ test("loadConfig returns the documented defaults", () => {
     cacheDbPath: join(homedir(), ".vega", "cache.db"),
     telegramBotToken: undefined,
     telegramChatId: undefined,
+    slackWebhookUrl: undefined,
+    slackBotToken: undefined,
+    slackChannel: undefined,
+    slackEnabled: false,
     oidcIssuerUrl: undefined,
     oidcClientId: undefined,
     oidcClientSecret: undefined,
@@ -116,13 +130,18 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_CACHE_DB: process.env.VEGA_CACHE_DB,
     VEGA_TG_BOT_TOKEN: process.env.VEGA_TG_BOT_TOKEN,
     VEGA_TG_CHAT_ID: process.env.VEGA_TG_CHAT_ID,
+    VEGA_SLACK_WEBHOOK_URL: process.env.VEGA_SLACK_WEBHOOK_URL,
+    VEGA_SLACK_BOT_TOKEN: process.env.VEGA_SLACK_BOT_TOKEN,
+    VEGA_SLACK_CHANNEL: process.env.VEGA_SLACK_CHANNEL,
+    VEGA_SLACK_ENABLED: process.env.VEGA_SLACK_ENABLED,
     VEGA_OIDC_ISSUER_URL: process.env.VEGA_OIDC_ISSUER_URL,
     VEGA_OIDC_CLIENT_ID: process.env.VEGA_OIDC_CLIENT_ID,
     VEGA_OIDC_CLIENT_SECRET: process.env.VEGA_OIDC_CLIENT_SECRET,
     VEGA_OIDC_CALLBACK_URL: process.env.VEGA_OIDC_CALLBACK_URL,
     VEGA_DB_ENCRYPTION: process.env.VEGA_DB_ENCRYPTION,
     VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
-    VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR
+    VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR,
+    VEGA_WEBHOOKS: process.env.VEGA_WEBHOOKS
   };
 
   process.env.VEGA_DB_PATH = "/tmp/vega.db";
@@ -144,6 +163,10 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_CACHE_DB = "/tmp/vega-cache.db";
   process.env.VEGA_TG_BOT_TOKEN = "bot-token";
   process.env.VEGA_TG_CHAT_ID = "chat-id";
+  process.env.VEGA_SLACK_WEBHOOK_URL = "https://hooks.slack.test/services/T000/B000/XXX";
+  process.env.VEGA_SLACK_BOT_TOKEN = "xoxb-test-token";
+  process.env.VEGA_SLACK_CHANNEL = "#vega-alerts";
+  process.env.VEGA_SLACK_ENABLED = "true";
   process.env.VEGA_OIDC_ISSUER_URL = "https://issuer.example.com";
   process.env.VEGA_OIDC_CLIENT_ID = "vega-client";
   process.env.VEGA_OIDC_CLIENT_SECRET = "vega-secret";
@@ -152,6 +175,14 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_ENCRYPTION_KEY =
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
   process.env.VEGA_CLOUD_BACKUP_DIR = "/tmp/vega-cloud";
+  process.env.VEGA_WEBHOOKS = JSON.stringify([
+    {
+      url: "https://example.com/hooks/memory",
+      secret: "top-secret",
+      events: ["memory.created", "memory.updated"],
+      enabled: true
+    }
+  ]);
 
   assert.deepEqual(loadConfig(), {
     dbPath: "/tmp/vega.db",
@@ -172,6 +203,10 @@ test("loadConfig reads overrides from process.env", () => {
     cacheDbPath: "/tmp/vega-cache.db",
     telegramBotToken: "bot-token",
     telegramChatId: "chat-id",
+    slackWebhookUrl: "https://hooks.slack.test/services/T000/B000/XXX",
+    slackBotToken: "xoxb-test-token",
+    slackChannel: "#vega-alerts",
+    slackEnabled: true,
     oidcIssuerUrl: "https://issuer.example.com",
     oidcClientId: "vega-client",
     oidcClientSecret: "vega-secret",
@@ -185,10 +220,56 @@ test("loadConfig reads overrides from process.env", () => {
       provider: "local-sync",
       destDir: "/tmp/vega-cloud"
     },
-    customRedactionPatterns: []
+    customRedactionPatterns: [],
+    webhooks: [
+      {
+        url: "https://example.com/hooks/memory",
+        secret: "top-secret",
+        events: ["memory.created", "memory.updated"],
+        enabled: true
+      }
+    ]
   });
 
   Object.assign(process.env, previous);
+});
+
+test("loadConfig reads webhook configs from VEGA_WEBHOOKS", () => {
+  const previous = {
+    VEGA_WEBHOOKS: process.env.VEGA_WEBHOOKS
+  };
+
+  try {
+    process.env.VEGA_WEBHOOKS = JSON.stringify([
+      {
+        url: "https://jira.example/webhook",
+        events: ["memory.created"],
+        enabled: true
+      },
+      {
+        url: "https://github.example/webhook",
+        secret: "shared-secret",
+        events: ["memory.updated", "memory.deleted"],
+        enabled: false
+      }
+    ]);
+
+    assert.deepEqual(loadConfig().webhooks, [
+      {
+        url: "https://jira.example/webhook",
+        events: ["memory.created"],
+        enabled: true
+      },
+      {
+        url: "https://github.example/webhook",
+        secret: "shared-secret",
+        events: ["memory.updated", "memory.deleted"],
+        enabled: false
+      }
+    ]);
+  } finally {
+    Object.assign(process.env, previous);
+  }
 });
 
 test("loadConfig clamps invalid numeric values", () => {

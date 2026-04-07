@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from "uuid";
 import type {
   AuditContext,
   AuditEntry,
+  AuditQueryFilters,
   Entity,
   EntityRelation,
   GraphTraversal,
@@ -18,6 +19,8 @@ import type {
   Session
 } from "../core/types.js";
 import type { User, UserRole } from "../core/user.js";
+import type { WikiComment } from "../wiki/comments.js";
+import type { WikiNotification } from "../wiki/notifications.js";
 import type { WikiSpace, WikiSpaceVisibility } from "../wiki/types.js";
 import { initializeDatabase } from "./schema.js";
 
@@ -51,6 +54,7 @@ interface AuditRow {
   memory_id: string | null;
   detail: string;
   ip: string | null;
+  tenant_id: string | null;
 }
 
 interface MemoryVersionRow {
@@ -142,8 +146,33 @@ interface WikiPagePermissionRow {
   level: "read" | "write" | "admin";
 }
 
+interface WikiCommentRow {
+  id: string;
+  page_id: string;
+  user_id: string;
+  content: string;
+  mentions: string;
+  parent_comment_id: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+interface WikiNotificationRow {
+  id: string;
+  user_id: string;
+  type: WikiNotification["type"];
+  source_id: string;
+  message: string;
+  read: number;
+  created_at: string;
+}
+
 interface WikiPageSpaceVisibilityRow {
   visibility: WikiSpaceVisibility | null;
+}
+
+interface WikiPageTenantRow {
+  tenant_id: string | null;
 }
 
 const SORT_COLUMNS = new Set([
@@ -159,6 +188,15 @@ const SORT_COLUMNS = new Set([
   "status",
   "verified",
   "scope"
+]);
+
+const WIKI_COMMENT_SORT_COLUMNS = new Set([
+  "id",
+  "page_id",
+  "user_id",
+  "parent_comment_id",
+  "created_at",
+  "updated_at"
 ]);
 
 function parseJsonArray(value: string): string[] {
@@ -218,6 +256,26 @@ function mapWikiSpace(row: WikiSpaceRow): WikiSpace {
   return row;
 }
 
+function mapWikiComment(row: WikiCommentRow): WikiComment {
+  return {
+    id: row.id,
+    page_id: row.page_id,
+    user_id: row.user_id,
+    content: row.content,
+    mentions: parseJsonArray(row.mentions),
+    created_at: row.created_at,
+    ...(row.parent_comment_id === null ? {} : { parent_comment_id: row.parent_comment_id }),
+    ...(row.updated_at === null ? {} : { updated_at: row.updated_at })
+  };
+}
+
+function mapWikiNotification(row: WikiNotificationRow): WikiNotification {
+  return {
+    ...row,
+    read: row.read === 1
+  };
+}
+
 function appendScopedClauses(
   clauses: string[],
   params: unknown[],
@@ -272,13 +330,32 @@ function normalizeSort(sort?: string): string {
   return `${column} ${direction.toUpperCase()}`;
 }
 
+function normalizeWikiCommentSort(sort?: string): string {
+  if (!sort) {
+    return "created_at ASC";
+  }
+
+  const match = /^([a-z_]+)(?:\s+(ASC|DESC))?$/i.exec(sort.trim());
+  if (!match) {
+    throw new Error(`Unsupported sort: ${sort}`);
+  }
+
+  const [, column, direction = "ASC"] = match;
+  if (!WIKI_COMMENT_SORT_COLUMNS.has(column)) {
+    throw new Error(`Unsupported sort column: ${column}`);
+  }
+
+  return `${column} ${direction.toUpperCase()}`;
+}
+
 function timestamp(): string {
   return new Date().toISOString();
 }
 
 const resolveAuditContext = (auditContext?: AuditContext): AuditContext => ({
   actor: auditContext?.actor ?? "system",
-  ip: auditContext?.ip ?? null
+  ip: auditContext?.ip ?? null,
+  tenant_id: auditContext?.tenant_id ?? null
 });
 
 function arraysEqual(left: string[], right: string[]): boolean {
@@ -376,7 +453,8 @@ export class Repository {
         action: "create",
         memory_id: memory.id,
         detail: `Created memory ${memory.id}`,
-        ip: resolvedAuditContext.ip
+        ip: resolvedAuditContext.ip,
+        tenant_id: memory.tenant_id ?? resolvedAuditContext.tenant_id ?? null
       });
     });
 
@@ -519,7 +597,8 @@ export class Repository {
         action: "update",
         memory_id: id,
         detail: `Updated memory ${id}`,
-        ip: resolvedAuditContext.ip
+        ip: resolvedAuditContext.ip,
+        tenant_id: nextMemory.tenant_id ?? resolvedAuditContext.tenant_id ?? null
       });
     });
 
@@ -557,7 +636,8 @@ export class Repository {
         action: "delete",
         memory_id: id,
         detail: `Deleted memory ${id}`,
-        ip: resolvedAuditContext.ip
+        ip: resolvedAuditContext.ip,
+        tenant_id: existing.tenant_id ?? resolvedAuditContext.tenant_id ?? null
       });
     });
 
@@ -1031,6 +1111,19 @@ export class Repository {
     return row?.visibility ?? null;
   }
 
+  getWikiPageTenantId(pageId: string): string | null {
+    const row = this.db
+      .prepare<[string], WikiPageTenantRow>(
+        `SELECT wiki_spaces.tenant_id AS tenant_id
+         FROM wiki_pages
+         LEFT JOIN wiki_spaces ON wiki_spaces.id = wiki_pages.space_id
+         WHERE wiki_pages.id = ?`
+      )
+      .get(pageId);
+
+    return row?.tenant_id ?? null;
+  }
+
   deleteWikiPageUserPermission(pageId: string, userId: string): void {
     this.db
       .prepare<[string, string]>(
@@ -1038,6 +1131,155 @@ export class Repository {
          WHERE page_id = ? AND user_id = ?`
       )
       .run(pageId, userId);
+  }
+
+  createWikiComment(comment: WikiComment): void {
+    this.db
+      .prepare<[string, string, string, string, string, string | null, string, string | null]>(
+        `INSERT INTO wiki_comments (
+           id,
+           page_id,
+           user_id,
+           content,
+           mentions,
+           parent_comment_id,
+           created_at,
+           updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        comment.id,
+        comment.page_id,
+        comment.user_id,
+        comment.content,
+        serializeJsonArray(comment.mentions),
+        comment.parent_comment_id ?? null,
+        comment.created_at,
+        comment.updated_at ?? null
+      );
+  }
+
+  getWikiComment(id: string): WikiComment | null {
+    const row = this.db
+      .prepare<[string], WikiCommentRow>("SELECT * FROM wiki_comments WHERE id = ?")
+      .get(id);
+
+    return row ? mapWikiComment(row) : null;
+  }
+
+  listWikiComments(
+    pageId: string,
+    options: {
+      limit?: number;
+      sort?: string;
+    } = {}
+  ): WikiComment[] {
+    const limit = normalizePositiveInteger(options.limit ?? 100, 100);
+    const orderBy = normalizeWikiCommentSort(options.sort);
+    const rows = this.db
+      .prepare<[string, number], WikiCommentRow>(
+        `SELECT *
+         FROM wiki_comments
+         WHERE page_id = ?
+         ORDER BY ${orderBy}
+         LIMIT ?`
+      )
+      .all(pageId, limit);
+
+    return rows.map(mapWikiComment);
+  }
+
+  listWikiCommentThread(parentCommentId: string): WikiComment[] {
+    const rows = this.db
+      .prepare<[string], WikiCommentRow>(
+        `SELECT *
+         FROM wiki_comments
+         WHERE parent_comment_id = ?
+         ORDER BY created_at ASC`
+      )
+      .all(parentCommentId);
+
+    return rows.map(mapWikiComment);
+  }
+
+  updateWikiComment(
+    id: string,
+    updates: Pick<WikiComment, "content" | "mentions"> & { updated_at: string }
+  ): void {
+    const result = this.db
+      .prepare<[string, string, string, string]>(
+        `UPDATE wiki_comments
+         SET content = ?, mentions = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(updates.content, serializeJsonArray(updates.mentions), updates.updated_at, id);
+
+    if (result.changes === 0) {
+      throw new Error(`Wiki comment not found: ${id}`);
+    }
+  }
+
+  deleteWikiComment(id: string): void {
+    this.db.prepare<[string]>("DELETE FROM wiki_comments WHERE id = ?").run(id);
+  }
+
+  createWikiNotification(notification: WikiNotification): void {
+    this.db
+      .prepare<[string, string, WikiNotification["type"], string, string, number, string]>(
+        `INSERT INTO wiki_notifications (
+           id,
+           user_id,
+           type,
+           source_id,
+           message,
+           read,
+           created_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        notification.id,
+        notification.user_id,
+        notification.type,
+        notification.source_id,
+        notification.message,
+        notification.read ? 1 : 0,
+        notification.created_at
+      );
+  }
+
+  listUnreadWikiNotifications(userId: string): WikiNotification[] {
+    const rows = this.db
+      .prepare<[string], WikiNotificationRow>(
+        `SELECT *
+         FROM wiki_notifications
+         WHERE user_id = ? AND read = 0
+         ORDER BY created_at DESC`
+      )
+      .all(userId);
+
+    return rows.map(mapWikiNotification);
+  }
+
+  markWikiNotificationRead(notificationId: string): void {
+    this.db
+      .prepare<[string]>(
+        `UPDATE wiki_notifications
+         SET read = 1
+         WHERE id = ?`
+      )
+      .run(notificationId);
+  }
+
+  markAllWikiNotificationsRead(userId: string): void {
+    this.db
+      .prepare<[string]>(
+        `UPDATE wiki_notifications
+         SET read = 1
+         WHERE user_id = ?`
+      )
+      .run(userId);
   }
 
   createEntity(name: string, type: Entity["type"]): Entity {
@@ -1196,11 +1438,19 @@ export class Repository {
 
   logAudit(entry: Omit<AuditEntry, "id">): void {
     this.db
-      .prepare<[string, string, string, string | null, string, string | null]>(
-        `INSERT INTO audit_log (timestamp, actor, action, memory_id, detail, ip)
-         VALUES (?, ?, ?, ?, ?, ?)`
+      .prepare<[string, string, string, string | null, string, string | null, string | null]>(
+        `INSERT INTO audit_log (timestamp, actor, action, memory_id, detail, ip, tenant_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(entry.timestamp, entry.actor, entry.action, entry.memory_id, entry.detail, entry.ip);
+      .run(
+        entry.timestamp,
+        entry.actor,
+        entry.action,
+        entry.memory_id,
+        entry.detail,
+        entry.ip,
+        entry.tenant_id ?? null
+      );
   }
 
   logPerformance(entry: PerformanceLog): void {
@@ -1257,12 +1507,7 @@ export class Repository {
     return rows.map(mapPerformanceLog);
   }
 
-  getAuditLog(filters?: {
-    actor?: string;
-    action?: string;
-    since?: string;
-    memory_id?: string;
-  }): AuditEntry[] {
+  getAuditLog(filters?: AuditQueryFilters & { memory_id?: string }): AuditEntry[] {
     const clauses: string[] = [];
     const params: unknown[] = [];
 
@@ -1278,14 +1523,29 @@ export class Repository {
       clauses.push("timestamp >= ?");
       params.push(filters.since);
     }
-    if (filters?.memory_id) {
+    if (filters?.until) {
+      clauses.push("timestamp <= ?");
+      params.push(filters.until);
+    }
+    if (filters?.memory_id ?? filters?.memoryId) {
       clauses.push("memory_id = ?");
-      params.push(filters.memory_id);
+      params.push(filters.memory_id ?? filters.memoryId);
+    }
+    if (filters?.tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(filters.tenantId);
     }
 
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const limitValue =
+      filters?.limit !== undefined ? normalizePositiveInteger(filters.limit, 100) : null;
+    const offsetValue = normalizeNonNegativeInteger(filters?.offset ?? 0);
+    const pagination =
+      limitValue === null
+        ? ""
+        : ` LIMIT ${limitValue}${offsetValue > 0 ? ` OFFSET ${offsetValue}` : ""}`;
     const rows = this.db
-      .prepare<unknown[], AuditRow>(`SELECT * FROM audit_log ${where} ORDER BY id ASC`)
+      .prepare<unknown[], AuditRow>(`SELECT * FROM audit_log ${where} ORDER BY id ASC${pagination}`)
       .all(...params);
 
     return rows;

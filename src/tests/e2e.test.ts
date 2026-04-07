@@ -6,14 +6,24 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
+import {
+  DASHBOARD_AUTH_COOKIE,
+  registerDashboardSession,
+  revokeDashboardSession
+} from "../api/auth.js";
+import { createAPIServer } from "../api/server.js";
+import type { VegaConfig } from "../config.js";
 import { loadConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
+import { TenantService } from "../core/tenant.js";
 import type { MemoryType } from "../core/types.js";
+import { UserService } from "../core/user.js";
 import { Repository } from "../db/repository.js";
 import { SearchEngine } from "../search/engine.js";
+import { PageManager } from "../wiki/page-manager.js";
 
 const ensureDataDirectory = (dbPath: string): void => {
   if (dbPath === ":memory:") {
@@ -32,6 +42,86 @@ const childBaseEnv = Object.fromEntries(
   )
 );
 const cliBootstrap = `process.argv.splice(1, 0, ${JSON.stringify(cliPath)}); await import(${JSON.stringify(cliModuleUrl)});`;
+
+interface ApiHarness {
+  baseUrl: string;
+  config: VegaConfig;
+  repository: Repository;
+  pageManager: PageManager;
+  tenantService: TenantService;
+  cleanup(): Promise<void>;
+  request(path: string, init?: RequestInit): Promise<Response>;
+}
+
+const createApiHarness = async (apiKey = "top-secret"): Promise<ApiHarness> => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-e2e-api-"));
+  const config: VegaConfig = {
+    dbPath: join(tempDir, "memory.db"),
+    ollamaBaseUrl: "http://localhost:99999",
+    ollamaModel: "bge-m3",
+    tokenBudget: 2000,
+    similarityThreshold: 0.85,
+    shardingEnabled: false,
+    backupRetentionDays: 7,
+    apiPort: 0,
+    apiKey,
+    mode: "server",
+    serverUrl: undefined,
+    cacheDbPath: join(tempDir, "cache.db"),
+    telegramBotToken: undefined,
+    telegramChatId: undefined,
+    observerEnabled: false,
+    dbEncryption: false
+  };
+  const repository = new Repository(config.dbPath);
+  const searchEngine = new SearchEngine(repository, config);
+  const memoryService = new MemoryService(repository, config);
+  const recallService = new RecallService(repository, searchEngine, config);
+  const sessionService = new SessionService(repository, memoryService, recallService, config);
+  const compactService = new CompactService(repository, config);
+  const pageManager = new PageManager(repository);
+  const tenantService = new TenantService(repository);
+  const server = createAPIServer(
+    {
+      repository,
+      memoryService,
+      recallService,
+      sessionService,
+      compactService
+    },
+    config
+  );
+  const port = await server.start(0);
+
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    config,
+    repository,
+    pageManager,
+    tenantService,
+    async cleanup(): Promise<void> {
+      await server.stop();
+      repository.close();
+      rmSync(tempDir, { recursive: true, force: true });
+    },
+    request(path: string, init?: RequestInit): Promise<Response> {
+      const headers = new Headers(init?.headers);
+      if (apiKey && !headers.has("authorization")) {
+        headers.set("authorization", `Bearer ${apiKey}`);
+      }
+      if (init?.body !== undefined && !headers.has("content-type")) {
+        headers.set("content-type", "application/json");
+      }
+
+      return fetch(`http://127.0.0.1:${port}${path}`, {
+        ...init,
+        headers
+      });
+    }
+  };
+};
+
+const readJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
 test("E2E: Vega Memory System", async (t) => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-e2e-"));
@@ -247,6 +337,299 @@ test("E2E: Vega Memory System", async (t) => {
       );
 
       assert.match(output, /memory count:/i);
+    });
+
+    await t.test("HTTP API memory lifecycle supports store, recall, update, list, and delete", async () => {
+      const harness = await createApiHarness();
+
+      try {
+        const storeResponse = await harness.request("/api/store", {
+          method: "POST",
+          body: JSON.stringify({
+            content: "Track the full API lifecycle in one E2E flow.",
+            type: "task_state",
+            project: "vega-e2e",
+            title: "Lifecycle Memory"
+          })
+        });
+        const stored = await readJson<{
+          id: string;
+          action: string;
+          title: string;
+        }>(storeResponse);
+        const recallResponse = await harness.request("/api/recall", {
+          method: "POST",
+          body: JSON.stringify({
+            query: "full API lifecycle",
+            project: "vega-e2e",
+            limit: 5,
+            min_similarity: 0
+          })
+        });
+        const recalled = await readJson<
+          Array<{
+            id: string;
+            content: string;
+          }>
+        >(recallResponse);
+        const updateResponse = await harness.request(`/api/memory/${stored.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            content: "Track the full API lifecycle after an update step.",
+            tags: ["e2e", "lifecycle"]
+          })
+        });
+        const listed = await readJson<
+          Array<{
+            id: string;
+            content: string;
+            tags: string[];
+          }>
+        >(await harness.request("/api/list?project=vega-e2e&limit=10"));
+        const deleteResponse = await harness.request(`/api/memory/${stored.id}`, {
+          method: "DELETE"
+        });
+        const remaining = await readJson<Array<{ id: string }>>(
+          await harness.request("/api/list?project=vega-e2e&limit=10")
+        );
+
+        assert.equal(storeResponse.status, 200);
+        assert.equal(stored.action, "created");
+        assert.equal(stored.title, "Lifecycle Memory");
+        assert.equal(recallResponse.status, 200);
+        assert.equal(recalled.length, 1);
+        assert.equal(recalled[0]?.id, stored.id);
+        assert.equal(updateResponse.status, 200);
+        assert.equal(listed.length, 1);
+        assert.equal(listed[0]?.id, stored.id);
+        assert.equal(listed[0]?.content, "Track the full API lifecycle after an update step.");
+        assert.deepEqual(listed[0]?.tags, ["e2e", "lifecycle"]);
+        assert.equal(deleteResponse.status, 200);
+        assert.equal(remaining.length, 0);
+      } finally {
+        await harness.cleanup();
+      }
+    });
+
+    await t.test("tenant-scoped API requests keep tenant data isolated", async () => {
+      const harness = await createApiHarness();
+      const tenantA = harness.tenantService.createTenant("Tenant A", "pro");
+      const tenantB = harness.tenantService.createTenant("Tenant B", "pro");
+      const tenantAHeaders = {
+        authorization: `Bearer ${tenantA.api_key}`
+      };
+      const tenantBHeaders = {
+        authorization: `Bearer ${tenantB.api_key}`
+      };
+
+      try {
+        await harness.request("/api/store", {
+          method: "POST",
+          headers: tenantAHeaders,
+          body: JSON.stringify({
+            content: "tenant alpha memory",
+            type: "insight",
+            project: "tenant-e2e"
+          })
+        });
+        await harness.request("/api/store", {
+          method: "POST",
+          headers: tenantBHeaders,
+          body: JSON.stringify({
+            content: "tenant beta memory",
+            type: "insight",
+            project: "tenant-e2e"
+          })
+        });
+
+        const tenantAList = await readJson<Array<{ content: string }>>(
+          await harness.request("/api/list?project=tenant-e2e&limit=10", {
+            headers: tenantAHeaders
+          })
+        );
+        const tenantBList = await readJson<Array<{ content: string }>>(
+          await harness.request("/api/list?project=tenant-e2e&limit=10", {
+            headers: tenantBHeaders
+          })
+        );
+
+        assert.deepEqual(
+          tenantAList.map((memory) => memory.content),
+          ["tenant alpha memory"]
+        );
+        assert.deepEqual(
+          tenantBList.map((memory) => memory.content),
+          ["tenant beta memory"]
+        );
+      } finally {
+        await harness.cleanup();
+      }
+    });
+
+    await t.test("OIDC login route is reachable and reports redirect or configuration errors", async () => {
+      const harness = await createApiHarness();
+
+      try {
+        const response = await harness.request("/api/auth/oidc/login", {
+          redirect: "manual"
+        });
+
+        if (response.status === 302) {
+          assert.equal(typeof response.headers.get("location"), "string");
+        } else {
+          const body = await readJson<{ error: string }>(response);
+
+          assert.ok(response.status === 400 || response.status === 503);
+          assert.equal(typeof body.error, "string");
+          assert.ok(body.error.length > 0);
+        }
+      } finally {
+        await harness.cleanup();
+      }
+    });
+
+    await t.test("wiki spaces support comments on tenant-scoped pages", async () => {
+      const harness = await createApiHarness();
+      const tenant = harness.tenantService.createTenant("Wiki Tenant", "pro");
+      const user = new UserService(harness.repository).createUser(
+        "alice@example.com",
+        "Alice",
+        "member",
+        tenant.id
+      );
+      const tenantHeaders = {
+        authorization: `Bearer ${tenant.api_key}`
+      };
+
+      try {
+        const createSpaceResponse = await harness.request("/api/wiki/spaces", {
+          method: "POST",
+          headers: tenantHeaders,
+          body: JSON.stringify({
+            name: "Operations",
+            slug: "operations"
+          })
+        });
+        const space = await readJson<{
+          id: string;
+          slug: string;
+        }>(createSpaceResponse);
+        const page = harness.pageManager.createPage({
+          title: "Deployment Runbook",
+          content: "Deploy the scheduler before enabling the dashboard.",
+          summary: "Deployment steps for Vega.",
+          page_type: "runbook",
+          space_id: space.id
+        });
+        const createCommentResponse = await harness.request(`/api/wiki/pages/${page.id}/comments`, {
+          method: "POST",
+          headers: tenantHeaders,
+          body: JSON.stringify({
+            user_id: user.id,
+            content: "Verified on staging."
+          })
+        });
+        const createdComment = await readJson<{
+          id: string;
+          page_id: string;
+          user_id: string;
+          content: string;
+        }>(createCommentResponse);
+        const listCommentsResponse = await harness.request(`/api/wiki/pages/${page.id}/comments`, {
+          headers: tenantHeaders
+        });
+        const comments = await readJson<
+          Array<{
+            id: string;
+            page_id: string;
+            author: string;
+            content: string;
+          }>
+        >(listCommentsResponse);
+
+        assert.equal(createSpaceResponse.status, 201);
+        assert.equal(space.slug, "operations");
+        assert.equal(createCommentResponse.status, 201);
+        assert.equal(createdComment.page_id, page.id);
+        assert.equal(createdComment.user_id, user.id);
+        assert.equal(createdComment.content, "Verified on staging.");
+        assert.equal(listCommentsResponse.status, 200);
+        assert.equal(comments.length, 1);
+        assert.equal(comments[0]?.id, createdComment.id);
+      } finally {
+        await harness.cleanup();
+      }
+    });
+
+    await t.test("admin dashboard rejects members and allows admins", async () => {
+      const harness = await createApiHarness();
+      const tenant = harness.tenantService.createTenant("Dashboard Tenant", "pro");
+      const userService = new UserService(harness.repository);
+      const member = userService.createUser(
+        "member@example.com",
+        "Member User",
+        "member",
+        tenant.id
+      );
+      const admin = userService.createUser(
+        "admin@example.com",
+        "Admin User",
+        "admin",
+        tenant.id
+      );
+      const memberToken = "member-dashboard-session";
+      const adminToken = "admin-dashboard-session";
+
+      registerDashboardSession(harness.config, memberToken, member);
+      registerDashboardSession(harness.config, adminToken, admin);
+
+      try {
+        const memberResponse = await harness.request("/api/admin/dashboard", {
+          headers: {
+            authorization: "",
+            cookie: `${DASHBOARD_AUTH_COOKIE}=${memberToken}`
+          }
+        });
+        const memberBody = await readJson<{ error: string }>(memberResponse);
+        const adminResponse = await harness.request("/api/admin/dashboard", {
+          headers: {
+            authorization: "",
+            cookie: `${DASHBOARD_AUTH_COOKIE}=${adminToken}`
+          }
+        });
+        const adminBody = await readJson<{
+          total_users: number;
+          total_memories: number;
+          active_tenants: number;
+          recent_audit_events: unknown[];
+        }>(adminResponse);
+
+        assert.equal(memberResponse.status, 403);
+        assert.equal(memberBody.error, "forbidden");
+        assert.equal(adminResponse.status, 200);
+        assert.equal(typeof adminBody.total_users, "number");
+        assert.equal(typeof adminBody.total_memories, "number");
+        assert.equal(typeof adminBody.active_tenants, "number");
+        assert.equal(Array.isArray(adminBody.recent_audit_events), true);
+      } finally {
+        revokeDashboardSession(harness.config, memberToken);
+        revokeDashboardSession(harness.config, adminToken);
+        await harness.cleanup();
+      }
+    });
+
+    await t.test("health endpoint returns 200 for Docker-style health checks", async () => {
+      const harness = await createApiHarness();
+
+      try {
+        const response = await harness.request("/api/health");
+        const body = await readJson<{ status: string }>(response);
+
+        assert.equal(response.status, 200);
+        assert.equal(typeof body.status, "string");
+      } finally {
+        await harness.cleanup();
+      }
     });
   } finally {
     repository.close();

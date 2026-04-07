@@ -73,7 +73,8 @@ export function initializeDatabase(db: Database.Database): void {
       action TEXT NOT NULL,
       memory_id TEXT,
       detail TEXT NOT NULL,
-      ip TEXT
+      ip TEXT,
+      tenant_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS performance_log (
@@ -245,6 +246,31 @@ export function initializeDatabase(db: Database.Database): void {
       FOREIGN KEY (page_b_id) REFERENCES wiki_pages(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS wiki_comments (
+      id TEXT PRIMARY KEY,
+      page_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      mentions TEXT NOT NULL DEFAULT '[]',
+      parent_comment_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT,
+      FOREIGN KEY (page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (parent_comment_id) REFERENCES wiki_comments(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS wiki_notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      read INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS content_sources (
       id TEXT PRIMARY KEY,
       source_type TEXT NOT NULL,
@@ -308,9 +334,6 @@ export function initializeDatabase(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_wiki_pages_parent
       ON wiki_pages(parent_id);
 
-    CREATE INDEX IF NOT EXISTS idx_wiki_pages_space
-      ON wiki_pages(space_id);
-
     CREATE INDEX IF NOT EXISTS idx_wiki_spaces_tenant
       ON wiki_spaces(tenant_id);
 
@@ -353,6 +376,7 @@ export function initializeDatabase(db: Database.Database): void {
 
   ensureColumn(db, "memories", "tenant_id", "TEXT");
   ensureColumn(db, "memories", "summary", "TEXT");
+  ensureColumn(db, "audit_log", "tenant_id", "TEXT");
   ensureColumn(db, "performance_log", "avg_similarity", "REAL");
   ensureColumn(db, "performance_log", "tenant_id", "TEXT");
   ensureColumn(db, "performance_log", "result_types", "TEXT NOT NULL DEFAULT '[]'");
@@ -368,5 +392,20 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_usage_log_tenant_month
       ON usage_log(tenant_id, month);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_pages_space
+      ON wiki_pages(space_id);
+
+    CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp
+      ON audit_log(timestamp);
+
+    CREATE INDEX IF NOT EXISTS idx_audit_log_action
+      ON audit_log(action);
+
+    CREATE INDEX IF NOT EXISTS idx_audit_log_actor
+      ON audit_log(actor);
+
+    CREATE INDEX IF NOT EXISTS idx_audit_log_tenant
+      ON audit_log(tenant_id);
   `);
 }
