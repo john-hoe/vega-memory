@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import type { RedactionPattern } from "./core/types.js";
+
 export interface CloudBackupConfig {
   enabled: boolean;
   provider: "local-sync" | "s3";
@@ -27,6 +29,7 @@ export interface VegaConfig {
   telegramChatId: string | undefined;
   encryptionKey?: string;
   cloudBackup?: CloudBackupConfig;
+  customRedactionPatterns?: RedactionPattern[];
 }
 
 export const DB_ENCRYPTION_KEY_MISSING_MESSAGE =
@@ -92,6 +95,37 @@ const parseOptionalBoolean = (value: unknown): boolean | undefined => {
   return undefined;
 };
 
+const parseCustomRedactionPatterns = (value: unknown): RedactionPattern[] | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.name !== "string" || typeof entry.pattern !== "string") {
+      return [];
+    }
+
+    const name = entry.name.trim();
+    const pattern = entry.pattern.trim();
+
+    if (name.length === 0 || pattern.length === 0) {
+      return [];
+    }
+
+    const replacement = parseOptionalString(entry.replacement);
+    const enabled = parseOptionalBoolean(entry.enabled);
+
+    return [
+      {
+        name,
+        pattern,
+        ...(replacement === undefined ? {} : { replacement }),
+        ...(enabled === undefined ? {} : { enabled })
+      }
+    ];
+  });
+};
+
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined) {
     return fallback;
@@ -104,7 +138,10 @@ const parseBoolean = (value: string | undefined, fallback: boolean): boolean => 
 const getConfigFilePath = (): string => join(homedir(), ".vega", "config.json");
 
 const loadFileConfig = (): Partial<
-  Pick<VegaConfig, "mode" | "serverUrl" | "apiKey" | "cacheDbPath" | "dbEncryption">
+  Pick<
+    VegaConfig,
+    "mode" | "serverUrl" | "apiKey" | "cacheDbPath" | "dbEncryption" | "customRedactionPatterns"
+  >
 > => {
   try {
     const parsed = JSON.parse(readFileSync(getConfigFilePath(), "utf8")) as unknown;
@@ -120,7 +157,10 @@ const loadFileConfig = (): Partial<
       serverUrl: parseOptionalString(parsed.server),
       apiKey: parseOptionalString(parsed.api_key),
       cacheDbPath: parseOptionalString(parsed.cache_db),
-      dbEncryption: parseOptionalBoolean(parsed.db_encryption ?? parsed.dbEncryption)
+      dbEncryption: parseOptionalBoolean(parsed.db_encryption ?? parsed.dbEncryption),
+      customRedactionPatterns: parseCustomRedactionPatterns(
+        parsed.custom_redaction_patterns ?? parsed.customRedactionPatterns
+      )
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -177,7 +217,8 @@ export const loadConfig = (): VegaConfig => {
     telegramBotToken: process.env.VEGA_TG_BOT_TOKEN || undefined,
     telegramChatId: process.env.VEGA_TG_CHAT_ID || undefined,
     ...(encryptionKey === undefined ? {} : { encryptionKey }),
-    cloudBackup: parseCloudBackup()
+    cloudBackup: parseCloudBackup(),
+    customRedactionPatterns: fileConfig.customRedactionPatterns ?? []
   };
 };
 

@@ -120,6 +120,21 @@ const notifySafely = async (
   }
 };
 
+const flushDailyDigestSafely = async (
+  notificationManager: NotificationManager | undefined
+): Promise<boolean> => {
+  if (notificationManager === undefined) {
+    return false;
+  }
+
+  try {
+    return await notificationManager.flushDailyDigest();
+  } catch (error) {
+    logError(`Daily warning digest failed: ${getErrorMessage(error)}`);
+    return false;
+  }
+};
+
 const toEmbeddingBuffer = (embedding: Float32Array): Buffer =>
   Buffer.from(
     embedding.buffer.slice(embedding.byteOffset, embedding.byteOffset + embedding.byteLength)
@@ -428,6 +443,8 @@ export async function dailyMaintenance(
     }
   }
 
+  const digestFlushed = await flushDailyDigestSafely(notificationManager);
+
   if (errors.length > 0) {
     await notifySafely(
       "Daily maintenance notification",
@@ -443,7 +460,7 @@ export async function dailyMaintenance(
     return;
   }
 
-  if (!preserveAlert) {
+  if (!preserveAlert && !digestFlushed) {
     notificationManager?.clearAlert();
   }
   log("Daily maintenance finished");

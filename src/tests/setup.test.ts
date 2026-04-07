@@ -24,7 +24,14 @@ interface CliResult {
   stderr: string;
 }
 
-const runCli = (args: string[], homeDirectory: string): Promise<CliResult> =>
+const bundledCursorRulesPath = join(projectRoot, "rules", "cursor-memory.mdc");
+const bundledSnapshotPath = join(projectRoot, "data", "vega-memory-snapshot.md");
+
+const runCli = (
+  args: string[],
+  homeDirectory: string,
+  envOverrides: Record<string, string | undefined> = {}
+): Promise<CliResult> =>
   new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
@@ -33,7 +40,8 @@ const runCli = (args: string[], homeDirectory: string): Promise<CliResult> =>
         cwd: projectRoot,
         env: {
           ...childBaseEnv,
-          HOME: homeDirectory
+          HOME: homeDirectory,
+          ...envOverrides
         }
       }
     );
@@ -61,7 +69,13 @@ const runCli = (args: string[], homeDirectory: string): Promise<CliResult> =>
 const readJsonFile = <T>(filePath: string): T =>
   JSON.parse(readFileSync(filePath, "utf8")) as T;
 
-const startHealthServer = async (apiKey: string): Promise<{
+const startHealthServer = async ({
+  apiKey,
+  requireAuthorization = true
+}: {
+  apiKey?: string;
+  requireAuthorization?: boolean;
+} = {}): Promise<{
   port: number;
   stop(): Promise<void>;
 }> => {
@@ -72,7 +86,10 @@ const startHealthServer = async (apiKey: string): Promise<{
       return;
     }
 
-    if (req.headers.authorization !== `Bearer ${apiKey}`) {
+    if (
+      requireAuthorization &&
+      req.headers.authorization !== `Bearer ${apiKey ?? ""}`
+    ) {
       res.statusCode = 401;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ error: "unauthorized" }));
@@ -141,13 +158,34 @@ test("setup --server reports an unreachable Vega server", async () => {
   }
 });
 
-test("setup --server writes Vega and Cursor client configuration", async () => {
+test("setup --server fails when the node command is unavailable for Cursor MCP", async () => {
+  const homeDirectory = mkdtempSync(join(tmpdir(), "vega-setup-node-check-"));
+
+  try {
+    const result = await runCli(
+      ["setup", "--server", "127.0.0.1", "--port", "3271"],
+      homeDirectory,
+      {
+        PATH: ""
+      }
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Node\.js command `node` is required on PATH for Cursor MCP\./);
+  } finally {
+    rmSync(homeDirectory, { recursive: true, force: true });
+  }
+});
+
+test("setup --server writes Vega, Cursor, rules, and snapshot files with an explicit API key", async () => {
   const homeDirectory = mkdtempSync(join(tmpdir(), "vega-setup-success-"));
   const apiKey = "remote-secret";
   const cursorDirectory = join(homeDirectory, ".cursor");
   const cursorConfigPath = join(cursorDirectory, "mcp.json");
+  const cursorRulesPath = join(cursorDirectory, "rules", "memory.mdc");
   const vegaConfigPath = join(homeDirectory, ".vega", "config.json");
-  const server = await startHealthServer(apiKey);
+  const snapshotPath = join(homeDirectory, ".vega", "snapshot.md");
+  const server = await startHealthServer({ apiKey });
 
   mkdirSync(cursorDirectory, { recursive: true });
   writeFileSync(
@@ -198,6 +236,7 @@ test("setup --server writes Vega and Cursor client configuration", async () => {
     };
 
     assert.equal(result.status, 0);
+    assert.match(result.stdout, /Node\.js check passed: v\d+\.\d+\.\d+/);
     assert.match(result.stdout, /Reload Cursor/);
     assert.deepEqual(vegaConfig, {
       mode: "client",
@@ -220,6 +259,44 @@ test("setup --server writes Vega and Cursor client configuration", async () => {
         VEGA_CACHE_DB: "~/.vega/cache.db"
       }
     });
+    assert.equal(readFileSync(cursorRulesPath, "utf8"), readFileSync(bundledCursorRulesPath, "utf8"));
+    assert.equal(readFileSync(snapshotPath, "utf8"), readFileSync(bundledSnapshotPath, "utf8"));
+  } finally {
+    await server.stop();
+    rmSync(homeDirectory, { recursive: true, force: true });
+  }
+});
+
+test("setup --server auto-generates a vega_ API key when none is provided", async () => {
+  const homeDirectory = mkdtempSync(join(tmpdir(), "vega-setup-generated-key-"));
+  const vegaConfigPath = join(homeDirectory, ".vega", "config.json");
+  const cursorConfigPath = join(homeDirectory, ".cursor", "mcp.json");
+  const server = await startHealthServer({
+    requireAuthorization: false
+  });
+
+  try {
+    const result = await runCli(
+      ["setup", "--server", "127.0.0.1", "--port", String(server.port)],
+      homeDirectory
+    );
+
+    const vegaConfig = readJsonFile<{
+      api_key: string;
+      server: string;
+    }>(vegaConfigPath);
+    const cursorConfig = readJsonFile<{
+      mcpServers: Record<string, unknown>;
+    }>(cursorConfigPath);
+    const vegaEntry = cursorConfig.mcpServers.vega as {
+      env: Record<string, string>;
+    };
+
+    assert.equal(result.status, 0);
+    assert.match(vegaConfig.api_key, /^vega_[0-9a-f]{48}$/);
+    assert.equal(vegaConfig.server, `http://127.0.0.1:${server.port}`);
+    assert.equal(vegaEntry.env.VEGA_API_KEY, vegaConfig.api_key);
+    assert.match(result.stdout, new RegExp(`Generated API key: ${vegaConfig.api_key}`));
   } finally {
     await server.stop();
     rmSync(homeDirectory, { recursive: true, force: true });

@@ -64,7 +64,8 @@ test("loadConfig returns the documented defaults", () => {
     telegramChatId: undefined,
     observerEnabled: false,
     dbEncryption: false,
-    cloudBackup: undefined
+    cloudBackup: undefined,
+    customRedactionPatterns: []
   });
 
   Object.assign(process.env, previous);
@@ -135,7 +136,8 @@ test("loadConfig reads overrides from process.env", () => {
       enabled: true,
       provider: "local-sync",
       destDir: "/tmp/vega-cloud"
-    }
+    },
+    customRedactionPatterns: []
   });
 
   Object.assign(process.env, previous);
@@ -189,7 +191,14 @@ test("loadConfig reads ~/.vega/config.json values and lets env override them", (
         server: "http://127.0.0.1:4321",
         api_key: "file-secret",
         cache_db: "~/.vega/file-cache.db",
-        db_encryption: true
+        db_encryption: true,
+        custom_redaction_patterns: [
+          {
+            name: "tenant secret",
+            pattern: "tenant-secret-[a-z0-9]+",
+            replacement: "[REDACTED:TENANT_SECRET]"
+          }
+        ]
       })}\n`,
       "utf8"
     );
@@ -208,6 +217,13 @@ test("loadConfig reads ~/.vega/config.json values and lets env override them", (
     assert.equal(config.apiKey, "file-secret");
     assert.equal(config.cacheDbPath, join(tempHome, ".vega", "file-cache.db"));
     assert.equal(config.dbEncryption, true);
+    assert.deepEqual(config.customRedactionPatterns, [
+      {
+        name: "tenant secret",
+        pattern: "tenant-secret-[a-z0-9]+",
+        replacement: "[REDACTED:TENANT_SECRET]"
+      }
+    ]);
 
     process.env.VEGA_API_KEY = "env-secret";
     process.env.VEGA_DB_ENCRYPTION = "false";

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { RedactionPattern } from "../core/types.js";
 import { redactSensitiveData } from "../security/redactor.js";
 
 test("redactSensitiveData redacts OpenAI API keys", () => {
@@ -64,5 +65,47 @@ test("redactSensitiveData returns wasRedacted=false for clean content", () => {
 test("redactSensitiveData returns wasRedacted=true when redaction occurs", () => {
   const result = redactSensitiveData("token=abc123");
 
+  assert.equal(result.wasRedacted, true);
+});
+
+test("redactSensitiveData applies custom patterns with explicit replacements", () => {
+  const patterns: RedactionPattern[] = [
+    {
+      name: "internal token",
+      pattern: "/internal-token-[a-z0-9]+/i",
+      replacement: "[REDACTED:INTERNAL_TOKEN]"
+    }
+  ];
+  const result = redactSensitiveData("credential internal-token-abc123", patterns);
+
+  assert.equal(result.redacted, "credential [REDACTED:INTERNAL_TOKEN]");
+  assert.equal(result.wasRedacted, true);
+});
+
+test("redactSensitiveData skips disabled custom patterns", () => {
+  const patterns: RedactionPattern[] = [
+    {
+      name: "disabled secret",
+      pattern: "customer-secret-[0-9]+",
+      enabled: false
+    }
+  ];
+  const content = "customer-secret-42";
+  const result = redactSensitiveData(content, patterns);
+
+  assert.equal(result.redacted, content);
+  assert.equal(result.wasRedacted, false);
+});
+
+test("redactSensitiveData derives a replacement token from custom pattern names", () => {
+  const patterns: RedactionPattern[] = [
+    {
+      name: "Tenant Secret",
+      pattern: "tenant-secret-[a-z0-9]+"
+    }
+  ];
+  const result = redactSensitiveData("tenant-secret-abc123", patterns);
+
+  assert.equal(result.redacted, "[REDACTED:TENANT_SECRET]");
   assert.equal(result.wasRedacted, true);
 });

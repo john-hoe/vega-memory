@@ -109,10 +109,38 @@ test("NotificationManager.clearAlert removes the active alert file", async () =>
 
   try {
     await manager.notifyWarning("Ollama Unavailable", "Ollama is unreachable");
+    assert.equal(existsSync(alertPath), false);
+
+    await manager.flushDailyDigest();
     assert.equal(existsSync(alertPath), true);
 
     manager.clearAlert();
     assert.equal(existsSync(alertPath), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("NotificationManager buffers warnings until the daily digest is flushed", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-notify-digest-"));
+  const alertDir = join(tempDir, "alerts");
+  const manager = new NotificationManager(createConfig(), alertDir);
+  const writer = new AlertFileWriter(alertDir);
+
+  try {
+    await manager.notifyWarning("Ollama Unavailable", "Ollama is unreachable");
+    await manager.notifyWarning("Pending Deletions", "2 memories will be cleaned in 7 days.");
+
+    assert.equal(writer.read(), null);
+
+    const flushed = await manager.flushDailyDigest();
+
+    assert.equal(flushed, true);
+    assert.equal(
+      writer.read(),
+      "🟡 *Daily Warning Digest*\n1. *Ollama Unavailable*\nOllama is unreachable\n\n2. *Pending Deletions*\n2 memories will be cleaned in 7 days."
+    );
+    assert.equal(await manager.flushDailyDigest(), false);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -142,6 +170,38 @@ test("NotificationManager clears alert after successful maintenance", async () =
     });
 
     assert.equal(existsSync(alertPath), false);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("dailyMaintenance flushes the queued warning digest at the end", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-notify-maintenance-digest-"));
+  const dataDir = join(tempDir, "data");
+  const alertDir = join(dataDir, "alerts");
+  const config = createConfig({
+    dbPath: join(dataDir, "memory.db"),
+    cacheDbPath: join(tempDir, "cache.db")
+  });
+  const repository = new Repository(config.dbPath);
+  const compactService = new CompactService(repository, config);
+  const memoryService = new MemoryService(repository, config);
+  const manager = new NotificationManager(config, alertDir);
+  const writer = new AlertFileWriter(alertDir);
+
+  try {
+    repository.createMemory(createMemory());
+    await manager.notifyWarning("Ollama Unavailable", "Ollama is unreachable");
+
+    await dailyMaintenance(repository, compactService, memoryService, config, {
+      notificationManager: manager
+    });
+
+    assert.equal(
+      writer.read(),
+      "🟡 *Daily Warning Digest*\n1. *Ollama Unavailable*\nOllama is unreachable"
+    );
   } finally {
     repository.close();
     rmSync(tempDir, { recursive: true, force: true });

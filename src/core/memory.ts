@@ -261,7 +261,10 @@ export class MemoryService {
       }
     }
 
-    const { redacted, wasRedacted } = redactSensitiveData(params.content);
+    const { redacted, wasRedacted } = redactSensitiveData(
+      params.content,
+      this.config.customRedactionPatterns
+    );
     const embedding = await generateEmbedding(redacted, this.config);
     const title = buildTitle(params.title, redacted);
     const tags = unique(
@@ -446,7 +449,10 @@ export class MemoryService {
 
     const nextUpdates: Partial<Memory> = {};
     if (updates.content !== undefined) {
-      const { redacted } = redactSensitiveData(updates.content);
+      const { redacted } = redactSensitiveData(
+        updates.content,
+        this.config.customRedactionPatterns
+      );
       nextUpdates.content = redacted;
       nextUpdates.summary = await generateSummary(redacted, this.config);
       nextUpdates.embedding = toEmbeddingBuffer(await generateEmbedding(redacted, this.config));
