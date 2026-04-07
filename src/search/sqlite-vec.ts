@@ -22,6 +22,10 @@ const supportsOptions = (result: SearchResult, options: SearchOptions): boolean 
     return false;
   }
 
+  if (options.tenant_id !== undefined && options.tenant_id !== null && result.memory.tenant_id !== options.tenant_id) {
+    return false;
+  }
+
   return result.similarity >= options.minSimilarity;
 };
 

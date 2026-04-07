@@ -174,13 +174,19 @@ function appendScopedClauses(
   project?: string,
   type?: string,
   includeGlobal = false,
-  embeddingRequired = false
+  embeddingRequired = false,
+  tenantId?: string | null
 ): void {
   if (embeddingRequired) {
     clauses.push("embedding IS NOT NULL");
   }
 
   clauses.push("status = 'active'");
+
+  if (tenantId !== undefined && tenantId !== null) {
+    clauses.push("tenant_id IS ?");
+    params.push(tenantId);
+  }
 
   if (project) {
     if (includeGlobal) {
@@ -512,6 +518,10 @@ export class Repository {
     const clauses: string[] = [];
     const params: unknown[] = [];
 
+    if (filters.tenant_id !== undefined && filters.tenant_id !== null) {
+      clauses.push("tenant_id IS ?");
+      params.push(filters.tenant_id);
+    }
     if (filters.project) {
       clauses.push("project = ?");
       params.push(filters.project);
@@ -556,10 +566,16 @@ export class Repository {
     query: string,
     project?: string,
     type?: string,
-    includeGlobal = false
+    includeGlobal = false,
+    tenantId?: string | null
   ): { memory: Memory; rank: number }[] {
     const clauses = ["memories_fts MATCH ?", "memories.status = 'active'"];
     const params: unknown[] = [query];
+
+    if (tenantId !== undefined && tenantId !== null) {
+      clauses.push("memories.tenant_id IS ?");
+      params.push(tenantId);
+    }
 
     if (project) {
       if (includeGlobal) {
@@ -599,11 +615,12 @@ export class Repository {
   getAllEmbeddings(
     project?: string,
     type?: string,
-    includeGlobal = false
+    includeGlobal = false,
+    tenantId?: string | null
   ): { id: string; embedding: Buffer; memory: Memory }[] {
     const clauses: string[] = [];
     const params: unknown[] = [];
-    appendScopedClauses(clauses, params, project, type, includeGlobal, true);
+    appendScopedClauses(clauses, params, project, type, includeGlobal, true, tenantId);
 
     const rows = this.db
       .prepare<unknown[], MemoryRow>(`SELECT * FROM memories WHERE ${clauses.join(" AND ")}`)
@@ -621,7 +638,8 @@ export class Repository {
     limit: number,
     project?: string,
     type?: string,
-    includeGlobal = false
+    includeGlobal = false,
+    tenantId?: string | null
   ): { id: string; embedding: Buffer; memory: Memory }[] {
     const safeOffset = normalizeNonNegativeInteger(offset);
     const safeLimit = normalizePositiveInteger(limit, 0);
@@ -631,7 +649,7 @@ export class Repository {
 
     const clauses: string[] = [];
     const params: unknown[] = [];
-    appendScopedClauses(clauses, params, project, type, includeGlobal, true);
+    appendScopedClauses(clauses, params, project, type, includeGlobal, true, tenantId);
 
     const rows = this.db
       .prepare<unknown[], MemoryRow>(
@@ -649,10 +667,10 @@ export class Repository {
     }));
   }
 
-  countEmbeddings(project?: string, type?: string, includeGlobal = false): number {
+  countEmbeddings(project?: string, type?: string, includeGlobal = false, tenantId?: string | null): number {
     const clauses: string[] = [];
     const params: unknown[] = [];
-    appendScopedClauses(clauses, params, project, type, includeGlobal, true);
+    appendScopedClauses(clauses, params, project, type, includeGlobal, true, tenantId);
 
     const row = this.db
       .prepare<unknown[], CountRow>(
@@ -663,10 +681,10 @@ export class Repository {
     return row?.total ?? 0;
   }
 
-  countActiveMemories(project?: string, type?: string, includeGlobal = false): number {
+  countActiveMemories(project?: string, type?: string, includeGlobal = false, tenantId?: string | null): number {
     const clauses: string[] = [];
     const params: unknown[] = [];
-    appendScopedClauses(clauses, params, project, type, includeGlobal);
+    appendScopedClauses(clauses, params, project, type, includeGlobal, false, tenantId);
 
     const row = this.db
       .prepare<unknown[], CountRow>(

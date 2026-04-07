@@ -374,6 +374,19 @@ const getRequestAuditContext = (req: Request, res: Response): AuditContext => ({
   tenant_id: getRequestTenantId(res)
 });
 
+const assertTenantAccess = (
+  memory: Memory,
+  requestTenantId: string | null
+): void => {
+  if (requestTenantId === null) {
+    return;
+  }
+
+  if ((memory.tenant_id ?? null) !== requestTenantId) {
+    throw new ApiError(403, "forbidden");
+  }
+};
+
 export function createRouter(services: APIRouterServices): Router {
   const router = Router();
   const analyticsService = new AnalyticsService(services.repository);
@@ -410,9 +423,11 @@ export function createRouter(services: APIRouterServices): Router {
     handleRoute(async (req, res) => {
       const body = requireBody(req.body);
       const query = requireString(body.query, "query");
+      const tenantId = getRequestTenantId(res);
       const result = await services.recallService.recall(query, {
         project: parseSingleValue(body.project, "project"),
         type: parseMemoryType(body.type, "type"),
+        tenant_id: tenantId,
         limit:
           parseNumber(body.limit, "limit", {
             integer: true,
@@ -434,9 +449,11 @@ export function createRouter(services: APIRouterServices): Router {
   router.get("/api/recall/stream", (req, res) => {
     try {
       const query = requireString(req.query.query, "query");
+      const tenantId = getRequestTenantId(res);
       const options = {
         project: parseSingleValue(req.query.project, "project"),
         type: parseMemoryType(req.query.type, "type"),
+        tenant_id: tenantId,
         limit: parseIntegerString(req.query.limit, "limit") ?? 5,
         minSimilarity:
           parseNumber(
@@ -504,6 +521,7 @@ export function createRouter(services: APIRouterServices): Router {
       const memories = services.recallService.listMemories({
         project: parseSingleValue(req.query.project, "project"),
         type: parseMemoryType(req.query.type, "type"),
+        tenant_id: getRequestTenantId(res),
         limit: parseIntegerString(req.query.limit, "limit") ?? 20,
         sort: parseSingleValue(req.query.sort, "sort")
       });
@@ -517,6 +535,12 @@ export function createRouter(services: APIRouterServices): Router {
     handleRoute(async (req, res) => {
       const body = requireBody(req.body);
       const id = requireString(req.params.id, "id");
+      const tenantId = getRequestTenantId(res);
+      const memory = services.repository.getMemory(id);
+
+      if (memory !== null) {
+        assertTenantAccess(memory, tenantId);
+      }
 
       await services.memoryService.update(
         id,
@@ -542,6 +566,13 @@ export function createRouter(services: APIRouterServices): Router {
     "/api/memory/:id",
     handleRoute(async (req, res) => {
       const id = requireString(req.params.id, "id");
+      const tenantId = getRequestTenantId(res);
+      const memory = services.repository.getMemory(id);
+
+      if (memory !== null) {
+        assertTenantAccess(memory, tenantId);
+      }
+
       await services.memoryService.delete(id, getRequestAuditContext(req, res));
 
       res.status(200).json({
@@ -588,7 +619,7 @@ export function createRouter(services: APIRouterServices): Router {
     handleRoute((req, res) => {
       res.status(200).json(
         analyticsService.getUsageStats(
-          parseSingleValue(req.query.tenant_id, "tenant_id"),
+          getRequestTenantId(res) ?? undefined,
           parseDateString(req.query.since, "since")
         )
       );

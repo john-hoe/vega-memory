@@ -24,6 +24,10 @@ export class BruteForceEngine {
           return false;
         }
 
+        if (options.tenant_id !== undefined && options.tenant_id !== null && memory.tenant_id !== options.tenant_id) {
+          return false;
+        }
+
         return true;
       })
       .map(({ memory, embedding }) => ({

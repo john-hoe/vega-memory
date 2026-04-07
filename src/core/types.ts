@@ -204,6 +204,13 @@ export interface StoreResult {
   title: string;
 }
 
+export interface RedactionPattern {
+  name: string;
+  pattern: string;
+  replacement?: string;
+  enabled?: boolean;
+}
+
 export interface SearchResult {
   memory: Memory;
   similarity: number;
@@ -213,6 +220,7 @@ export interface SearchResult {
 export interface SearchOptions {
   project?: string;
   type?: MemoryType;
+  tenant_id?: string | null;
   limit: number;
   minSimilarity: number;
 }
@@ -228,6 +236,7 @@ export interface MergeResult {
 export interface MemoryListFilters {
   project?: string;
   type?: MemoryType;
+  tenant_id?: string | null;
   status?: MemoryStatus;
   scope?: MemoryScope;
   limit?: number;

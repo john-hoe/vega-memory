@@ -44,12 +44,23 @@ export class StreamingSearch {
     queryEmbedding: Float32Array | null,
     options: SearchOptions
   ): AsyncGenerator<SearchResult> {
-    const bm25Results = this.repository.searchFTS(query, options.project, options.type, true);
+    const bm25Results = this.repository.searchFTS(
+      query,
+      options.project,
+      options.type,
+      true,
+      options.tenant_id
+    );
     this.lastBm25ResultCount = bm25Results.length;
     const vectorResults: SearchResult[] = [];
 
     if (queryEmbedding !== null) {
-      const totalEmbeddings = this.repository.countEmbeddings(options.project, options.type, true);
+      const totalEmbeddings = this.repository.countEmbeddings(
+        options.project,
+        options.type,
+        true,
+        options.tenant_id
+      );
 
       for (let offset = 0; offset < totalEmbeddings; offset += CHUNK_SIZE) {
         const chunk = this.repository.getEmbeddingChunk(
@@ -57,7 +68,8 @@ export class StreamingSearch {
           CHUNK_SIZE,
           options.project,
           options.type,
-          true
+          true,
+          options.tenant_id
         );
         const chunkResults = chunk
           .map(({ embedding, memory }) => ({

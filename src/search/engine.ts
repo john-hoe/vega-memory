@@ -56,7 +56,7 @@ export class SearchEngine {
 
     return this.bruteForceEngine.search(
       queryEmbedding,
-      this.repository.getAllEmbeddings(options.project, options.type, true),
+      this.repository.getAllEmbeddings(options.project, options.type, true, options.tenant_id),
       options
     );
   }
@@ -101,7 +101,13 @@ export class SearchEngine {
     const startedAt = Date.now();
     const vectorResults =
       queryEmbedding === null ? [] : this.searchVectors(queryEmbedding, options);
-    const bm25Results = this.repository.searchFTS(query, options.project, options.type, true);
+    const bm25Results = this.repository.searchFTS(
+      query,
+      options.project,
+      options.type,
+      true,
+      options.tenant_id
+    );
 
     const mergedResults =
       bm25Results.length > 0

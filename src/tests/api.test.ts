@@ -579,6 +579,193 @@ test("billing counts API request log rows for tenant traffic", async () => {
   }
 });
 
+test("tenant-scoped list and recall endpoints do not leak cross-tenant memories", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenantA = tenantService.createTenant("Tenant A", "pro");
+  const tenantB = tenantService.createTenant("Tenant B", "pro");
+  const tenantAHeaders = {
+    authorization: `Bearer ${tenantA.api_key}`
+  };
+  const tenantBHeaders = {
+    authorization: `Bearer ${tenantB.api_key}`
+  };
+
+  try {
+    await harness.request("/api/store", {
+      method: "POST",
+      headers: tenantAHeaders,
+      body: JSON.stringify({
+        content: "shared isolation token from tenant alpha",
+        type: "decision",
+        project: "tenant-project"
+      })
+    });
+    await harness.request("/api/store", {
+      method: "POST",
+      headers: tenantBHeaders,
+      body: JSON.stringify({
+        content: "shared isolation token from tenant beta",
+        type: "decision",
+        project: "tenant-project"
+      })
+    });
+
+    const tenantAListResponse = await harness.request("/api/list?project=tenant-project&limit=10", {
+      headers: tenantAHeaders
+    });
+    const tenantAList = await readJson<
+      Array<{
+        content: string;
+      }>
+    >(tenantAListResponse);
+    const tenantARecallResponse = await harness.request("/api/recall", {
+      method: "POST",
+      headers: tenantAHeaders,
+      body: JSON.stringify({
+        query: "shared isolation token",
+        project: "tenant-project",
+        limit: 10,
+        min_similarity: 0
+      })
+    });
+    const tenantARecall = await readJson<
+      Array<{
+        content: string;
+      }>
+    >(tenantARecallResponse);
+    const tenantAStreamResponse = await harness.request(
+      "/api/recall/stream?query=shared%20isolation%20token&project=tenant-project&limit=10&min_similarity=0",
+      {
+        headers: tenantAHeaders
+      }
+    );
+    const tenantAStreamBody = await tenantAStreamResponse.text();
+
+    assert.equal(tenantAListResponse.status, 200);
+    assert.equal(tenantAList.length, 1);
+    assert.match(tenantAList[0]?.content ?? "", /tenant alpha/);
+    assert.equal(tenantAList[0]?.content.includes("tenant beta") ?? false, false);
+
+    assert.equal(tenantARecallResponse.status, 200);
+    assert.equal(tenantARecall.length, 1);
+    assert.match(tenantARecall[0]?.content ?? "", /tenant alpha/);
+    assert.equal(tenantARecall[0]?.content.includes("tenant beta") ?? false, false);
+
+    assert.equal(tenantAStreamResponse.status, 200);
+    assert.match(tenantAStreamBody, /tenant alpha/);
+    assert.equal(tenantAStreamBody.includes("tenant beta"), false);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("tenant-scoped update and delete reject cross-tenant memory access", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenantA = tenantService.createTenant("Tenant A", "pro");
+  const tenantB = tenantService.createTenant("Tenant B", "pro");
+  const tenantAHeaders = {
+    authorization: `Bearer ${tenantA.api_key}`
+  };
+  const tenantBHeaders = {
+    authorization: `Bearer ${tenantB.api_key}`
+  };
+
+  try {
+    const storeResponse = await harness.request("/api/store", {
+      method: "POST",
+      headers: tenantAHeaders,
+      body: JSON.stringify({
+        content: "memory owned by tenant alpha",
+        type: "insight",
+        project: "tenant-project"
+      })
+    });
+    const stored = await readJson<{ id: string }>(storeResponse);
+
+    const patchResponse = await harness.request(`/api/memory/${stored.id}`, {
+      method: "PATCH",
+      headers: tenantBHeaders,
+      body: JSON.stringify({
+        content: "tenant beta attempted overwrite"
+      })
+    });
+    const patchBody = await readJson<{ error: string }>(patchResponse);
+    const deleteResponse = await harness.request(`/api/memory/${stored.id}`, {
+      method: "DELETE",
+      headers: tenantBHeaders
+    });
+    const deleteBody = await readJson<{ error: string }>(deleteResponse);
+    const memory = harness.repository.getMemory(stored.id);
+
+    assert.equal(patchResponse.status, 403);
+    assert.equal(patchBody.error, "forbidden");
+    assert.equal(deleteResponse.status, 403);
+    assert.equal(deleteBody.error, "forbidden");
+    assert.equal(memory?.content, "memory owned by tenant alpha");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("analytics ignores query tenant_id and scopes by authenticated tenant unless using the root key", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenantA = tenantService.createTenant("Tenant A", "pro");
+  const tenantB = tenantService.createTenant("Tenant B", "pro");
+  const tenantAHeaders = {
+    authorization: `Bearer ${tenantA.api_key}`
+  };
+  const tenantBHeaders = {
+    authorization: `Bearer ${tenantB.api_key}`
+  };
+
+  try {
+    await harness.request("/api/store", {
+      method: "POST",
+      headers: tenantAHeaders,
+      body: JSON.stringify({
+        content: "analytics memory for tenant alpha",
+        type: "decision",
+        project: "analytics"
+      })
+    });
+    await harness.request("/api/store", {
+      method: "POST",
+      headers: tenantBHeaders,
+      body: JSON.stringify({
+        content: "analytics memory for tenant beta",
+        type: "decision",
+        project: "analytics"
+      })
+    });
+
+    const tenantScopedResponse = await harness.request(`/api/analytics?tenant_id=${tenantB.id}`, {
+      headers: tenantAHeaders
+    });
+    const tenantScopedStats = await readJson<{
+      memories_total: number;
+      memories_by_project: Record<string, number>;
+    }>(tenantScopedResponse);
+    const rootResponse = await harness.request(`/api/analytics?tenant_id=${tenantA.id}`);
+    const rootStats = await readJson<{
+      memories_total: number;
+      memories_by_project: Record<string, number>;
+    }>(rootResponse);
+
+    assert.equal(tenantScopedResponse.status, 200);
+    assert.equal(tenantScopedStats.memories_total, 1);
+    assert.equal(tenantScopedStats.memories_by_project.analytics, 1);
+
+    assert.equal(rootResponse.status, 200);
+    assert.equal(rootStats.memories_total, 2);
+    assert.equal(rootStats.memories_by_project.analytics, 2);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("dashboard sessions expire on the server after the TTL", async () => {
   const harness = await createHarness("top-secret");
   const sessionToken = "expiring-dashboard-session";

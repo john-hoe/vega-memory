@@ -39,9 +39,10 @@ export class RecallService {
 
     this.repository.logPerformance({
       timestamp: now(),
+      tenant_id: options.tenant_id ?? null,
       operation,
       latency_ms: Date.now() - startedAt,
-      memory_count: this.repository.countActiveMemories(options.project, options.type, true),
+      memory_count: this.repository.countActiveMemories(options.project, options.type, true, options.tenant_id),
       result_count: results.length,
       avg_similarity: avgSimilarity,
       result_types: results.map((result) => result.memory.type),
