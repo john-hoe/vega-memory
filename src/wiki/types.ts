@@ -48,6 +48,7 @@ export interface WikiPage {
   auto_generated: boolean;
   reviewed: boolean;
   version: number;
+  space_id: string | null;
   parent_id: string | null;
   sort_order: number;
   created_at: string;
@@ -91,6 +92,7 @@ export interface WikiPageListFilters {
   project?: string;
   page_type?: WikiPageType;
   status?: WikiPageStatus;
+  space_id?: string | null;
   parent_id?: string | null;
   limit?: number;
   sort?: string;

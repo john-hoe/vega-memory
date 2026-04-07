@@ -18,6 +18,7 @@ interface WikiPageRow {
   auto_generated: number;
   reviewed: number;
   version: number;
+  space_id: string | null;
   parent_id: string | null;
   sort_order: number;
   created_at: string;

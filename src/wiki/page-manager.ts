@@ -28,6 +28,7 @@ interface WikiPageRow {
   auto_generated: number;
   reviewed: number;
   version: number;
+  space_id: string | null;
   parent_id: string | null;
   sort_order: number;
   created_at: string;
@@ -79,6 +80,7 @@ interface CreatePageParams {
   tags?: string[];
   source_memory_ids?: string[];
   auto_generated?: boolean;
+  space_id?: string | null;
   parent_id?: string | null;
   embedding?: Buffer | null;
 }
@@ -268,6 +270,7 @@ export class PageManager {
       auto_generated: params.auto_generated ?? true,
       reviewed: false,
       version: 1,
+      space_id: params.space_id ?? null,
       parent_id: params.parent_id ?? null,
       sort_order: 0,
       created_at: createdAt,
@@ -294,6 +297,7 @@ export class PageManager {
         number,
         number,
         string | null,
+        string | null,
         number,
         string,
         string,
@@ -303,10 +307,10 @@ export class PageManager {
     >(
       `INSERT INTO wiki_pages (
          id, slug, title, content, summary, page_type, scope, project, tags, source_memory_ids,
-         embedding, status, auto_generated, reviewed, version, parent_id, sort_order,
+         embedding, status, auto_generated, reviewed, version, space_id, parent_id, sort_order,
          created_at, updated_at, reviewed_at, published_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertFts = this.repository.db.prepare<[number, string, string, string, string]>(
       "INSERT INTO wiki_pages_fts (rowid, title, content, summary, tags) VALUES (?, ?, ?, ?, ?)"
@@ -329,6 +333,7 @@ export class PageManager {
         page.auto_generated ? 1 : 0,
         page.reviewed ? 1 : 0,
         page.version,
+        page.space_id,
         page.parent_id,
         page.sort_order,
         page.created_at,
@@ -402,6 +407,7 @@ export class PageManager {
       auto_generated: updates.auto_generated ?? existing.auto_generated,
       reviewed: updates.reviewed ?? existing.reviewed,
       version: existing.version + 1,
+      space_id: updates.space_id === undefined ? existing.space_id : updates.space_id,
       parent_id: updates.parent_id === undefined ? existing.parent_id : updates.parent_id,
       sort_order: updates.sort_order ?? existing.sort_order,
       created_at: existing.created_at,
@@ -436,6 +442,7 @@ export class PageManager {
         number,
         number,
         string | null,
+        string | null,
         number,
         string,
         string | null,
@@ -458,6 +465,7 @@ export class PageManager {
            auto_generated = ?,
            reviewed = ?,
            version = ?,
+           space_id = ?,
            parent_id = ?,
            sort_order = ?,
            updated_at = ?,
@@ -499,6 +507,7 @@ export class PageManager {
         nextPage.auto_generated ? 1 : 0,
         nextPage.reviewed ? 1 : 0,
         nextPage.version,
+        nextPage.space_id,
         nextPage.parent_id,
         nextPage.sort_order,
         nextPage.updated_at,
