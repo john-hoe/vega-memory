@@ -122,7 +122,8 @@ const seedSubjectData = (
     summary: `Summary for ${userId}`,
     page_type: "reference",
     project: "vega",
-    tags: ["gdpr", suffix]
+    tags: ["gdpr", suffix],
+    tenant_id: tenantId
   });
   repository.db.run("UPDATE wiki_pages SET user_id = ? WHERE id = ?", userId, page.id);
 

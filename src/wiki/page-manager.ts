@@ -30,6 +30,7 @@ interface WikiPageRow {
   version: number;
   space_id: string | null;
   parent_id: string | null;
+  tenant_id: string | null;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -82,6 +83,7 @@ interface CreatePageParams {
   auto_generated?: boolean;
   space_id?: string | null;
   parent_id?: string | null;
+  tenant_id?: string | null;
   embedding?: Buffer | null;
 }
 
@@ -188,18 +190,47 @@ function mapContentSource(row: ContentSourceRow): ContentSource {
 export class PageManager {
   constructor(readonly repository: Repository) {}
 
-  private getPageById(id: string): WikiPage | null {
-    const row = this.repository.db
-      .prepare<[string], WikiPageRow>("SELECT * FROM wiki_pages WHERE id = ?")
-      .get(id);
+  private resolvePageTenantId(
+    spaceId: string | null,
+    explicitTenantId: string | null | undefined,
+    fallbackTenantId: string | null = null
+  ): string | null {
+    if (explicitTenantId !== undefined) {
+      return explicitTenantId;
+    }
+    if (spaceId === null) {
+      return fallbackTenantId;
+    }
+
+    return this.repository.getWikiSpace(spaceId)?.tenant_id ?? fallbackTenantId;
+  }
+
+  private getPageById(id: string, tenantId?: string): WikiPage | null {
+    const row =
+      tenantId === undefined
+        ? this.repository.db
+            .prepare<[string], WikiPageRow>("SELECT * FROM wiki_pages WHERE id = ?")
+            .get(id)
+        : this.repository.db
+            .prepare<[string, string], WikiPageRow>(
+              "SELECT * FROM wiki_pages WHERE id = ? AND tenant_id = ?"
+            )
+            .get(id, tenantId);
 
     return row ? mapWikiPage(row) : null;
   }
 
-  private getPageBySlug(slug: string): WikiPage | null {
-    const row = this.repository.db
-      .prepare<[string], WikiPageRow>("SELECT * FROM wiki_pages WHERE slug = ?")
-      .get(slug);
+  private getPageBySlug(slug: string, tenantId?: string): WikiPage | null {
+    const row =
+      tenantId === undefined
+        ? this.repository.db
+            .prepare<[string], WikiPageRow>("SELECT * FROM wiki_pages WHERE slug = ?")
+            .get(slug)
+        : this.repository.db
+            .prepare<[string, string], WikiPageRow>(
+              "SELECT * FROM wiki_pages WHERE slug = ? AND tenant_id = ?"
+            )
+            .get(slug, tenantId);
 
     return row ? mapWikiPage(row) : null;
   }
@@ -254,6 +285,7 @@ export class PageManager {
     }
 
     const createdAt = timestamp();
+    const tenantId = this.resolvePageTenantId(params.space_id ?? null, params.tenant_id);
     const page: WikiPage = {
       id: uuidv4(),
       slug: this.generateSlug(title),
@@ -272,6 +304,7 @@ export class PageManager {
       version: 1,
       space_id: params.space_id ?? null,
       parent_id: params.parent_id ?? null,
+      tenant_id: tenantId,
       sort_order: 0,
       created_at: createdAt,
       updated_at: createdAt,
@@ -298,6 +331,7 @@ export class PageManager {
         number,
         string | null,
         string | null,
+        string | null,
         number,
         string,
         string,
@@ -307,10 +341,10 @@ export class PageManager {
     >(
       `INSERT INTO wiki_pages (
          id, slug, title, content, summary, page_type, scope, project, tags, source_memory_ids,
-         embedding, status, auto_generated, reviewed, version, space_id, parent_id, sort_order,
+         embedding, status, auto_generated, reviewed, version, space_id, parent_id, tenant_id, sort_order,
          created_at, updated_at, reviewed_at, published_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertFts = this.repository.db.prepare<[number, string, string, string, string]>(
       "INSERT INTO wiki_pages_fts (rowid, title, content, summary, tags) VALUES (?, ?, ?, ?, ?)"
@@ -338,6 +372,7 @@ export class PageManager {
         page.version,
         page.space_id,
         page.parent_id,
+        page.tenant_id,
         page.sort_order,
         page.created_at,
         page.updated_at,
@@ -362,19 +397,19 @@ export class PageManager {
     return page;
   }
 
-  getPage(idOrSlug: string): WikiPage | null {
-    return this.getPageById(idOrSlug) ?? this.getPageBySlug(idOrSlug);
+  getPage(idOrSlug: string, tenantId?: string): WikiPage | null {
+    return this.getPageById(idOrSlug, tenantId) ?? this.getPageBySlug(idOrSlug, tenantId);
   }
 
-  getPageWithBacklinks(idOrSlug: string): PageWithBacklinks | null {
-    const page = this.getPage(idOrSlug);
+  getPageWithBacklinks(idOrSlug: string, tenantId?: string): PageWithBacklinks | null {
+    const page = this.getPage(idOrSlug, tenantId);
     if (!page) {
       return null;
     }
 
     return {
       page,
-      backlinks: this.getBacklinks(page.id)
+      backlinks: this.getBacklinks(page.id, tenantId)
     };
   }
 
@@ -396,6 +431,12 @@ export class PageManager {
       throw new Error("Page title is required");
     }
 
+    const nextSpaceId = updates.space_id === undefined ? existing.space_id : updates.space_id;
+    const nextTenantId = this.resolvePageTenantId(
+      nextSpaceId,
+      updates.tenant_id,
+      existing.tenant_id
+    );
     const nextPage: WikiPage = {
       id: existing.id,
       slug:
@@ -415,8 +456,9 @@ export class PageManager {
       auto_generated: updates.auto_generated ?? existing.auto_generated,
       reviewed: updates.reviewed ?? existing.reviewed,
       version: existing.version + 1,
-      space_id: updates.space_id === undefined ? existing.space_id : updates.space_id,
+      space_id: nextSpaceId,
       parent_id: updates.parent_id === undefined ? existing.parent_id : updates.parent_id,
+      tenant_id: nextTenantId,
       sort_order: updates.sort_order ?? existing.sort_order,
       created_at: existing.created_at,
       updated_at: updatedAt,
@@ -451,6 +493,7 @@ export class PageManager {
         number,
         string | null,
         string | null,
+        string | null,
         number,
         string,
         string | null,
@@ -475,6 +518,7 @@ export class PageManager {
            version = ?,
            space_id = ?,
            parent_id = ?,
+           tenant_id = ?,
            sort_order = ?,
            updated_at = ?,
            reviewed_at = ?,
@@ -517,6 +561,7 @@ export class PageManager {
         nextPage.version,
         nextPage.space_id,
         nextPage.parent_id,
+        nextPage.tenant_id,
         nextPage.sort_order,
         nextPage.updated_at,
         nextPage.reviewed_at,
@@ -592,6 +637,18 @@ export class PageManager {
         params.push(filters.parent_id);
       }
     }
+    if (filters.space_id !== undefined) {
+      if (filters.space_id === null) {
+        clauses.push("space_id IS NULL");
+      } else {
+        clauses.push("space_id = ?");
+        params.push(filters.space_id);
+      }
+    }
+    if (filters.tenant_id !== undefined && filters.tenant_id !== null) {
+      clauses.push("tenant_id = ?");
+      params.push(filters.tenant_id);
+    }
 
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const orderBy = normalizePageSort(filters.sort);
@@ -639,9 +696,28 @@ export class PageManager {
       .run(pageId);
   }
 
-  getBacklinks(pageId: string): { page_id: string; title: string; slug: string; context: string }[] {
+  getBacklinks(
+    pageId: string,
+    tenantId?: string
+  ): { page_id: string; title: string; slug: string; context: string }[] {
+    if (tenantId === undefined) {
+      return this.repository.db
+        .prepare<[string], BacklinkRow>(
+          `SELECT
+             wiki_cross_references.source_page_id AS page_id,
+             wiki_pages.title AS title,
+             wiki_pages.slug AS slug,
+             wiki_cross_references.context AS context
+           FROM wiki_cross_references
+           JOIN wiki_pages ON wiki_pages.id = wiki_cross_references.source_page_id
+           WHERE wiki_cross_references.target_page_id = ?
+           ORDER BY wiki_cross_references.created_at DESC`
+        )
+        .all(pageId);
+    }
+
     return this.repository.db
-      .prepare<[string], BacklinkRow>(
+      .prepare<[string, string], BacklinkRow>(
         `SELECT
            wiki_cross_references.source_page_id AS page_id,
            wiki_pages.title AS title,
@@ -650,9 +726,10 @@ export class PageManager {
          FROM wiki_cross_references
          JOIN wiki_pages ON wiki_pages.id = wiki_cross_references.source_page_id
          WHERE wiki_cross_references.target_page_id = ?
+           AND wiki_pages.tenant_id = ?
          ORDER BY wiki_cross_references.created_at DESC`
       )
-      .all(pageId);
+      .all(pageId, tenantId);
   }
 
   createContentSource(params: CreateContentSourceParams): ContentSource {

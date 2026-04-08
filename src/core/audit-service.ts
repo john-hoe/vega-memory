@@ -142,23 +142,25 @@ export class AuditService {
     return rows.map((row) => row.value);
   }
 
-  purge(before: Date): number {
+  purge(before: Date, tenantId?: string): number {
     const threshold = before.toISOString();
+    const tenantClause = tenantId !== undefined ? " AND tenant_id = ?" : "";
+    const params: unknown[] = tenantId !== undefined ? [threshold, tenantId] : [threshold];
     const count =
       this.repository.db
-        .prepare<[string], { total: number }>(
+        .prepare<unknown[], { total: number }>(
           `SELECT COUNT(*) AS total
            FROM audit_log
-           WHERE timestamp < ?`
+           WHERE timestamp < ?${tenantClause}`
         )
-        .get(threshold)?.total ?? 0;
+        .get(...params)?.total ?? 0;
 
     this.repository.db
-      .prepare<[string]>(
+      .prepare<unknown[]>(
         `DELETE FROM audit_log
-         WHERE timestamp < ?`
+         WHERE timestamp < ?${tenantClause}`
       )
-      .run(threshold);
+      .run(...params);
 
     return count;
   }

@@ -57,6 +57,7 @@ export interface WikiPage {
   version: number;
   space_id: string | null;
   parent_id: string | null;
+  tenant_id: string | null;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -110,6 +111,7 @@ export interface WikiPageListFilters {
   status?: WikiPageStatus;
   space_id?: string | null;
   parent_id?: string | null;
+  tenant_id?: string | null;
   limit?: number;
   sort?: string;
 }

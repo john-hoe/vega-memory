@@ -17,6 +17,7 @@ export interface WikiSearchFilters {
   query: string;
   project?: string;
   page_type?: WikiPageType;
+  tenant_id?: string | null;
   limit?: number;
 }
 
@@ -49,6 +50,11 @@ export function searchWikiPages(
   if (filters.page_type) {
     clauses.push("wiki_pages.page_type = ?");
     params.push(filters.page_type);
+  }
+
+  if (filters.tenant_id !== undefined && filters.tenant_id !== null) {
+    clauses.push("wiki_pages.tenant_id = ?");
+    params.push(filters.tenant_id);
   }
 
   const limit = normalizePositiveInteger(filters.limit, 10);

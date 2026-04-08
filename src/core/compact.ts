@@ -45,9 +45,13 @@ export class CompactService {
     private readonly _config: VegaConfig
   ) {}
 
-  compact(project?: string, auditContext?: AuditContext): { merged: number; archived: number } {
+  compact(
+    project?: string,
+    auditContext?: AuditContext,
+    tenantId?: string | null
+  ): { merged: number; archived: number } {
     const embeddings = this.repository
-      .getAllEmbeddings(project)
+      .getAllEmbeddings(project, undefined, false, tenantId)
       .filter(({ memory }) => memory.status === "active");
     const archivedIds = new Set<string>();
     let merged = 0;
@@ -114,6 +118,7 @@ export class CompactService {
     const activeMemories = this.repository.listMemories({
       project,
       status: "active",
+      tenant_id: tenantId ?? undefined,
       limit: 10_000
     });
     const timestamp = now();

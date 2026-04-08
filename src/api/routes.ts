@@ -963,7 +963,8 @@ export function createRouter(services: APIRouterServices): Router {
       const body = req.body === undefined ? {} : requireBody(req.body);
       const result = services.compactService.compact(
         parseSingleValue(body.project, "project"),
-        getRequestAuditContext(req, res)
+        getRequestAuditContext(req, res),
+        getRequestTenantId(res)
       );
 
       res.status(200).json(result);
@@ -1029,7 +1030,7 @@ export function createRouter(services: APIRouterServices): Router {
       }
 
       res.status(200).json({
-        deleted: auditService.purge(new Date(beforeValue))
+        deleted: auditService.purge(new Date(beforeValue), getRequestTenantId(res) ?? undefined)
       });
     })
   );
@@ -1112,6 +1113,7 @@ export function createRouter(services: APIRouterServices): Router {
 
   router.post(
     "/api/webhooks",
+    requireRole("admin"),
     handleRoute((req, res) => {
       const body = requireBody(req.body);
       const secret = parseSingleValue(body.secret, "secret");
@@ -1124,24 +1126,26 @@ export function createRouter(services: APIRouterServices): Router {
         ...(secret === undefined ? {} : { secret })
       };
 
-      webhookService.registerWebhook(webhook);
+      webhookService.registerWebhook(webhook, getRequestTenantId(res));
       res.status(201).json(webhook);
     })
   );
 
   router.get(
     "/api/webhooks",
+    requireRole("admin"),
     handleRoute((_req, res) => {
-      res.status(200).json(webhookService.listWebhooks());
+      res.status(200).json(webhookService.listWebhooks(getRequestTenantId(res)));
     })
   );
 
   router.delete(
     "/api/webhooks/:url",
+    requireRole("admin"),
     handleRoute((req, res) => {
       const url = requireString(req.params.url, "url");
 
-      webhookService.removeWebhook(url);
+      webhookService.removeWebhook(url, getRequestTenantId(res));
       res.status(200).json({
         url,
         action: "deleted"
@@ -1151,11 +1155,12 @@ export function createRouter(services: APIRouterServices): Router {
 
   router.post(
     "/api/webhooks/test",
+    requireRole("admin"),
     handleRoute(async (req, res) => {
       const body = req.body === undefined ? {} : requireBody(req.body);
       const event = parseSingleValue(body.event, "event") ?? "webhook.test";
       const data = body.data === undefined ? {} : requireRecord(body.data, "data");
-      const result = await webhookService.emit(event, data);
+      const result = await webhookService.emit(event, data, getRequestTenantId(res));
 
       res.status(200).json({
         event,
@@ -1282,6 +1287,7 @@ export function createRouter(services: APIRouterServices): Router {
         project: parseSingleValue(req.query.project, "project"),
         page_type: parseWikiPageType(req.query.page_type, "page_type"),
         status: parseWikiPageStatus(req.query.status, "status"),
+        tenant_id: getRequestTenantId(res),
         limit: parseIntegerString(req.query.limit, "limit") ?? 50
       });
 
@@ -1293,9 +1299,14 @@ export function createRouter(services: APIRouterServices): Router {
     "/api/wiki/pages/:slug/versions",
     handleRoute((req, res) => {
       const slug = requireString(req.params.slug, "slug");
-      const page = pageManager.getPage(slug);
+      const tenantId = getRequestTenantId(res);
+      const page = pageManager.getPage(slug, tenantId ?? undefined);
 
       if (!page) {
+        throw new ApiError(404, `Wiki page not found: ${slug}`);
+      }
+
+      if (tenantId !== null && page.tenant_id !== tenantId) {
         throw new ApiError(404, `Wiki page not found: ${slug}`);
       }
 
@@ -1454,9 +1465,14 @@ export function createRouter(services: APIRouterServices): Router {
     "/api/wiki/pages/:slug",
     handleRoute((req, res) => {
       const slug = requireString(req.params.slug, "slug");
-      const page = pageManager.getPageWithBacklinks(slug);
+      const tenantId = getRequestTenantId(res);
+      const page = pageManager.getPageWithBacklinks(slug, tenantId ?? undefined);
 
       if (!page) {
+        throw new ApiError(404, `Wiki page not found: ${slug}`);
+      }
+
+      if (tenantId !== null && page.page.tenant_id !== tenantId) {
         throw new ApiError(404, `Wiki page not found: ${slug}`);
       }
 
@@ -1472,6 +1488,7 @@ export function createRouter(services: APIRouterServices): Router {
       const results = searchWikiPages(services.repository, {
         query,
         project: parseSingleValue(body.project, "project"),
+        tenant_id: getRequestTenantId(res),
         limit:
           parseNumber(body.limit, "limit", {
             integer: true,

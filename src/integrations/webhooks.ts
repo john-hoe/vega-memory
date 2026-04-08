@@ -15,35 +15,50 @@ export interface WebhookPayload {
 }
 
 export class WebhookService {
-  private webhooks: WebhookConfig[] = [];
+  private readonly webhooks = new Map<string, WebhookConfig[]>();
 
   constructor(configs?: WebhookConfig[]) {
-    this.webhooks = configs?.map((config) => this.cloneWebhook(config)) ?? [];
+    if (configs) {
+      this.webhooks.set(this.getBucketKey(null), configs.map((config) => this.cloneWebhook(config)));
+    }
   }
 
-  registerWebhook(config: WebhookConfig): void {
+  registerWebhook(config: WebhookConfig, tenantId?: string | null): void {
     const nextConfig = this.cloneWebhook(config);
-    const existingIndex = this.webhooks.findIndex((webhook) => webhook.url === nextConfig.url);
+    const bucketKey = this.getBucketKey(tenantId);
+    const webhooks = this.webhooks.get(bucketKey) ?? [];
+    const existingIndex = webhooks.findIndex((webhook) => webhook.url === nextConfig.url);
 
     if (existingIndex >= 0) {
-      this.webhooks[existingIndex] = nextConfig;
+      webhooks[existingIndex] = nextConfig;
+      this.webhooks.set(bucketKey, webhooks);
       return;
     }
 
-    this.webhooks.push(nextConfig);
+    webhooks.push(nextConfig);
+    this.webhooks.set(bucketKey, webhooks);
   }
 
-  removeWebhook(url: string): void {
-    this.webhooks = this.webhooks.filter((webhook) => webhook.url !== url);
+  removeWebhook(url: string, tenantId?: string | null): void {
+    const bucketKey = this.getBucketKey(tenantId);
+    const webhooks = this.webhooks.get(bucketKey) ?? [];
+
+    this.webhooks.set(
+      bucketKey,
+      webhooks.filter((webhook) => webhook.url !== url)
+    );
   }
 
-  listWebhooks(): WebhookConfig[] {
-    return this.webhooks.map((webhook) => this.cloneWebhook(webhook));
+  listWebhooks(tenantId?: string | null): WebhookConfig[] {
+    return (this.webhooks.get(this.getBucketKey(tenantId)) ?? []).map((webhook) =>
+      this.cloneWebhook(webhook)
+    );
   }
 
   async emit(
     event: string,
-    data: Record<string, unknown>
+    data: Record<string, unknown>,
+    tenantId?: string | null
   ): Promise<{ sent: number; failed: number }> {
     const payload: WebhookPayload = {
       event,
@@ -54,7 +69,7 @@ export class WebhookService {
     let sent = 0;
     let failed = 0;
 
-    for (const webhook of this.webhooks) {
+    for (const webhook of this.webhooks.get(this.getBucketKey(tenantId)) ?? []) {
       if (!webhook.enabled || !webhook.events.includes(event)) {
         continue;
       }
@@ -78,16 +93,16 @@ export class WebhookService {
     id: string;
     content: string;
     project: string;
-  }): Promise<void> {
-    await this.emit("memory.created", memory);
+  }, tenantId?: string | null): Promise<void> {
+    await this.emit("memory.created", memory, tenantId);
   }
 
-  async emitMemoryUpdated(id: string): Promise<void> {
-    await this.emit("memory.updated", { id });
+  async emitMemoryUpdated(id: string, tenantId?: string | null): Promise<void> {
+    await this.emit("memory.updated", { id }, tenantId);
   }
 
-  async emitMemoryDeleted(id: string): Promise<void> {
-    await this.emit("memory.deleted", { id });
+  async emitMemoryDeleted(id: string, tenantId?: string | null): Promise<void> {
+    await this.emit("memory.deleted", { id }, tenantId);
   }
 
   signPayload(payload: string, secret: string): string {
@@ -101,5 +116,9 @@ export class WebhookService {
       enabled: config.enabled,
       ...(config.secret === undefined ? {} : { secret: config.secret })
     };
+  }
+
+  private getBucketKey(tenantId: string | null | undefined): string {
+    return tenantId ?? "__root__";
   }
 }

@@ -184,6 +184,7 @@ export function initializeDatabase(db: Database.Database): void {
       version INTEGER NOT NULL DEFAULT 1,
       space_id TEXT,
       parent_id TEXT,
+      tenant_id TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -388,6 +389,17 @@ export function initializeDatabase(db: Database.Database): void {
   ensureColumn(db, "usage_log", "amount", "REAL");
   ensureColumn(db, "usage_log", "recorded_at", "TEXT");
   ensureColumn(db, "wiki_pages", "space_id", "TEXT");
+  ensureColumn(db, "wiki_pages", "tenant_id", "TEXT");
+  db.exec(`
+    UPDATE wiki_pages
+    SET tenant_id = (
+      SELECT wiki_spaces.tenant_id
+      FROM wiki_spaces
+      WHERE wiki_spaces.id = wiki_pages.space_id
+    )
+    WHERE tenant_id IS NULL
+      AND space_id IS NOT NULL
+  `);
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_memories_tenant_status
@@ -404,6 +416,9 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_wiki_pages_space
       ON wiki_pages(space_id);
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_pages_tenant
+      ON wiki_pages(tenant_id);
 
     CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp
       ON audit_log(timestamp);

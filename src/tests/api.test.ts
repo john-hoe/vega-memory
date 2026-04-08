@@ -23,6 +23,7 @@ import { TenantService } from "../core/tenant.js";
 import { UserService } from "../core/user.js";
 import { Repository } from "../db/repository.js";
 import { SearchEngine } from "../search/engine.js";
+import { PageManager } from "../wiki/page-manager.js";
 
 interface TestHarness {
   baseUrl: string;
@@ -540,6 +541,287 @@ test("POST /api/compact returns merged and archived counts", async () => {
     assert.equal(response.status, 200);
     assert.equal(typeof body.merged, "number");
     assert.equal(body.archived, 1);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("tenant-scoped compact only archives the current tenant's memories", async () => {
+  const harness = await createHarness();
+  const tenantService = new TenantService(harness.repository);
+  const userService = new UserService(harness.repository);
+  const tenantA = tenantService.createTenant("Tenant A", "pro");
+  const tenantB = tenantService.createTenant("Tenant B", "pro");
+  const adminUser = userService.createUser(
+    "tenant-a-admin@example.com",
+    "Tenant A Admin",
+    "admin",
+    tenantA.id
+  );
+  const sessionToken = "tenant-a-compact-admin";
+
+  registerDashboardSession(harness.config, sessionToken, adminUser);
+
+  try {
+    harness.repository.createMemory({
+      id: "tenant-a-low-priority",
+      tenant_id: tenantA.id,
+      type: "insight",
+      project: "tenant-project",
+      title: "Tenant A low priority",
+      content: "Archive only tenant A",
+      summary: null,
+      embedding: null,
+      importance: 0.05,
+      source: "auto",
+      tags: [],
+      created_at: "2026-04-08T00:00:00.000Z",
+      updated_at: "2026-04-08T00:00:00.000Z",
+      accessed_at: "2026-04-08T00:00:00.000Z",
+      status: "active",
+      verified: "unverified",
+      scope: "project",
+      accessed_projects: ["tenant-project"]
+    });
+    harness.repository.createMemory({
+      id: "tenant-b-low-priority",
+      tenant_id: tenantB.id,
+      type: "insight",
+      project: "tenant-project",
+      title: "Tenant B low priority",
+      content: "Do not archive tenant B",
+      summary: null,
+      embedding: null,
+      importance: 0.05,
+      source: "auto",
+      tags: [],
+      created_at: "2026-04-08T00:00:00.000Z",
+      updated_at: "2026-04-08T00:00:00.000Z",
+      accessed_at: "2026-04-08T00:00:00.000Z",
+      status: "active",
+      verified: "unverified",
+      scope: "project",
+      accessed_projects: ["tenant-project"]
+    });
+
+    const response = await harness.request("/api/compact", {
+      method: "POST",
+      headers: {
+        cookie: `${DASHBOARD_AUTH_COOKIE}=${sessionToken}`
+      },
+      body: JSON.stringify({
+        project: "tenant-project"
+      })
+    });
+    const body = await readJson<{ archived: number }>(response);
+
+    assert.equal(response.status, 200);
+    assert.equal(body.archived, 1);
+    assert.equal(harness.repository.getMemory("tenant-a-low-priority")?.status, "archived");
+    assert.equal(harness.repository.getMemory("tenant-b-low-priority")?.status, "active");
+  } finally {
+    revokeDashboardSession(harness.config, sessionToken);
+    await harness.cleanup();
+  }
+});
+
+test("tenant-scoped audit purge only deletes the current tenant's entries", async () => {
+  const harness = await createHarness();
+  const tenantService = new TenantService(harness.repository);
+  const userService = new UserService(harness.repository);
+  const tenantA = tenantService.createTenant("Tenant A", "pro");
+  const tenantB = tenantService.createTenant("Tenant B", "pro");
+  const adminUser = userService.createUser(
+    "tenant-a-audit@example.com",
+    "Tenant A Audit",
+    "admin",
+    tenantA.id
+  );
+  const sessionToken = "tenant-a-audit-admin";
+
+  registerDashboardSession(harness.config, sessionToken, adminUser);
+
+  try {
+    harness.repository.logAudit({
+      timestamp: "2026-04-01T00:00:00.000Z",
+      actor: "alice",
+      action: "tenant-a-event",
+      memory_id: null,
+      detail: "tenant a old entry",
+      ip: null,
+      tenant_id: tenantA.id
+    });
+    harness.repository.logAudit({
+      timestamp: "2026-04-01T00:00:00.000Z",
+      actor: "bob",
+      action: "tenant-b-event",
+      memory_id: null,
+      detail: "tenant b old entry",
+      ip: null,
+      tenant_id: tenantB.id
+    });
+
+    const response = await harness.request("/api/admin/audit/purge?before=2026-04-02T00:00:00.000Z", {
+      method: "DELETE",
+      headers: {
+        cookie: `${DASHBOARD_AUTH_COOKIE}=${sessionToken}`
+      }
+    });
+    const body = await readJson<{ deleted: number }>(response);
+    const remaining = harness.repository.getAuditLog();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.deleted, 1);
+    assert.equal(remaining.length, 1);
+    assert.equal(remaining[0]?.tenant_id, tenantB.id);
+  } finally {
+    revokeDashboardSession(harness.config, sessionToken);
+    await harness.cleanup();
+  }
+});
+
+test("tenant wiki list, versions, read, and search routes do not leak cross-tenant pages", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenantA = tenantService.createTenant("Tenant A", "pro");
+  const tenantB = tenantService.createTenant("Tenant B", "pro");
+  const pageManager = new PageManager(harness.repository);
+  const tenantAHeaders = {
+    authorization: `Bearer ${tenantA.api_key}`
+  };
+
+  try {
+    const tenantAPage = pageManager.createPage({
+      title: "Tenant A Guide",
+      content: "shared wiki isolation token alpha",
+      summary: "alpha summary",
+      page_type: "reference",
+      project: "wiki-tenant",
+      tenant_id: tenantA.id
+    });
+    const tenantBPage = pageManager.createPage({
+      title: "Tenant B Guide",
+      content: "shared wiki isolation token beta",
+      summary: "beta summary",
+      page_type: "reference",
+      project: "wiki-tenant",
+      tenant_id: tenantB.id
+    });
+
+    pageManager.updatePage(
+      tenantAPage.id,
+      {
+        content: "shared wiki isolation token alpha v2"
+      },
+      "Create a prior version"
+    );
+    pageManager.updatePage(
+      tenantBPage.id,
+      {
+        content: "shared wiki isolation token beta v2"
+      },
+      "Create a prior version"
+    );
+
+    const listResponse = await harness.request("/api/wiki/pages?project=wiki-tenant&limit=10", {
+      headers: tenantAHeaders
+    });
+    const listed = await readJson<Array<{ slug: string }>>(listResponse);
+    const versionsResponse = await harness.request(`/api/wiki/pages/${tenantBPage.slug}/versions`, {
+      headers: tenantAHeaders
+    });
+    const versionsBody = await readJson<{ error: string }>(versionsResponse);
+    const readResponse = await harness.request(`/api/wiki/pages/${tenantBPage.slug}`, {
+      headers: tenantAHeaders
+    });
+    const readBody = await readJson<{ error: string }>(readResponse);
+    const searchResponse = await harness.request("/api/wiki/search", {
+      method: "POST",
+      headers: tenantAHeaders,
+      body: JSON.stringify({
+        query: "shared wiki isolation token",
+        project: "wiki-tenant",
+        limit: 10
+      })
+    });
+    const searched = await readJson<Array<{ slug: string }>>(searchResponse);
+
+    assert.equal(listResponse.status, 200);
+    assert.deepEqual(listed.map((page) => page.slug), [tenantAPage.slug]);
+
+    assert.equal(versionsResponse.status, 404);
+    assert.equal(versionsBody.error, `Wiki page not found: ${tenantBPage.slug}`);
+
+    assert.equal(readResponse.status, 404);
+    assert.equal(readBody.error, `Wiki page not found: ${tenantBPage.slug}`);
+
+    assert.equal(searchResponse.status, 200);
+    assert.deepEqual(searched.map((page) => page.slug), [tenantAPage.slug]);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("webhook routes require admin access when auth is enabled", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenant = tenantService.createTenant("Tenant A", "pro");
+  const tenantHeaders = {
+    authorization: `Bearer ${tenant.api_key}`
+  };
+
+  try {
+    const createResponse = await harness.request("/api/webhooks", {
+      method: "POST",
+      headers: tenantHeaders,
+      body: JSON.stringify({
+        url: "https://tenant.example/webhooks/memory",
+        events: ["memory.created"],
+        enabled: true
+      })
+    });
+    const createBody = await readJson<{ error: string }>(createResponse);
+    const listResponse = await harness.request("/api/webhooks", {
+      headers: tenantHeaders
+    });
+    const listBody = await readJson<{ error: string }>(listResponse);
+    const deleteResponse = await harness.request(
+      `/api/webhooks/${encodeURIComponent("https://tenant.example/webhooks/memory")}`,
+      {
+        method: "DELETE",
+        headers: tenantHeaders
+      }
+    );
+    const deleteBody = await readJson<{ error: string }>(deleteResponse);
+    const testResponse = await harness.request("/api/webhooks/test", {
+      method: "POST",
+      headers: tenantHeaders,
+      body: JSON.stringify({
+        event: "memory.created",
+        data: {
+          id: "memory-1"
+        }
+      })
+    });
+    const testBody = await readJson<{ error: string }>(testResponse);
+    const rootCreateResponse = await harness.request("/api/webhooks", {
+      method: "POST",
+      body: JSON.stringify({
+        url: "https://root.example/webhooks/memory",
+        events: ["memory.created"],
+        enabled: true
+      })
+    });
+
+    assert.equal(createResponse.status, 403);
+    assert.equal(createBody.error, "forbidden");
+    assert.equal(listResponse.status, 403);
+    assert.equal(listBody.error, "forbidden");
+    assert.equal(deleteResponse.status, 403);
+    assert.equal(deleteBody.error, "forbidden");
+    assert.equal(testResponse.status, 403);
+    assert.equal(testBody.error, "forbidden");
+    assert.equal(rootCreateResponse.status, 201);
   } finally {
     await harness.cleanup();
   }
