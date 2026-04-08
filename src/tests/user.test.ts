@@ -115,6 +115,39 @@ test("requireRole allows users with a permitted role", () => {
   assert.equal((res as unknown as MockResponse).statusCode, undefined);
 });
 
+test("requireRole forbids tenant-scoped requests without a user session", () => {
+  const middleware = requireRole("admin");
+  const req = {} as Request;
+  const res = createMockResponse({
+    tenantId: "tenant-a"
+  }) as unknown as Response;
+  let nextCalled = false;
+
+  middleware(req, res, () => {
+    nextCalled = true;
+  });
+
+  assert.equal(nextCalled, false);
+  assert.equal((res as unknown as MockResponse).statusCode, 403);
+  assert.deepEqual((res as unknown as MockResponse).jsonBody, {
+    error: "forbidden"
+  });
+});
+
+test("requireRole allows root API key requests without a user session", () => {
+  const middleware = requireRole("admin");
+  const req = {} as Request;
+  const res = createMockResponse() as unknown as Response;
+  let nextCalled = false;
+
+  middleware(req, res, () => {
+    nextCalled = true;
+  });
+
+  assert.equal(nextCalled, true);
+  assert.equal((res as unknown as MockResponse).statusCode, undefined);
+});
+
 test("requireTenantAccess forbids tenant mismatches for authenticated users", () => {
   const middleware = requireTenantAccess();
   const req = ({

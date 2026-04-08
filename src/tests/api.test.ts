@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
@@ -380,6 +380,137 @@ test("POST /api/session/end records session", async () => {
   }
 });
 
+test("tenant-scoped session APIs only expose and update the current tenant's memories", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenantA = tenantService.createTenant("Tenant A", "pro");
+  const tenantB = tenantService.createTenant("Tenant B", "pro");
+  const tenantAHeaders = {
+    authorization: `Bearer ${tenantA.api_key}`
+  };
+  const workingDirectory = mkdtempSync(join(tmpdir(), "vega-api-session-tenant-"));
+  const project = basename(workingDirectory);
+
+  try {
+    harness.repository.createMemory({
+      id: "tenant-a-context",
+      tenant_id: tenantA.id,
+      type: "project_context",
+      project,
+      title: "Tenant A context",
+      content: "Tenant A project context",
+      summary: null,
+      embedding: null,
+      importance: 0.5,
+      source: "auto",
+      tags: [],
+      created_at: "2026-04-08T00:00:00.000Z",
+      updated_at: "2026-04-08T00:00:00.000Z",
+      accessed_at: "2026-04-08T00:00:00.000Z",
+      status: "active",
+      verified: "unverified",
+      scope: "project",
+      accessed_projects: [project]
+    });
+    harness.repository.createMemory({
+      id: "tenant-b-context",
+      tenant_id: tenantB.id,
+      type: "project_context",
+      project,
+      title: "Tenant B context",
+      content: "Tenant B project context",
+      summary: null,
+      embedding: null,
+      importance: 0.5,
+      source: "auto",
+      tags: [],
+      created_at: "2026-04-08T00:00:00.000Z",
+      updated_at: "2026-04-08T00:00:00.000Z",
+      accessed_at: "2026-04-08T00:00:00.000Z",
+      status: "active",
+      verified: "unverified",
+      scope: "project",
+      accessed_projects: [project]
+    });
+    harness.repository.createMemory({
+      id: "tenant-a-task",
+      tenant_id: tenantA.id,
+      type: "task_state",
+      project: "vega",
+      title: "Tenant A task",
+      content: "Tenant A task",
+      summary: null,
+      embedding: null,
+      importance: 0.9,
+      source: "auto",
+      tags: [],
+      created_at: "2026-04-08T00:00:00.000Z",
+      updated_at: "2026-04-08T00:00:00.000Z",
+      accessed_at: "2026-04-08T00:00:00.000Z",
+      status: "active",
+      verified: "unverified",
+      scope: "project",
+      accessed_projects: ["vega"]
+    });
+
+    const startResponse = await harness.request("/api/session/start", {
+      method: "POST",
+      headers: tenantAHeaders,
+      body: JSON.stringify({
+        working_directory: workingDirectory
+      })
+    });
+    const startBody = await readJson<{
+      context: Array<{ id: string }>;
+    }>(startResponse);
+    const endResponse = await harness.request("/api/session/end", {
+      method: "POST",
+      headers: tenantAHeaders,
+      body: JSON.stringify({
+        project: "vega",
+        summary: "Session completed.",
+        completed_tasks: ["tenant-a-task", "tenant-b-context"]
+      })
+    });
+    const endBody = await readJson<{ error: string }>(endResponse);
+    const task = harness.repository.getMemory("tenant-a-task");
+
+    assert.equal(startResponse.status, 200);
+    assert.deepEqual(
+      startBody.context.map((memory) => memory.id),
+      ["tenant-a-context"]
+    );
+    assert.equal(endResponse.status, 403);
+    assert.equal(endBody.error, "forbidden");
+    assert.equal(task?.importance, 0.9);
+  } finally {
+    rmSync(workingDirectory, { recursive: true, force: true });
+    await harness.cleanup();
+  }
+});
+
+test("tenant bearer keys cannot access admin routes but the root API key can", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenant = tenantService.createTenant("Tenant A", "pro");
+
+  try {
+    const tenantResponse = await harness.request("/api/admin/dashboard", {
+      headers: {
+        authorization: `Bearer ${tenant.api_key}`
+      }
+    });
+    const tenantBody = await readJson<{ error: string }>(tenantResponse);
+    const rootResponse = await harness.request("/api/admin/dashboard");
+
+    assert.equal(tenantResponse.status, 403);
+    assert.equal(tenantBody.error, "forbidden");
+    assert.equal(rootResponse.status, 200);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("POST /api/compact returns merged and archived counts", async () => {
   const harness = await createHarness();
 
@@ -709,7 +840,7 @@ test("tenant-scoped update and delete reject cross-tenant memory access", async 
   }
 });
 
-test("analytics ignores query tenant_id and scopes by authenticated tenant unless using the root key", async () => {
+test("analytics forbids tenant bearer auth and root API key still returns global stats", async () => {
   const harness = await createHarness("top-secret");
   const tenantService = new TenantService(harness.repository);
   const tenantA = tenantService.createTenant("Tenant A", "pro");
@@ -744,19 +875,15 @@ test("analytics ignores query tenant_id and scopes by authenticated tenant unles
     const tenantScopedResponse = await harness.request(`/api/analytics?tenant_id=${tenantB.id}`, {
       headers: tenantAHeaders
     });
-    const tenantScopedStats = await readJson<{
-      memories_total: number;
-      memories_by_project: Record<string, number>;
-    }>(tenantScopedResponse);
+    const tenantScopedBody = await readJson<{ error: string }>(tenantScopedResponse);
     const rootResponse = await harness.request(`/api/analytics?tenant_id=${tenantA.id}`);
     const rootStats = await readJson<{
       memories_total: number;
       memories_by_project: Record<string, number>;
     }>(rootResponse);
 
-    assert.equal(tenantScopedResponse.status, 200);
-    assert.equal(tenantScopedStats.memories_total, 1);
-    assert.equal(tenantScopedStats.memories_by_project.analytics, 1);
+    assert.equal(tenantScopedResponse.status, 403);
+    assert.equal(tenantScopedBody.error, "forbidden");
 
     assert.equal(rootResponse.status, 200);
     assert.equal(rootStats.memories_total, 2);

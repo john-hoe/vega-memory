@@ -1482,17 +1482,30 @@ export class Repository {
       );
   }
 
-  getRecentPerformanceLogs(limit = 100, operations?: string | string[]): PerformanceLog[] {
+  getRecentPerformanceLogs(
+    limit = 100,
+    operations?: string | string[],
+    tenantId?: string | null
+  ): PerformanceLog[] {
     const operationList =
       (operations === undefined ? [] : Array.isArray(operations) ? operations : [operations])
         .map((operation) => operation.trim())
         .filter((operation) => operation.length > 0);
     const safeLimit = normalizePositiveInteger(limit, 100);
+    const clauses: string[] = [];
     const params: unknown[] = [];
-    const where =
-      operationList.length === 0
-        ? ""
-        : `WHERE operation IN (${operationList.map(() => "?").join(", ")})`;
+
+    if (tenantId !== undefined && tenantId !== null) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    if (operationList.length > 0) {
+      clauses.push(`operation IN (${operationList.map(() => "?").join(", ")})`);
+      params.push(...operationList);
+    }
+
+    const where = clauses.length === 0 ? "" : `WHERE ${clauses.join(" AND ")}`;
 
     const rows = this.db
       .prepare<unknown[], PerformanceLogRow>(
@@ -1502,7 +1515,7 @@ export class Repository {
          ORDER BY timestamp DESC
          LIMIT ?`
       )
-      .all(...operationList, safeLimit);
+      .all(...params, safeLimit);
 
     return rows.map(mapPerformanceLog);
   }

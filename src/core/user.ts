@@ -15,7 +15,8 @@ export interface User {
   sso_subject?: string;
 }
 
-const USER_ROLES = new Set<UserRole>(["admin", "member", "viewer"]);
+export const USER_ROLES = ["admin", "member", "viewer"] as const satisfies readonly UserRole[];
+const USER_ROLE_SET = new Set<UserRole>(USER_ROLES);
 
 const now = (): string => new Date().toISOString();
 
@@ -59,12 +60,15 @@ const normalizeOptionalIdentity = (value: string | undefined): string | undefine
 };
 
 const normalizeRole = (role: UserRole): UserRole => {
-  if (!USER_ROLES.has(role)) {
+  if (!USER_ROLE_SET.has(role)) {
     throw new Error(`Unsupported user role: ${role}`);
   }
 
   return role;
 };
+
+export const isUserRole = (value: string): value is UserRole =>
+  USER_ROLE_SET.has(value as UserRole);
 
 export class UserService {
   constructor(private readonly repository: Repository) {}

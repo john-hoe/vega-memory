@@ -188,6 +188,28 @@ test("admin audit and user routes require an admin dashboard session", async () 
       memoryId: "memory-admin",
       tenantId: tenant.id
     });
+    harness.repository.logPerformance({
+      timestamp: "2026-04-08T00:00:00.000Z",
+      tenant_id: tenant.id,
+      operation: "tenant-dashboard",
+      latency_ms: 12,
+      memory_count: 1,
+      result_count: 1,
+      avg_similarity: 0.9,
+      result_types: ["decision"],
+      bm25_result_count: 1
+    });
+    harness.repository.logPerformance({
+      timestamp: "2026-04-08T00:00:01.000Z",
+      tenant_id: "other-tenant",
+      operation: "other-dashboard",
+      latency_ms: 18,
+      memory_count: 1,
+      result_count: 1,
+      avg_similarity: 0.7,
+      result_types: ["insight"],
+      bm25_result_count: 1
+    });
 
     const memberHeaders = {
       cookie: `${DASHBOARD_AUTH_COOKIE}=${memberToken}`
@@ -255,10 +277,11 @@ test("admin audit and user routes require an admin dashboard session", async () 
       total_users: number;
       total_memories: number;
       active_tenants: number;
+      recent_activity: Array<{ operation: string; tenant_id: string | null }>;
       recent_audit_events: Array<{ action: string }>;
     }>(dashboardResponse);
     const purgeResponse = await harness.request(
-      "/api/admin/audit/purge?before=2026-04-08T00:00:00.000Z",
+      "/api/admin/audit/purge?before=2099-01-01T00:00:00.000Z",
       {
         method: "DELETE",
         headers: adminHeaders
@@ -286,6 +309,18 @@ test("admin audit and user routes require an admin dashboard session", async () 
     assert.equal(dashboardResponse.status, 200);
     assert.equal(dashboardBody.total_users, 1);
     assert.equal(dashboardBody.active_tenants, 1);
+    assert.equal(
+      dashboardBody.recent_activity.some((entry) => entry.operation === "other-dashboard"),
+      false
+    );
+    assert.equal(
+      dashboardBody.recent_activity.length > 0,
+      true
+    );
+    assert.equal(
+      dashboardBody.recent_activity.every((entry) => entry.tenant_id === tenant.id),
+      true
+    );
     assert.equal(dashboardBody.recent_audit_events[0]?.action, "store_created");
 
     assert.equal(purgeResponse.status, 200);

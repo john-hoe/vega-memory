@@ -201,6 +201,13 @@ const getErrorResponse = (error: unknown): { status: number; message: string } =
   }
 
   if (error instanceof Error) {
+    if (error.message === "forbidden") {
+      return {
+        status: 403,
+        message: error.message
+      };
+    }
+
     if (
       error.message.startsWith("Memory not found:") ||
       error.message.startsWith("Unsupported sort")
@@ -787,7 +794,8 @@ export function createRouter(services: APIRouterServices): Router {
       const body = requireBody(req.body);
       const result = await services.sessionService.sessionStart(
         requireString(body.working_directory, "working_directory"),
-        parseSingleValue(body.task_hint, "task_hint")
+        parseSingleValue(body.task_hint, "task_hint"),
+        getRequestTenantId(res)
       );
 
       res.status(200).json(serializeSessionStartResult(result));
@@ -803,7 +811,8 @@ export function createRouter(services: APIRouterServices): Router {
         project,
         requireString(body.summary, "summary"),
         parseStringArray(body.completed_tasks, "completed_tasks"),
-        getRequestAuditContext(req, res)
+        getRequestAuditContext(req, res),
+        getRequestTenantId(res)
       );
 
       res.status(200).json({
@@ -1032,7 +1041,7 @@ export function createRouter(services: APIRouterServices): Router {
               .get(tenantId)?.total ?? 0;
       const health = await getHealthReport(services.repository, services.config);
       const usage = analyticsService.getUsageStats(tenantId ?? undefined);
-      const recentActivity = services.repository.getRecentPerformanceLogs(10);
+      const recentActivity = services.repository.getRecentPerformanceLogs(10, undefined, tenantId);
 
       res.status(200).json({
         health,

@@ -35,19 +35,24 @@ const getRequestedTenantId = (req: Request, res: Response): string | null => {
   return bodyTenantId ?? getRequestTenantId(res);
 };
 
-const isAllowedRole = (user: User | null, roles: Set<UserRole>): boolean => {
-  if (user === null) {
-    return true;
-  }
-
-  return roles.has(user.role);
-};
-
 export const requireRole = (...roles: UserRole[]): RequestHandler => {
   const allowedRoles = new Set<UserRole>(roles);
 
   return (_req, res, next) => {
-    if (!isAllowedRole(getRequestUser(res), allowedRoles)) {
+    const user = getRequestUser(res);
+    const tenantId = getRequestTenantId(res);
+
+    if (user === null) {
+      if (tenantId !== null) {
+        res.status(403).json(FORBIDDEN_RESPONSE);
+        return;
+      }
+
+      next();
+      return;
+    }
+
+    if (!allowedRoles.has(user.role)) {
       res.status(403).json(FORBIDDEN_RESPONSE);
       return;
     }

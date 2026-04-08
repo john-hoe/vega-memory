@@ -326,6 +326,99 @@ test("sessionEnd keeps completed tasks active and decays importance to 0.2", asy
   }
 });
 
+test("sessionStart scopes project memories to the provided tenant", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-start-tenant-scope-"));
+  const project = basename(tempDir);
+  const { repository, sessionService } = createSessionService();
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-a-task",
+        type: "task_state",
+        project,
+        tenant_id: "tenant-a",
+        title: "Tenant A task"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-a-context",
+        type: "project_context",
+        project,
+        tenant_id: "tenant-a",
+        title: "Tenant A context"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-b-task",
+        type: "task_state",
+        project,
+        tenant_id: "tenant-b",
+        title: "Tenant B task"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-b-context",
+        type: "project_context",
+        project,
+        tenant_id: "tenant-b",
+        title: "Tenant B context"
+      })
+    );
+
+    const result = await sessionService.sessionStart(tempDir, undefined, "tenant-a");
+
+    assert.deepEqual(
+      result.active_tasks.map((memory) => memory.id),
+      ["tenant-a-task"]
+    );
+    assert.deepEqual(
+      result.context.map((memory) => memory.id),
+      ["tenant-a-context"]
+    );
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("sessionEnd rejects completed tasks from another tenant", async () => {
+  const { repository, sessionService } = createSessionService();
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-a-task",
+        type: "task_state",
+        project: "vega",
+        tenant_id: "tenant-a",
+        importance: 0.9
+      })
+    );
+
+    await assert.rejects(
+      () =>
+        sessionService.sessionEnd(
+          "vega",
+          "Session completed.",
+          ["tenant-a-task"],
+          undefined,
+          "tenant-b"
+        ),
+      /forbidden/
+    );
+
+    const updated = repository.getMemory("tenant-a-task");
+    assert.ok(updated);
+    assert.equal(updated.importance, 0.9);
+  } finally {
+    repository.close();
+  }
+});
+
 test("sessionStart includes global pitfalls, decisions, and insights from other projects", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-session-start-global-relevant-"));
   const { repository, sessionService } = createSessionService();

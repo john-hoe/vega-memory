@@ -120,6 +120,18 @@ export interface AuditEntry {
   memory_id: string | null;
   detail: string;
   ip: string | null;
+  tenant_id?: string | null;
+}
+
+export interface AuditQueryFilters {
+  actor?: string;
+  action?: string;
+  memoryId?: string;
+  since?: string;
+  until?: string;
+  tenantId?: string | null;
+  limit?: number;
+  offset?: number;
 }
 
 export interface PerformanceLog {

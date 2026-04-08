@@ -179,7 +179,11 @@ export class SessionService {
     this.extractionService = new ExtractionService(config);
   }
 
-  async sessionStart(workingDirectory: string, taskHint?: string): Promise<SessionStartResult> {
+  async sessionStart(
+    workingDirectory: string,
+    taskHint?: string,
+    tenantId?: string | null
+  ): Promise<SessionStartResult> {
     const project = this.inferProject(workingDirectory);
     this.sessionStartTimes.set(project, now());
     const normalizedTaskHint = taskHint?.trim() ?? "";
@@ -190,6 +194,7 @@ export class SessionService {
         type: "preference",
         status: "active",
         scope: "global",
+        tenant_id: tenantId ?? undefined,
         limit: 10_000,
         sort: "importance DESC"
       })
@@ -199,6 +204,7 @@ export class SessionService {
         scope: "global",
         type: "pitfall",
         status: "active",
+        tenant_id: tenantId ?? undefined,
         limit: 20,
         sort: "importance DESC"
       }),
@@ -206,6 +212,7 @@ export class SessionService {
         scope: "global",
         type: "decision",
         status: "active",
+        tenant_id: tenantId ?? undefined,
         limit: 10,
         sort: "importance DESC"
       }),
@@ -213,6 +220,7 @@ export class SessionService {
         scope: "global",
         type: "insight",
         status: "active",
+        tenant_id: tenantId ?? undefined,
         limit: 10,
         sort: "importance DESC"
       })
@@ -222,6 +230,7 @@ export class SessionService {
         type: "task_state",
         status: "active",
         project,
+        tenant_id: tenantId ?? undefined,
         limit: 10_000
       })
       .filter(isSessionVisible);
@@ -230,6 +239,7 @@ export class SessionService {
         type: "project_context",
         status: "active",
         project,
+        tenant_id: tenantId ?? undefined,
         limit: 10_000
       })
       .filter(isSessionVisible);
@@ -237,7 +247,8 @@ export class SessionService {
       taskHintKeywords.length > 0
         ? (await this.recallService.recall(normalizedTaskHint, {
             limit: 5,
-            minSimilarity: 0.3
+            minSimilarity: 0.3,
+            tenant_id: tenantId ?? undefined
           })).map((result) => ({
             ...result,
             finalScore:
@@ -258,6 +269,7 @@ export class SessionService {
     ]).filter((result) => !excludedIds.has(result.memory.id));
     const allMemories = this.repository.listMemories({
       status: "active",
+      tenant_id: tenantId ?? undefined,
       limit: 10_000,
       sort: "created_at DESC"
     });
@@ -280,6 +292,7 @@ export class SessionService {
             .listMemories({
               type: "insight",
               status: "active",
+              tenant_id: tenantId ?? undefined,
               limit: 10_000,
               sort: "importance DESC"
             })
@@ -365,11 +378,24 @@ export class SessionService {
     project: string,
     summary: string,
     completedTaskIds?: string[],
-    auditContext?: AuditContext
+    auditContext?: AuditContext,
+    tenantId?: string | null
   ): Promise<void> {
     const ended_at = now();
     const started_at = this.sessionStartTimes.get(project) ?? ended_at;
     const newlyCreatedMemoryIds: string[] = [];
+
+    for (const taskId of completedTaskIds ?? []) {
+      const existing = this.repository.getMemory(taskId);
+
+      if (existing === null) {
+        throw new Error(`Memory not found: ${taskId}`);
+      }
+
+      if (tenantId !== undefined && tenantId !== null && (existing.tenant_id ?? null) !== tenantId) {
+        throw new Error("forbidden");
+      }
+    }
 
     for (const taskId of completedTaskIds ?? []) {
       this.repository.updateMemory(

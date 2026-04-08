@@ -324,7 +324,8 @@ export class MemoryService {
         action: "store_conflict",
         memory_id: id,
         detail: `Stored conflicting ${params.type} memory${wasRedacted ? " after redaction" : ""}`,
-        ip: auditContext.ip
+        ip: auditContext.ip,
+        tenant_id: tenantId
       });
 
       this.linkKnowledgeGraph(id, redacted, tags);
@@ -388,7 +389,8 @@ export class MemoryService {
         action: "store_updated",
         memory_id: matched.memory.id,
         detail: `Updated ${params.type} memory from store pipeline${wasRedacted ? " after redaction" : ""}`,
-        ip: auditContext.ip
+        ip: auditContext.ip,
+        tenant_id: tenantId
       });
 
       this.linkKnowledgeGraph(matched.memory.id, mergedContent, mergedTags);
@@ -433,7 +435,8 @@ export class MemoryService {
       action: "store_created",
       memory_id: id,
       detail: `Created ${params.type} memory from store pipeline${wasRedacted ? " after redaction" : ""}`,
-      ip: auditContext.ip
+      ip: auditContext.ip,
+      tenant_id: tenantId
     });
 
     this.linkKnowledgeGraph(id, redacted, tags);
