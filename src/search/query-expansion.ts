@@ -1,0 +1,151 @@
+export interface ExpandedQuery {
+  original: string;
+  variants: string[];
+  method: "heuristic" | "llm";
+}
+
+interface QueryExpanderConfig {
+  enabled: boolean;
+  maxVariants?: number;
+  model?: string;
+}
+
+type SearchResultSet = {
+  query: string;
+  results: Array<{
+    id: string;
+    score: number;
+  }>;
+};
+
+const TOKEN_SYNONYMS: ReadonlyMap<string, string> = new Map([
+  ["auth", "authentication"],
+  ["db", "database"],
+  ["k8s", "kubernetes"],
+  ["config", "configuration"],
+  ["repo", "repository"],
+  ["env", "environment"],
+  ["msg", "message"],
+  ["err", "error"],
+  ["req", "request"],
+  ["res", "response"]
+]);
+
+const COMPOUND_SPLITS: ReadonlyMap<string, string> = new Map([
+  ["database", "data base"]
+]);
+
+const normalizeQuery = (query: string): string => query.trim().replace(/\s+/g, " ");
+
+const replaceWholeWord = (query: string, replacements: ReadonlyMap<string, string>): string => {
+  let expanded = query;
+
+  for (const [term, replacement] of replacements) {
+    expanded = expanded.replace(new RegExp(`\\b${term}\\b`, "gi"), replacement);
+  }
+
+  return normalizeQuery(expanded);
+};
+
+const expandQueryTerms = (query: string): string => {
+  const tokens = query.split(/\s+/).filter((token) => token.length > 0);
+
+  return normalizeQuery(
+    tokens
+      .flatMap((token) => {
+        const normalizedToken = token.toLowerCase();
+        const synonym = TOKEN_SYNONYMS.get(normalizedToken);
+        const compound = COMPOUND_SPLITS.get(normalizedToken);
+
+        if (synonym !== undefined) {
+          return [token, synonym];
+        }
+
+        if (compound !== undefined) {
+          return [token, compound];
+        }
+
+        return [token];
+      })
+      .join(" ")
+  );
+};
+
+const logExpansionInfo = (message: string): void => {
+  process.stderr.write(`${message}\n`);
+};
+
+export class QueryExpander {
+  private readonly enabled: boolean;
+  private readonly maxVariants: number;
+  private readonly model?: string;
+
+  constructor(config: QueryExpanderConfig) {
+    this.enabled = config.enabled;
+    this.maxVariants = Math.max(1, config.maxVariants ?? 3);
+    this.model = config.model;
+  }
+
+  async expand(query: string): Promise<ExpandedQuery> {
+    const original = normalizeQuery(query);
+
+    if (!this.enabled) {
+      return {
+        original,
+        variants: [original],
+        method: "heuristic"
+      };
+    }
+
+    const variants = [
+      original,
+      replaceWholeWord(original, TOKEN_SYNONYMS),
+      replaceWholeWord(original, COMPOUND_SPLITS),
+      expandQueryTerms(original)
+    ].filter((variant, index, allVariants) => variant.length > 0 && allVariants.indexOf(variant) === index);
+
+    return {
+      original,
+      variants: variants.slice(0, this.maxVariants),
+      method: "heuristic"
+    };
+  }
+
+  async expandWithLLM(query: string, ollamaUrl: string): Promise<ExpandedQuery> {
+    void ollamaUrl;
+    void this.model;
+    logExpansionInfo("LLM expansion not connected");
+
+    return this.expand(query);
+  }
+
+  mergeResults(
+    resultSets: SearchResultSet[],
+    k = 60
+  ): Array<{
+    id: string;
+    score: number;
+  }> {
+    const fusedScores = new Map<string, number>();
+
+    resultSets.forEach((resultSet) => {
+      void resultSet.query;
+      const seenIds = new Set<string>();
+
+      resultSet.results.forEach((result, index) => {
+        if (seenIds.has(result.id)) {
+          return;
+        }
+
+        seenIds.add(result.id);
+        const rank = index + 1;
+        const fusedScore = 1 / (k + rank);
+        fusedScores.set(result.id, (fusedScores.get(result.id) ?? 0) + fusedScore);
+      });
+    });
+
+    return [...fusedScores.entries()]
+      .map(([id, score]) => ({ id, score }))
+      .sort((left, right) => right.score - left.score);
+  }
+}
