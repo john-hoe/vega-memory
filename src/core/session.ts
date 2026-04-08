@@ -13,6 +13,7 @@ import { RecallService } from "./recall.js";
 import { exportSnapshot } from "./snapshot.js";
 import type {
   AuditContext,
+  ExtractionCandidate,
   Memory,
   MemoryType,
   SearchResult,
@@ -35,6 +36,10 @@ const SESSION_BUDGET_RATIOS = {
   context: 0.2
 } as const;
 const SESSION_SYNTHESIS_WARNING_PREFIX = "session-synthesis-warning:";
+const SNAPSHOT_EXPORT_DEBOUNCE_MS = 60_000;
+const OLLAMA_AVAILABILITY_TTL_MS = 60_000;
+const EXTRACTION_MIN_SUMMARY_LENGTH = 120;
+const SESSION_START_CACHE_TTL_MS = 5_000;
 
 interface SessionWikiSearchRow {
   slug: string;
@@ -168,6 +173,22 @@ const takeRelevantResultsWithinBudget = (
 export class SessionService {
   private readonly sessionStartTimes = new Map<string, string>();
   private readonly extractionService: ExtractionService;
+  private readonly inferredProjects = new Map<string, string>();
+  private readonly snapshotExportTimes = new Map<string, number>();
+  private readonly sessionStartCache = new Map<
+    string,
+    {
+      cachedAt: number;
+      project: string;
+      result: SessionStartResult;
+    }
+  >();
+  private lastOllamaAvailabilityCheck:
+    | {
+        checkedAt: number;
+        available: boolean;
+      }
+    | null = null;
 
   constructor(
     private readonly repository: Repository,
@@ -188,6 +209,12 @@ export class SessionService {
     this.sessionStartTimes.set(project, now());
     const normalizedTaskHint = taskHint?.trim() ?? "";
     const taskHintKeywords = normalizedTaskHint ? extractTaskHintKeywords(normalizedTaskHint) : [];
+    const cacheKey = `${resolve(workingDirectory)}\u0000${tenantId ?? ""}\u0000${normalizedTaskHint}`;
+    const cached = this.sessionStartCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.cachedAt < SESSION_START_CACHE_TTL_MS) {
+      return structuredClone(cached.result) as SessionStartResult;
+    }
 
     const preferences = this.repository
       .listMemories({
@@ -357,7 +384,7 @@ export class SessionService {
       ...trimmedConflicts
     ]) + estimateWikiTokens(relevant_wiki_pages);
 
-    return {
+    const result: SessionStartResult = {
       project,
       active_tasks: trimmedActiveTasks.map(toSessionMemory),
       preferences: trimmedPreferences.map(toSessionMemory),
@@ -372,6 +399,14 @@ export class SessionService {
       proactive_warnings,
       token_estimate
     };
+
+    this.sessionStartCache.set(cacheKey, {
+      cachedAt: Date.now(),
+      project,
+      result
+    });
+
+    return structuredClone(result) as SessionStartResult;
   }
 
   async sessionEnd(
@@ -409,9 +444,9 @@ export class SessionService {
     }
 
     const memories_created: string[] = [];
-    const ollamaAvailable = await isOllamaAvailable(this.config);
+    const ollamaAvailable = await this.isOllamaAvailableCached();
     const extracted = ollamaAvailable
-      ? await this.extractionService.extractMemories(summary, project)
+      ? await this.extractWithThreshold(summary, project)
       : [];
 
     if (extracted.length > 0) {
@@ -471,14 +506,56 @@ export class SessionService {
       memories_created
     });
 
-    exportSnapshot(this.repository, this.getSnapshotPath(project));
+    const nowMs = Date.now();
+    const lastSnapshotExportAt = this.snapshotExportTimes.get(project) ?? 0;
+    if (nowMs - lastSnapshotExportAt >= SNAPSHOT_EXPORT_DEBOUNCE_MS) {
+      exportSnapshot(this.repository, this.getSnapshotPath(project));
+      this.snapshotExportTimes.set(project, nowMs);
+    }
+    for (const [key, value] of this.sessionStartCache.entries()) {
+      if (value.project === project) {
+        this.sessionStartCache.delete(key);
+      }
+    }
     this.sessionStartTimes.delete(project);
   }
 
+  private async isOllamaAvailableCached(): Promise<boolean> {
+    if (
+      this.lastOllamaAvailabilityCheck !== null &&
+      Date.now() - this.lastOllamaAvailabilityCheck.checkedAt < OLLAMA_AVAILABILITY_TTL_MS
+    ) {
+      return this.lastOllamaAvailabilityCheck.available;
+    }
+
+    const available = await isOllamaAvailable(this.config);
+    this.lastOllamaAvailabilityCheck = {
+      checkedAt: Date.now(),
+      available
+    };
+
+    return available;
+  }
+
+  private async extractWithThreshold(summary: string, project: string): Promise<ExtractionCandidate[]> {
+    if (summary.trim().length < EXTRACTION_MIN_SUMMARY_LENGTH) {
+      return [];
+    }
+
+    return this.extractionService.extractMemories(summary, project);
+  }
+
   inferProject(workingDirectory: string): string {
+    const normalizedDirectory = resolve(workingDirectory);
+    const cached = this.inferredProjects.get(normalizedDirectory);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    let project = basename(normalizedDirectory);
     try {
       const originUrl = execSync(
-        `git -C ${shellQuote(workingDirectory)} remote get-url origin`,
+        `git -C ${shellQuote(normalizedDirectory)} remote get-url origin`,
         {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "ignore"]
@@ -487,11 +564,12 @@ export class SessionService {
       const repoName = parseRepoName(originUrl);
 
       if (repoName) {
-        return repoName;
+        project = repoName;
       }
     } catch {}
 
-    return basename(resolve(workingDirectory));
+    this.inferredProjects.set(normalizedDirectory, project);
+    return project;
   }
 
   private getSnapshotPath(project: string): string {

@@ -81,7 +81,7 @@ export function createAPIServer(
         memory_count: 0,
         result_count: 0
       });
-      logger.info("http request", {
+      logger.debug("http request", {
         method: req.method.toUpperCase(),
         path: req.path,
         status: res.statusCode,
