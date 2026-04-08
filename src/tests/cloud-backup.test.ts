@@ -75,3 +75,28 @@ test("download retrieves file", async () => {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("s3-backed cloud backup uploads lists and downloads through the stub provider", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cloud-backup-s3-"));
+  const localPath = join(tempDir, "memory-2026-04-05.db");
+  const downloadPath = join(tempDir, "restored", "memory.db");
+  const provider = new CloudBackupProvider({
+    enabled: true,
+    provider: "s3",
+    bucket: "vega-backups",
+    region: "us-east-1"
+  });
+
+  try {
+    writeFileSync(localPath, "remote-backup", "utf8");
+
+    const remoteName = await provider.upload(localPath);
+
+    assert.deepEqual(await provider.listBackups(), [remoteName]);
+
+    await provider.download(remoteName, downloadPath);
+    assert.equal(readFileSync(downloadPath, "utf8"), "remote-backup");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
