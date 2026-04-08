@@ -8,7 +8,16 @@ export class RedisSessionStore {
 
   async getSession(id: string): Promise<Record<string, unknown> | null> {
     const value = await this.redis.get(this.buildKey(id));
-    return value === null ? null : (JSON.parse(value) as Record<string, unknown>);
+    if (value === null) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(value) as Record<string, unknown>;
+    } catch {
+      await this.deleteSession(id);
+      return null;
+    }
   }
 
   async setSession(

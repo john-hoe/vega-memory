@@ -4,6 +4,7 @@ import test from "node:test";
 import { CacheManager } from "../cache/cache-manager.js";
 import { RedisClient } from "../cache/redis.js";
 import { RedisSessionStore } from "../cache/session-store.js";
+import { startMockRedisServer } from "./helpers/mock-redis.js";
 
 test("RedisClient uses the in-memory fallback for get/set/del/exists", async () => {
   const redis = new RedisClient({
@@ -83,4 +84,39 @@ test("RedisClient connect logs the disabled fallback message", async () => {
 
   assert.deepEqual(messages, ["Redis disabled, using in-memory fallback"]);
   assert.equal(redis.isConnected(), false);
+});
+
+test("RedisClient uses a live Redis-compatible server when configured", async () => {
+  const server = await startMockRedisServer();
+  const redis = new RedisClient({
+    enabled: true,
+    url: `redis://127.0.0.1:${server.port}/2`,
+    keyPrefix: "vega:"
+  });
+
+  try {
+    await redis.connect();
+    await redis.set("memory", "remote-value");
+
+    assert.equal(redis.isConnected(), true);
+    assert.equal(await redis.get("memory"), "remote-value");
+    assert.deepEqual(await redis.keys("mem*"), ["vega:memory"]);
+    assert.equal(await redis.deleteByPattern("mem*"), 1);
+    assert.equal(await redis.get("memory"), null);
+  } finally {
+    await redis.disconnect();
+    await server.close();
+  }
+});
+
+test("RedisSessionStore deletes malformed JSON payloads", async () => {
+  const redis = new RedisClient({
+    enabled: true
+  });
+  const store = new RedisSessionStore(redis);
+
+  await redis.set("sess:broken", "{oops");
+
+  assert.equal(await store.getSession("broken"), null);
+  assert.equal(await redis.get("sess:broken"), null);
 });

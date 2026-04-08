@@ -12,10 +12,10 @@ data:
   OLLAMA_BASE_URL: "http://127.0.0.1:11434"
   {{- end }}
   {{- if .Values.redis.enabled }}
-  REDIS_HOST: {{ .Values.redis.host | quote }}
-  REDIS_PORT: {{ .Values.redis.port | quote }}
+  VEGA_REDIS_HOST: {{ .Values.redis.host | quote }}
+  VEGA_REDIS_PORT: {{ .Values.redis.port | quote }}
   {{- end }}
   {{- if .Values.postgresql.enabled }}
-  POSTGRESQL_HOST: {{ .Values.postgresql.host | quote }}
-  POSTGRESQL_PORT: {{ .Values.postgresql.port | quote }}
+  VEGA_PG_HOST: {{ .Values.postgresql.host | quote }}
+  VEGA_PG_PORT: {{ .Values.postgresql.port | quote }}
   {{- end }}

@@ -100,7 +100,7 @@ test("createAdapter defaults to SQLiteAdapter", () => {
   }
 });
 
-test("PostgresAdapter stub throws the documented error", () => {
+test("PostgresAdapter reports the documented runtime guard", () => {
   const adapter = new PostgresAdapter({
     host: "localhost",
     port: 5432,

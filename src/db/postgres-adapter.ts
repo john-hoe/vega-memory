@@ -13,7 +13,7 @@ export interface PostgresConfig {
 }
 
 const POSTGRES_STUB_ERROR =
-  "PostgreSQL adapter not yet connected — configure VEGA_PG_* environment variables and install pg driver";
+  "PostgreSQL execution is not available in the current synchronous adapter — configure VEGA_PG_* and add an approved async driver/runtime bridge";
 
 export class PostgresAdapter implements DatabaseAdapter {
   readonly isPostgres = true;

@@ -67,10 +67,11 @@ test("SecurityHardening generates and validates CSRF tokens", () => {
     csrfEnabled: true
   });
   const token = hardening.generateCsrfToken();
+  const differentToken = `${token.slice(0, -1)}${token.endsWith("0") ? "1" : "0"}`;
 
   assert.match(token, /^[0-9a-f]{64}$/);
   assert.equal(hardening.validateCsrfToken(token, token), true);
-  assert.equal(hardening.validateCsrfToken(token, `${token.slice(0, -1)}0`), false);
+  assert.equal(hardening.validateCsrfToken(token, differentToken), false);
 });
 
 test("SecurityAuditReport scores fully hardened configs at 100", async () => {

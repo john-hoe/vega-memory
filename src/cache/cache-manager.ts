@@ -16,7 +16,7 @@ export class CacheManager {
   }
 
   async invalidate(pattern: string): Promise<void> {
-    console.log(`Would invalidate pattern: ${pattern}`);
+    await this.redis.deleteByPattern(this.buildKey(pattern));
   }
 
   async getOrSet<T>(key: string, factory: () => Promise<T>, ttlSeconds?: number): Promise<T> {

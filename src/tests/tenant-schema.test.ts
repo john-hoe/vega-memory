@@ -62,7 +62,8 @@ test("TenantSchemaManager generateCreateDDL mirrors the tenant schema bootstrap"
     "rss_feeds"
   ];
 
-  assert.equal(ddl[0], `CREATE SCHEMA IF NOT EXISTS ${schemaName};`);
+  assert.equal(ddl[0], "CREATE EXTENSION IF NOT EXISTS vector;");
+  assert.equal(ddl[1], `CREATE SCHEMA IF NOT EXISTS ${schemaName};`);
 
   for (const tableName of tableNames) {
     assert.equal(
@@ -73,6 +74,10 @@ test("TenantSchemaManager generateCreateDDL mirrors the tenant schema bootstrap"
 
   assert.equal(
     ddl.some((statement) => statement.includes(`FOREIGN KEY (memory_id) REFERENCES ${schemaName}.memories(id)`)),
+    true
+  );
+  assert.equal(
+    ddl.some((statement) => statement.includes(`embedding vector(1024)`)),
     true
   );
   assert.equal(
@@ -95,6 +100,45 @@ test("TenantRouter formats search_path with tenant, shared, and default schemas"
 
   assert.equal(
     router.getSearchPath("Acme-01"),
-    "SET search_path TO org_acme01, shared_core, base"
+    'SET LOCAL search_path TO "org_acme01", "shared_core", "base"'
   );
+});
+
+test("TenantSchemaManager executes schema operations through a query executor", async () => {
+  const calls: Array<{ sql: string; params?: unknown[] }> = [];
+  const manager = new TenantSchemaManager(
+    {
+      prefix: "tenant_",
+      sharedSchema: "shared",
+      defaultSchema: "public"
+    },
+    {
+      async query<T>(sql: string, params?: unknown[]): Promise<{ rows: T[] }> {
+        calls.push({ sql, params });
+        if (sql.includes("information_schema.schemata")) {
+          return {
+            rows: [{ schema_name: "tenant_acme01" }] as T[]
+          };
+        }
+
+        return {
+          rows: [] as T[]
+        };
+      }
+    }
+  );
+
+  await manager.createSchema("Acme-01");
+  await manager.migrateSchema("Acme-01", 3);
+  const schemas = await manager.listSchemas();
+  await manager.dropSchema("Acme-01");
+
+  assert.deepEqual(schemas, ["tenant_acme01"]);
+  assert.ok(calls.some((call) => call.sql.includes("CREATE EXTENSION IF NOT EXISTS vector;")));
+  assert.ok(calls.some((call) => call.sql.includes("INSERT INTO tenant_acme01._schema_versions")));
+  assert.deepEqual(
+    calls.find((call) => call.sql.includes("INSERT INTO tenant_acme01._schema_versions"))?.params,
+    [3]
+  );
+  assert.ok(calls.some((call) => call.sql.includes("DROP SCHEMA IF EXISTS tenant_acme01 CASCADE;")));
 });

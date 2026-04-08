@@ -82,12 +82,12 @@ test("disabled mode returns candidates in original order", async () => {
 
 test("rerankWithModel falls back to keyword scoring", async () => {
   const reranker = new Reranker({ enabled: true, model: "bge-reranker-v2-m3" });
-  const originalConsoleLog = console.log;
-  const messages: string[] = [];
+  const originalFetch = global.fetch;
 
-  console.log = (message?: unknown, ...args: unknown[]): void => {
-    messages.push([message, ...args].map((value) => String(value)).join(" "));
-  };
+  global.fetch = async () =>
+    new Response(null, {
+      status: 500
+    });
 
   try {
     const results = await reranker.rerankWithModel(
@@ -101,7 +101,6 @@ test("rerankWithModel falls back to keyword scoring", async () => {
       "http://localhost:11434"
     );
 
-    assert.ok(messages.includes("Reranker model not connected"));
     assert.deepEqual(
       results.map((result) => result.id),
       ["best", "next", "last"]
@@ -110,6 +109,55 @@ test("rerankWithModel falls back to keyword scoring", async () => {
     assert.equal(results[1]?.rerankerScore, 0.5);
     assert.equal(results[2]?.rerankerScore, 0);
   } finally {
-    console.log = originalConsoleLog;
+    global.fetch = originalFetch;
+  }
+});
+
+test("rerankWithModel uses remote scores when Ollama returns valid JSON", async () => {
+  const reranker = new Reranker({ enabled: true, model: "bge-reranker-v2-m3" });
+  const originalFetch = global.fetch;
+  let bodyText = "";
+
+  global.fetch = async (_input, init) => {
+    bodyText = String(init?.body ?? "");
+    return new Response(
+      JSON.stringify({
+        message: {
+          content: JSON.stringify({
+            scores: [0.1, 0.9, 0.4]
+          })
+        }
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "application/json"
+        }
+      }
+    );
+  };
+
+  try {
+    const results = await reranker.rerankWithModel(
+      "beta gamma",
+      [
+        createCandidate({ id: "best", title: "Gamma", content: "beta gamma", originalRank: 1 }),
+        createCandidate({ id: "next", title: "Strong", content: "gamma", originalRank: 2 }),
+        createCandidate({ id: "last", title: "Weak", content: "alpha", originalRank: 3 })
+      ],
+      "bge-reranker-v2-m3",
+      "http://localhost:11434"
+    );
+
+    assert.match(bodyText, /Gamma\\\\nbeta gamma/);
+    assert.deepEqual(
+      results.map((result) => result.id),
+      ["next", "last", "best"]
+    );
+    assert.equal(results[0]?.rerankerScore, 1);
+    assert.ok(Math.abs((results[1]?.rerankerScore ?? 0) - 0.375) < 1e-9);
+    assert.equal(results[2]?.rerankerScore, 0);
+  } finally {
+    global.fetch = originalFetch;
   }
 });

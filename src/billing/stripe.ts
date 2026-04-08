@@ -1,5 +1,4 @@
-// Stripe billing stub — replace stub methods with stripe SDK calls. Install: npm install stripe
-import { randomUUID } from "node:crypto";
+import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
 
 export interface StripeConfig {
   secretKey?: string;
@@ -81,9 +80,58 @@ const STUB_PLANS: StripePlan[] = [
   }
 ];
 
-const createStubId = (prefix: "cus" | "sub"): string => `${prefix}_stub_${randomUUID().replaceAll("-", "")}`;
+function createStubId(prefix: "cus" | "sub"): string {
+  return `${prefix}_stub_${randomUUID().replaceAll("-", "")}`;
+}
 
-const getPeriodEnd = (): string => new Date(Date.now() + STUB_PERIOD_MS).toISOString();
+function getPeriodEnd(): string {
+  return new Date(Date.now() + STUB_PERIOD_MS).toISOString();
+}
+
+function getPlanById(planId: string): StripePlan | undefined {
+  return STUB_PLANS.find((plan) => plan.id === planId);
+}
+
+function secureCompare(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function getWebhookEvent(parsed: {
+  type?: unknown;
+  event?: unknown;
+}): string {
+  if (typeof parsed.type === "string") {
+    return parsed.type;
+  }
+
+  if (typeof parsed.event === "string") {
+    return parsed.event;
+  }
+
+  return "stripe.stub.event";
+}
+
+function getWebhookSubscriptionId(object: {
+  id?: unknown;
+  subscription?: unknown;
+}): string | null {
+  if (typeof object.id === "string") {
+    return object.id;
+  }
+
+  if (typeof object.subscription === "string") {
+    return object.subscription;
+  }
+
+  return null;
+}
 
 export class StripeService {
   private readonly customers = new Map<string, StripeCustomer>();
@@ -92,11 +140,30 @@ export class StripeService {
   constructor(private readonly config: StripeConfig) {}
 
   async createCustomer(email: string, name: string, tenantId: string): Promise<StripeCustomer> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedName = name.trim();
+    const normalizedTenantId = tenantId.trim();
+
+    for (const existing of this.customers.values()) {
+      if (existing.email === normalizedEmail && existing.tenantId === normalizedTenantId) {
+        const nextCustomer =
+          normalizedName.length === 0
+            ? existing
+            : {
+                ...existing,
+                name: normalizedName
+              };
+
+        this.customers.set(nextCustomer.id, nextCustomer);
+        return nextCustomer;
+      }
+    }
+
     const customer: StripeCustomer = {
       id: createStubId("cus"),
-      email: email.trim().toLowerCase(),
-      name: name.trim() || undefined,
-      tenantId: tenantId.trim()
+      email: normalizedEmail,
+      name: normalizedName || undefined,
+      tenantId: normalizedTenantId
     };
 
     this.customers.set(customer.id, customer);
@@ -110,6 +177,28 @@ export class StripeService {
   async createSubscription(customerId: string, planId: string): Promise<StripeSubscription> {
     if (!this.customers.has(customerId)) {
       throw new Error(`Stripe customer not found: ${customerId}`);
+    }
+
+    if (getPlanById(planId) === undefined) {
+      throw new Error(`Stripe plan not found: ${planId}`);
+    }
+
+    const existing = [...this.subscriptions.values()].find(
+      (subscription) =>
+        subscription.customerId === customerId &&
+        (subscription.status === "active" || subscription.status === "trialing")
+    );
+
+    if (existing) {
+      const nextSubscription: StripeSubscription = {
+        ...existing,
+        planId,
+        status: "active",
+        currentPeriodEnd: getPeriodEnd()
+      };
+
+      this.subscriptions.set(nextSubscription.id, nextSubscription);
+      return nextSubscription;
     }
 
     const subscription: StripeSubscription = {
@@ -152,34 +241,43 @@ export class StripeService {
     }));
   }
 
-  async handleWebhook(payload: string, _signature: string): Promise<{ event: string; data: unknown }> {
+  async handleWebhook(payload: string, signature: string): Promise<{ event: string; data: unknown }> {
+    this.verifyWebhookSignature(payload, signature);
+
     const parsed = JSON.parse(payload) as {
       type?: unknown;
       event?: unknown;
       data?: unknown;
     };
 
-    const event =
-      typeof parsed.type === "string"
-        ? parsed.type
-        : typeof parsed.event === "string"
-          ? parsed.event
-          : "stripe.stub.event";
-
-    return {
-      event,
+    const result = {
+      event: getWebhookEvent(parsed),
       data: parsed.data ?? parsed
     };
+
+    this.applyWebhook(result.event, result.data);
+
+    return result;
   }
 
   async createCheckoutSession(
-    _customerId: string,
-    _planId: string,
-    _successUrl: string,
-    _cancelUrl: string
+    customerId: string,
+    planId: string,
+    successUrl: string,
+    cancelUrl: string
   ): Promise<{ url: string }> {
+    if (!this.customers.has(customerId)) {
+      throw new Error(`Stripe customer not found: ${customerId}`);
+    }
+
+    if (getPlanById(planId) === undefined) {
+      throw new Error(`Stripe plan not found: ${planId}`);
+    }
+
     return {
-      url: "/billing/success"
+      url: `${successUrl}?checkout_session_id=${encodeURIComponent(
+        `cs_stub_${customerId}_${planId}`
+      )}&cancel_url=${encodeURIComponent(cancelUrl)}`
     };
   }
 
@@ -197,5 +295,82 @@ export class StripeService {
     }
 
     return null;
+  }
+
+  private verifyWebhookSignature(payload: string, signature: string): void {
+    if (!this.config.webhookSecret || signature.trim().length === 0) {
+      return;
+    }
+
+    if (signature.startsWith("t=")) {
+      const parts = Object.fromEntries(
+        signature.split(",").map((part) => {
+          const [key, value = ""] = part.split("=", 2);
+          return [key.trim(), value.trim()];
+        })
+      );
+      const timestamp = parts.t;
+      const expected = parts.v1;
+
+      if (!timestamp || !expected) {
+        throw new Error("Invalid Stripe signature header");
+      }
+
+      const digest = createHmac("sha256", this.config.webhookSecret)
+        .update(`${timestamp}.${payload}`)
+        .digest("hex");
+
+      if (!secureCompare(digest, expected)) {
+        throw new Error("Invalid Stripe webhook signature");
+      }
+
+      return;
+    }
+
+    const digest = createHmac("sha256", this.config.webhookSecret).update(payload).digest("hex");
+    if (!secureCompare(digest, signature)) {
+      throw new Error("Invalid Stripe webhook signature");
+    }
+  }
+
+  private applyWebhook(event: string, data: unknown): void {
+    if (typeof data !== "object" || data === null || !("object" in data)) {
+      return;
+    }
+
+    const object = (data as { object?: unknown }).object;
+    if (typeof object !== "object" || object === null) {
+      return;
+    }
+
+    const subscriptionId = getWebhookSubscriptionId(
+      object as { id?: unknown; subscription?: unknown }
+    );
+
+    if (subscriptionId === null) {
+      return;
+    }
+
+    const existing = this.subscriptions.get(subscriptionId);
+    if (!existing) {
+      return;
+    }
+
+    let status = existing.status;
+
+    if (event === "customer.subscription.deleted") {
+      status = "canceled";
+    } else if (event === "invoice.payment_failed") {
+      status = "past_due";
+    } else if (event === "customer.subscription.updated") {
+      status =
+        ((object as { status?: unknown }).status as StripeSubscription["status"] | undefined) ??
+        existing.status;
+    }
+
+    this.subscriptions.set(subscriptionId, {
+      ...existing,
+      status
+    });
   }
 }

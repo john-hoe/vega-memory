@@ -1,20 +1,29 @@
 import { TenantSchemaManager } from "./tenant-schema.js";
 
+function quoteIdentifier(value: string): string {
+  return `"${value.replaceAll(`"`, `""`)}"`;
+}
+
 export class TenantRouter {
   constructor(private schemaManager: TenantSchemaManager) {}
 
   getSearchPath(tenantId: string): string {
-    const schemaName = this.schemaManager.getSchemaName(tenantId);
-    const sharedSchema = this.schemaManager.getSharedSchemaName();
-    const defaultSchema = this.schemaManager.getDefaultSchemaName();
+    const schemaNames = [
+      this.schemaManager.getSchemaName(tenantId),
+      this.schemaManager.getSharedSchemaName(),
+      this.schemaManager.getDefaultSchemaName()
+    ];
+    const searchPath = schemaNames
+      .map((schema) => quoteIdentifier(this.schemaManager.sanitizeTenantId(schema)))
+      .join(", ");
 
-    return `SET search_path TO ${schemaName}, ${sharedSchema}, ${defaultSchema}`;
+    return `SET LOCAL search_path TO ${searchPath}`;
   }
 
   async withTenant<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
     const searchPath = this.getSearchPath(tenantId);
 
-    console.log(`Would set search_path: ${searchPath}`);
+    console.log(`Apply search_path before query execution: ${searchPath}`);
     return fn();
   }
 }

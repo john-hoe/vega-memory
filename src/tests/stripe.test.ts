@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import test from "node:test";
 
 import { StripeService } from "../billing/stripe.js";
@@ -17,16 +18,19 @@ test("StripeService stub returns the documented plan catalog", async () => {
   );
 });
 
-test("StripeService stub creates customer and subscription IDs with stub prefixes", async () => {
+test("StripeService reuses customers per tenant/email and creates subscriptions with stub IDs", async () => {
   const service = new StripeService({
     enabled: true,
     secretKey: "sk_test_stub"
   });
 
   const customer = await service.createCustomer("billing@example.com", "Billing User", "tenant-1");
+  const sameCustomer = await service.createCustomer("billing@example.com", "Updated Billing User", "tenant-1");
   const subscription = await service.createSubscription(customer.id, "pro");
 
   assert.match(customer.id, /^cus_stub_/);
+  assert.equal(sameCustomer.id, customer.id);
+  assert.equal(sameCustomer.name, "Updated Billing User");
   assert.equal(customer.email, "billing@example.com");
   assert.equal(customer.tenantId, "tenant-1");
   assert.match(subscription.id, /^sub_stub_/);
@@ -51,9 +55,13 @@ test("StripeService stub returns null for missing resources and cancels subscrip
 
   assert.equal(canceled.status, "canceled");
   assert.equal((await service.getSubscriptionByTenantId("tenant-ops"))?.id, subscription.id);
+  await assert.rejects(
+    service.createSubscription(customer.id, "unknown-plan"),
+    /Stripe plan not found/
+  );
 });
 
-test("StripeService stub parses webhook payloads and reports configuration state", async () => {
+test("StripeService verifies webhook signatures and updates subscriptions", async () => {
   const configuredService = new StripeService({
     enabled: true,
     secretKey: "sk_test_stub",
@@ -63,25 +71,37 @@ test("StripeService stub parses webhook payloads and reports configuration state
   const unconfiguredService = new StripeService({
     enabled: false
   });
-
-  const webhook = await configuredService.handleWebhook(
-    JSON.stringify({
-      type: "invoice.payment_succeeded",
-      data: {
-        object: {
-          id: "in_stub_123"
-        }
+  const customer = await configuredService.createCustomer("ops@example.com", "Ops", "tenant-ops");
+  const subscription = await configuredService.createSubscription(customer.id, "pro");
+  const payload = JSON.stringify({
+    type: "customer.subscription.updated",
+    data: {
+      object: {
+        id: subscription.id,
+        status: "past_due"
       }
-    }),
-    "sig_stub"
-  );
-
-  assert.equal(webhook.event, "invoice.payment_succeeded");
-  assert.deepEqual(webhook.data, {
-    object: {
-      id: "in_stub_123"
     }
   });
+  const signature = createHmac("sha256", "whsec_stub").update(payload).digest("hex");
+
+  const webhook = await configuredService.handleWebhook(
+    payload,
+    signature
+  );
+
+  assert.equal(webhook.event, "customer.subscription.updated");
+  assert.deepEqual(webhook.data, {
+    object: {
+      id: subscription.id,
+      status: "past_due"
+    }
+  });
+  assert.equal((await configuredService.getSubscription(subscription.id))?.status, "past_due");
   assert.equal(configuredService.isConfigured(), true);
   assert.equal(unconfiguredService.isConfigured(), false);
+
+  await assert.rejects(
+    configuredService.handleWebhook(payload, "bad-signature"),
+    /Invalid Stripe webhook signature/
+  );
 });

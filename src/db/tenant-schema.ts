@@ -1,13 +1,23 @@
+import type { PgQueryExecutor } from "./pg-executor.js";
+
 export interface TenantSchemaConfig {
   prefix: string;
   sharedSchema: string;
   defaultSchema: string;
 }
 
-const createTable = (schemaName: string, tableName: string, body: string): string =>
-  `CREATE TABLE IF NOT EXISTS ${schemaName}.${tableName} (\n${body}\n);`;
+const PG_VECTOR_DIMENSIONS = 1024;
 
-const createTextSearchIndex = (schemaName: string, indexName: string, tableName: string, columns: string[]): string => {
+function createTable(schemaName: string, tableName: string, body: string): string {
+  return `CREATE TABLE IF NOT EXISTS ${schemaName}.${tableName} (\n${body}\n);`;
+}
+
+function createTextSearchIndex(
+  schemaName: string,
+  indexName: string,
+  tableName: string,
+  columns: string[]
+): string {
   const document = columns
     .map((column) => `coalesce(${column}, '')`)
     .join(` || ' ' || `);
@@ -17,15 +27,22 @@ const createTextSearchIndex = (schemaName: string, indexName: string, tableName:
     `ON ${schemaName}.${tableName}`,
     `USING GIN (to_tsvector('simple', ${document}));`
   ].join("\n");
-};
+}
+
+function resolveTenantSchemaConfig(config: TenantSchemaConfig): TenantSchemaConfig {
+  return {
+    prefix: config.prefix || "tenant_",
+    sharedSchema: config.sharedSchema || "shared",
+    defaultSchema: config.defaultSchema || "public"
+  };
+}
 
 export class TenantSchemaManager {
-  constructor(private config: TenantSchemaConfig) {
-    this.config = {
-      prefix: config.prefix || "tenant_",
-      sharedSchema: config.sharedSchema || "shared",
-      defaultSchema: config.defaultSchema || "public"
-    };
+  constructor(
+    private config: TenantSchemaConfig,
+    private readonly executor?: PgQueryExecutor
+  ) {
+    this.config = resolveTenantSchemaConfig(config);
   }
 
   getSchemaName(tenantId: string): string {
@@ -43,34 +60,75 @@ export class TenantSchemaManager {
   async createSchema(tenantId: string): Promise<void> {
     const schemaName = this.getSchemaName(tenantId);
 
-    console.log(`Would create schema: ${schemaName}`);
+    if (this.executor === undefined) {
+      console.log(`Would create schema: ${schemaName}`);
+      for (const statement of this.generateCreateDDL(tenantId)) {
+        console.log(statement);
+      }
+      return;
+    }
+
     for (const statement of this.generateCreateDDL(tenantId)) {
-      console.log(statement);
+      await this.executor.query(statement);
     }
   }
 
   async dropSchema(tenantId: string): Promise<void> {
     const schemaName = this.getSchemaName(tenantId);
 
-    console.log(`Would drop schema: ${schemaName}`);
-    console.log(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE;`);
+    if (this.executor === undefined) {
+      console.log(`Would drop schema: ${schemaName}`);
+      console.log(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE;`);
+      return;
+    }
+
+    await this.executor.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE;`);
   }
 
   async migrateSchema(tenantId: string, version: number): Promise<void> {
     const schemaName = this.getSchemaName(tenantId);
 
-    console.log(`Would migrate schema: ${schemaName} to version ${version}`);
+    if (this.executor === undefined) {
+      console.log(`Would migrate schema: ${schemaName} to version ${version}`);
+      return;
+    }
+
+    await this.executor.query(
+      [
+        `CREATE TABLE IF NOT EXISTS ${schemaName}._schema_versions (`,
+        "  version INTEGER NOT NULL,",
+        "  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+        ");"
+      ].join("\n")
+    );
+    await this.executor.query(
+      `INSERT INTO ${schemaName}._schema_versions (version) VALUES ($1)`,
+      [version]
+    );
   }
 
   async listSchemas(): Promise<string[]> {
-    console.log("Would list tenant schemas");
-    return [];
+    if (this.executor === undefined) {
+      console.log("Would list tenant schemas");
+      return [];
+    }
+
+    const result = await this.executor.query<{ schema_name: string }>(
+      `SELECT schema_name
+       FROM information_schema.schemata
+       WHERE schema_name LIKE $1
+       ORDER BY schema_name ASC`,
+      [`${this.config.prefix}%`]
+    );
+
+    return result.rows.map((row) => row.schema_name);
   }
 
   generateCreateDDL(tenantId: string): string[] {
     const schemaName = this.getSchemaName(tenantId);
 
     return [
+      "CREATE EXTENSION IF NOT EXISTS vector;",
       `CREATE SCHEMA IF NOT EXISTS ${schemaName};`,
       createTable(
         schemaName,
@@ -83,7 +141,7 @@ export class TenantSchemaManager {
           "  title TEXT NOT NULL,",
           "  content TEXT NOT NULL,",
           "  summary TEXT,",
-          "  embedding BYTEA,",
+          `  embedding vector(${PG_VECTOR_DIMENSIONS}),`,
           "  importance DOUBLE PRECISION NOT NULL,",
           "  source TEXT NOT NULL,",
           "  tags TEXT NOT NULL,",
@@ -104,7 +162,7 @@ export class TenantSchemaManager {
           "  id TEXT PRIMARY KEY,",
           "  memory_id TEXT NOT NULL,",
           "  content TEXT NOT NULL,",
-          "  embedding BYTEA,",
+          `  embedding vector(${PG_VECTOR_DIMENSIONS}),`,
           "  importance DOUBLE PRECISION NOT NULL,",
           "  updated_at TEXT NOT NULL,",
           `  FOREIGN KEY (memory_id) REFERENCES ${schemaName}.memories(id) ON DELETE CASCADE`
@@ -280,7 +338,7 @@ export class TenantSchemaManager {
           "  project TEXT,",
           "  tags TEXT NOT NULL DEFAULT '[]',",
           "  source_memory_ids TEXT NOT NULL DEFAULT '[]',",
-          "  embedding BYTEA,",
+          `  embedding vector(${PG_VECTOR_DIMENSIONS}),`,
           "  status TEXT NOT NULL DEFAULT 'draft',",
           "  auto_generated INTEGER NOT NULL DEFAULT 1,",
           "  reviewed INTEGER NOT NULL DEFAULT 0,",
