@@ -159,6 +159,23 @@ test("ICloudProvider supports upload download list and delete", async () => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+test("ICloudProvider rejects path traversal outside the container root", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "vega-icloud-traversal-"));
+  const provider = new ICloudProvider({
+    containerPath: directory,
+    enabled: true
+  });
+
+  try {
+    await assert.rejects(
+      provider.upload("../outside.txt", Buffer.from("bad")),
+      /escapes container root/
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("createCloudProvider builds provider instances", () => {
   assert.equal(
     createCloudProvider("s3", {

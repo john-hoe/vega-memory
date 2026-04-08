@@ -92,13 +92,23 @@ export class BedrockChatProvider implements ChatProvider {
       return null;
     }
 
+    const systemMessages = messages
+      .filter((message) => message.role === "system")
+      .map((message) => ({
+        text: message.content
+      }));
+    const conversationMessages = messages
+      .filter((message) => message.role !== "system")
+      .map((message) => ({
+        role: (message.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
+        content: [{ text: message.content }]
+      }));
+
     const response = (await this.client.send(
       new ConverseCommand({
         modelId: this.config.bedrockChatModel,
-        messages: messages.map((message) => ({
-          role: message.role === "assistant" ? "assistant" : "user",
-          content: [{ text: message.content }]
-        }))
+        ...(systemMessages.length === 0 ? {} : { system: systemMessages }),
+        messages: conversationMessages
       })
     )) as {
       output?: {

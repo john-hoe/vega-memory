@@ -121,6 +121,43 @@ test("ImageAnalyzer.generateEmbeddingDescription combines OCR text and tags", as
   }
 });
 
+test("ImageAnalyzer sends image bytes instead of a local file path to the model", async () => {
+  const { directory, imagePath } = createTempImage();
+  const requests: string[] = [];
+  const analyzer = new ImageAnalyzer({
+    ocrEnabled: false,
+    analysisEnabled: true,
+    ollamaModel: "llava",
+    ollamaBaseUrl: "http://localhost:11434",
+    fetchImpl: async (_url, init) => {
+      requests.push(String(init?.body ?? ""));
+      return new Response(
+        JSON.stringify({
+          message: {
+            content: JSON.stringify({
+              description: "A single pixel",
+              tags: ["pixel"],
+              objects: [],
+              colors: ["white"]
+            })
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }
+  });
+
+  try {
+    const result = await analyzer.analyzeImage(imagePath);
+
+    assert.equal(result.description, "A single pixel");
+    assert.match(requests[0] ?? "", /data:image\/png;base64,/);
+    assert.doesNotMatch(requests[0] ?? "", new RegExp(imagePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("ImageAnalyzer.extractText rejects when the image file does not exist", async () => {
   const directory = mkdtempSync(join(tmpdir(), "vega-image-analysis-missing-"));
   const analyzer = new ImageAnalyzer({

@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, normalize, resolve, sep } from "node:path";
 
 import {
   DeleteObjectCommand,
@@ -404,7 +404,14 @@ export class ICloudProvider implements CloudStorageProvider {
   }
 
   private resolvePath(key: string): string {
-    return join(this.config.containerPath as string, key);
+    const root = resolve(this.config.containerPath as string);
+    const resolved = resolve(root, normalize(key));
+
+    if (resolved !== root && !resolved.startsWith(`${root}${sep}`)) {
+      throw new Error(`Cloud object path escapes container root: ${key}`);
+    }
+
+    return resolved;
   }
 }
 

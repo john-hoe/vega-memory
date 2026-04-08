@@ -38,17 +38,27 @@ spec:
                   name: {{ .Values.existingSecret | default (printf "%s-secrets" (include "vega-memory.fullname" .)) }}
                   key: {{ .Values.existingSecretKey }}
           livenessProbe:
-            httpGet:
-              path: /api/health
-              port: http
+            exec:
+              command:
+                - node
+                - -e
+                - >
+                  fetch('http://127.0.0.1:{{ .Values.service.port }}/api/health', { headers: { Authorization: `Bearer ${process.env.VEGA_API_KEY ?? ''}` } })
+                    .then((response) => process.exit(response.ok ? 0 : 1))
+                    .catch(() => process.exit(1))
             initialDelaySeconds: 30
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 6
           readinessProbe:
-            httpGet:
-              path: /api/health
-              port: http
+            exec:
+              command:
+                - node
+                - -e
+                - >
+                  fetch('http://127.0.0.1:{{ .Values.service.port }}/api/health', { headers: { Authorization: `Bearer ${process.env.VEGA_API_KEY ?? ''}` } })
+                    .then((response) => process.exit(response.ok ? 0 : 1))
+                    .catch(() => process.exit(1))
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5

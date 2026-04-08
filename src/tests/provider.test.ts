@@ -238,7 +238,28 @@ test("AzureOpenAI providers hit deployment endpoints", async () => {
 });
 
 test("Bedrock providers use the injected client", async () => {
-  const calls: string[] = [];
+  const calls: Array<{ name: string; command: unknown }> = [];
+  const client = {
+    async send(command: { constructor?: { name?: string } }): Promise<unknown> {
+      calls.push({
+        name: command.constructor?.name ?? "unknown",
+        command
+      });
+      if (command.constructor?.name === "InvokeModelCommand") {
+        return {
+          body: Buffer.from(JSON.stringify({ embedding: [0.3, 0.7] }))
+        };
+      }
+
+      return {
+        output: {
+          message: {
+            content: [{ text: "bedrock reply" }]
+          }
+        }
+      };
+    }
+  };
   const embeddingProvider = new BedrockEmbeddingProvider(
     {
       ...baseConfig,
@@ -246,24 +267,7 @@ test("Bedrock providers use the injected client", async () => {
       bedrockEmbeddingModel: "amazon.titan-embed-text-v2:0",
       bedrockChatModel: "anthropic.claude-3-5-sonnet"
     },
-    {
-      async send(command: { constructor?: { name?: string } }): Promise<unknown> {
-        calls.push(command.constructor?.name ?? "unknown");
-        if (command.constructor?.name === "InvokeModelCommand") {
-          return {
-            body: Buffer.from(JSON.stringify({ embedding: [0.3, 0.7] }))
-          };
-        }
-
-        return {
-          output: {
-            message: {
-              content: [{ text: "bedrock reply" }]
-            }
-          }
-        };
-      }
-    }
+    client
   );
   const chatProvider = new BedrockChatProvider(
     {
@@ -272,30 +276,24 @@ test("Bedrock providers use the injected client", async () => {
       bedrockEmbeddingModel: "amazon.titan-embed-text-v2:0",
       bedrockChatModel: "anthropic.claude-3-5-sonnet"
     },
-    {
-      async send(command: { constructor?: { name?: string } }): Promise<unknown> {
-        calls.push(command.constructor?.name ?? "unknown");
-        if (command.constructor?.name === "InvokeModelCommand") {
-          return {
-            body: Buffer.from(JSON.stringify({ embedding: [0.3, 0.7] }))
-          };
-        }
-
-        return {
-          output: {
-            message: {
-              content: [{ text: "bedrock reply" }]
-            }
-          }
-        };
-      }
-    }
+    client
   );
 
   assert.deepEqual(await embeddingProvider.generateEmbedding("bedrock text"), [0.3, 0.7]);
-  assert.equal(await chatProvider.chat([{ role: "user", content: "hello" }]), "bedrock reply");
-  assert.ok(calls.includes("InvokeModelCommand"));
-  assert.ok(calls.includes("ConverseCommand"));
+  assert.equal(
+    await chatProvider.chat([
+      { role: "system", content: "system instruction" },
+      { role: "user", content: "hello" }
+    ]),
+    "bedrock reply"
+  );
+  assert.ok(calls.some((call) => call.name === "InvokeModelCommand"));
+  assert.ok(calls.some((call) => call.name === "ConverseCommand"));
+  const converseCall = calls.find((call) => call.name === "ConverseCommand");
+  assert.equal(
+    Array.isArray((converseCall?.command as { input?: { system?: unknown[] } })?.input?.system),
+    true
+  );
 });
 
 test("existing Ollama wrapper exports remain compatible with default provider selection", async () => {

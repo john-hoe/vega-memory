@@ -12,6 +12,19 @@ import { Repository } from "../db/repository.js";
 
 const SCREENSHOT_HASH_PREFIX = "image-memory.hash.";
 const SCREENSHOT_MEMORY_IMPORTANCE = 0.95;
+const toDataUrl = (imagePath: string, image: Buffer): string => {
+  const extension = imagePath.split(".").pop()?.toLowerCase() ?? "png";
+  const mimeType =
+    extension === "jpg" || extension === "jpeg"
+      ? "image/jpeg"
+      : extension === "gif"
+        ? "image/gif"
+        : extension === "webp"
+          ? "image/webp"
+          : "image/png";
+
+  return `data:${mimeType};base64,${image.toString("base64")}`;
+};
 
 const getMetadataKey = (project: string, hash: string): string =>
   `${SCREENSHOT_HASH_PREFIX}${project}.${hash}`;
@@ -110,6 +123,7 @@ export class ImageAnalyzer {
       return this.config.analysisExecutor(absoluteImagePath);
     }
 
+    const imageBytes = readFileSync(absoluteImagePath);
     if (!this.config.ollamaModel || !this.config.ollamaBaseUrl) {
       return {
         description: `Image ${basename(absoluteImagePath)}`,
@@ -141,7 +155,8 @@ export class ImageAnalyzer {
             },
             {
               role: "user",
-              content: `Analyze this image file: ${absoluteImagePath}`
+              content: "Analyze this image and return JSON only.",
+              images: [toDataUrl(absoluteImagePath, imageBytes)]
             }
           ]
         })
