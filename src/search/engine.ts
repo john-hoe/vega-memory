@@ -9,17 +9,20 @@ const logSearchInfo = (message: string): void => {
   process.stderr.write(`${message}\n`);
 };
 
+export type SearchBackend = "sqlite-fts" | "sqlite-vec" | "brute-force" | "pg-vector" | "pg-fulltext";
+
 interface SearchExecution {
   results: SearchResult[];
   bm25ResultCount: number;
   vectorResultCount: number;
-  vectorEngine: "brute-force" | "sqlite-vec";
+  vectorEngine: SearchBackend;
 }
 
 export class SearchEngine {
   private readonly bruteForceEngine: BruteForceEngine;
   private readonly sqliteVecEngine: SqliteVecEngine;
-  private activeVectorEngine: "brute-force" | "sqlite-vec" = "brute-force";
+  private activeVectorEngine: SearchBackend = "brute-force";
+  private readonly textBackend: SearchBackend = "sqlite-fts";
   private slowQueryCount = 0;
 
   constructor(
@@ -50,6 +53,14 @@ export class SearchEngine {
     queryEmbedding: Float32Array,
     options: SearchOptions
   ): SearchResult[] {
+    if (this.activeVectorEngine === "pg-vector") {
+      throw new Error("pg-vector backend is not wired yet");
+    }
+
+    if (this.activeVectorEngine === "pg-fulltext" || this.activeVectorEngine === "sqlite-fts") {
+      this.activeVectorEngine = "brute-force";
+    }
+
     if (this.ensureSqliteVecReady()) {
       return this.sqliteVecEngine.search(queryEmbedding, options);
     }
@@ -59,6 +70,25 @@ export class SearchEngine {
       this.repository.getAllEmbeddings(options.project, options.type, true, options.tenant_id),
       options
     );
+  }
+
+  private searchText(query: string, options: SearchOptions): { memory: SearchResult["memory"]; rank: number }[] {
+    switch (this.textBackend) {
+      case "pg-fulltext":
+        throw new Error("pg-fulltext backend is not wired yet");
+      case "sqlite-fts":
+        return this.repository.searchFTS(
+          query,
+          options.project,
+          options.type,
+          true,
+          options.tenant_id
+        );
+      case "sqlite-vec":
+      case "brute-force":
+      case "pg-vector":
+        return [];
+    }
   }
 
   private trackQueryLatency(durationMs: number): void {
@@ -101,13 +131,7 @@ export class SearchEngine {
     const startedAt = Date.now();
     const vectorResults =
       queryEmbedding === null ? [] : this.searchVectors(queryEmbedding, options);
-    const bm25Results = this.repository.searchFTS(
-      query,
-      options.project,
-      options.type,
-      true,
-      options.tenant_id
-    );
+    const bm25Results = this.searchText(query, options);
 
     const mergedResults =
       bm25Results.length > 0
