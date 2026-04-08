@@ -1,17 +1,53 @@
-import type { Memory } from "../core/types.js";
+import { randomUUID } from "node:crypto";
 
-export class OpenClawAdapter {
-  constructor(
-    private readonly _vegaApiUrl: string,
-    private readonly _openclawApiUrl: string
-  ) {}
+export interface OpenClawResult {
+  id: string;
+  title: string;
+  snippet: string;
+  score: number;
+  source: string;
+}
 
-  async syncToOpenClaw(_memories: Memory[]): Promise<number> {
-    console.log("OpenClaw sync not yet implemented");
-    return 0;
+export interface OpenClawDocument {
+  id: string;
+  title: string;
+  content: string;
+  metadata: Record<string, string>;
+  createdAt: string;
+}
+
+export interface OpenClawConfig {
+  apiUrl?: string;
+  apiKey?: string;
+  enabled: boolean;
+}
+
+export class OpenClawClient {
+  constructor(private readonly config: OpenClawConfig) {}
+
+  async search(
+    _query: string,
+    _opts?: { limit?: number; type?: string }
+  ): Promise<OpenClawResult[]> {
+    console.log("OpenClaw not connected");
+    return [];
   }
 
-  async syncFromOpenClaw(): Promise<Memory[]> {
-    return [];
+  async getDocument(_id: string): Promise<OpenClawDocument | null> {
+    return null;
+  }
+
+  async ingest(
+    _content: string,
+    _metadata: Record<string, string>
+  ): Promise<{ id: string; status: string }> {
+    return {
+      id: randomUUID(),
+      status: "queued"
+    };
+  }
+
+  isConfigured(): boolean {
+    return this.config.enabled && this.config.apiUrl !== undefined && this.config.apiKey !== undefined;
   }
 }
