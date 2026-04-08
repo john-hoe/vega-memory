@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vega-memory.fullname" . }}
+  labels:
+    {{- include "vega-memory.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "vega-memory.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vega-memory.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vega-memory.serviceAccountName" . }}
+      containers:
+        - name: {{ include "vega-memory.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - node
+            - dist/scheduler/index.js
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "vega-memory.fullname" . }}
+          env:
+            - name: VEGA_API_KEY
+              value: {{ .Values.apiKey | quote }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+              httpHeaders:
+                - name: Authorization
+                  value: "Bearer {{ .Values.apiKey }}"
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+              httpHeaders:
+                - name: Authorization
+                  value: "Bearer {{ .Values.apiKey }}"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- if .Values.ollama.enabled }}
+        - name: ollama
+          image: {{ .Values.ollama.image | quote }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: ollama
+              containerPort: 11434
+              protocol: TCP
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+      {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "vega-memory.fullname" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.ollama.enabled }}
+        - name: ollama-data
+          emptyDir: {}
+        {{- end }}

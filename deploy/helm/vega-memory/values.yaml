@@ -1,0 +1,59 @@
+replicaCount: 2
+
+image:
+  repository: vega-memory
+  tag: latest
+  pullPolicy: IfNotPresent
+
+apiKey: dev-api-key
+
+service:
+  type: ClusterIP
+  port: 3000
+
+ingress:
+  enabled: false
+  className: nginx
+  hosts:
+    - host: vega.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilization: 70
+  targetMemoryUtilization: 80
+
+env:
+  VEGA_DB_PATH: /data/memory.db
+  VEGA_API_PORT: "3000"
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+
+ollama:
+  enabled: true
+  image: ollama/ollama:latest
+
+redis:
+  enabled: false
+  host: redis
+  port: 6379
+
+postgresql:
+  enabled: false
+  host: postgresql
+  port: 5432
