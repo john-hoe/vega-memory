@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import * as Sentry from "@sentry/node";
+
 interface SentryStubConfig {
   dsn?: string;
   environment?: string;
@@ -17,15 +19,28 @@ interface SentryEvent {
   data: unknown;
 }
 
+interface SentrySdkLike {
+  init(config: Record<string, unknown>): void;
+  captureException(error: Error, scope?: Record<string, unknown>): string;
+  captureMessage(message: string, scope?: Record<string, unknown>): string;
+  setUser(user: SentryUser): void;
+  setTag(key: string, value: string): void;
+}
+
 export class SentryStub {
   private readonly events: SentryEvent[] = [];
   private user?: SentryUser;
   private readonly tags = new Map<string, string>();
+  private initialized = false;
 
-  constructor(private readonly config: SentryStubConfig) {}
+  constructor(
+    private readonly config: SentryStubConfig,
+    private readonly sdk: SentrySdkLike = Sentry as unknown as SentrySdkLike
+  ) {}
 
   captureException(error: Error, context?: Record<string, unknown>): string {
-    const id = randomUUID();
+    this.ensureInitialized();
+    const id = this.sdk.captureException(error, { extra: context ?? {} });
 
     this.events.push({
       id,
@@ -48,7 +63,8 @@ export class SentryStub {
   }
 
   captureMessage(message: string, level: "info" | "warning" | "error" = "info"): string {
-    const id = randomUUID();
+    this.ensureInitialized();
+    const id = this.sdk.captureMessage(message, { level });
 
     this.events.push({
       id,
@@ -68,10 +84,16 @@ export class SentryStub {
 
   setUser(user: SentryUser): void {
     this.user = { ...user };
+    if (this.config.enabled && this.config.dsn) {
+      this.sdk.setUser(this.user);
+    }
   }
 
   setTag(key: string, value: string): void {
     this.tags.set(key, value);
+    if (this.config.enabled && this.config.dsn) {
+      this.sdk.setTag(key, value);
+    }
   }
 
   getEvents(): Array<{ id: string; type: string; data: unknown }> {
@@ -85,4 +107,18 @@ export class SentryStub {
   isConfigured(): boolean {
     return this.config.enabled && typeof this.config.dsn === "string" && this.config.dsn.trim().length > 0;
   }
+
+  private ensureInitialized(): void {
+    if (this.initialized || !this.isConfigured()) {
+      return;
+    }
+
+    this.sdk.init({
+      dsn: this.config.dsn,
+      environment: this.config.environment
+    });
+    this.initialized = true;
+  }
 }
+
+export const createSentryEventId = (): string => randomUUID();

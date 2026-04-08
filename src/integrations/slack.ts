@@ -20,7 +20,10 @@ interface SlackMemoryNotification {
 }
 
 export class SlackIntegration {
-  constructor(private readonly config: SlackConfig) {}
+  constructor(
+    private readonly config: SlackConfig,
+    private readonly fetchImpl: typeof fetch = fetch
+  ) {}
 
   async sendMessage(msg: SlackMessage): Promise<boolean> {
     if (!this.config.enabled) {
@@ -32,11 +35,18 @@ export class SlackIntegration {
       throw new Error("Slack webhook URL is required when Slack integration is enabled");
     }
 
-    console.log("Slack message would be sent:", {
-      ...msg,
-      channel: msg.channel ?? this.config.defaultChannel
+    const response = await this.fetchImpl(this.config.webhookUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        ...msg,
+        channel: msg.channel ?? this.config.defaultChannel
+      })
     });
-    return true;
+
+    return response.ok;
   }
 
   async sendMemoryNotification(memory: SlackMemoryNotification): Promise<boolean> {

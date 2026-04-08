@@ -62,10 +62,29 @@ test("MetricsCollector renders histogram buckets, sum, and count", async () => {
 });
 
 test("SentryStub captures events with user and tag context", () => {
+  const calls: Array<{ type: string; payload: unknown }> = [];
   const sentry = new SentryStub({
     dsn: "https://example@sentry.test/123",
     environment: "test",
     enabled: true
+  }, {
+    init(config) {
+      calls.push({ type: "init", payload: config });
+    },
+    captureException(error, scope) {
+      calls.push({ type: "exception", payload: { error, scope } });
+      return "exception-id";
+    },
+    captureMessage(message, scope) {
+      calls.push({ type: "message", payload: { message, scope } });
+      return "message-id";
+    },
+    setUser(user) {
+      calls.push({ type: "user", payload: user });
+    },
+    setTag(key, value) {
+      calls.push({ type: "tag", payload: { key, value } });
+    }
   });
 
   sentry.setUser({ id: "user-1", email: "user@example.com" });
@@ -84,8 +103,8 @@ test("SentryStub captures events with user and tag context", () => {
 
   assert.equal(sentry.isConfigured(), true);
   assert.equal(events.length, 2);
-  assert.equal(events[0]?.id, exceptionId);
-  assert.equal(events[1]?.id, messageId);
+  assert.equal(events[0]?.id, "exception-id");
+  assert.equal(events[1]?.id, "message-id");
   assert.equal(events[0]?.type, "exception");
   assert.equal(events[1]?.type, "message");
   assert.equal(firstData.error.name, "Error");
@@ -114,6 +133,8 @@ test("SentryStub captures events with user and tag context", () => {
       component: "sync"
     }
   });
+  assert.ok(calls.some((call) => call.type === "init"));
+  assert.ok(calls.some((call) => call.type === "message"));
 });
 
 test("StructuredLogger emits JSON lines to stderr", async () => {

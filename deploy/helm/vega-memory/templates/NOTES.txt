@@ -10,10 +10,10 @@
 {{- end }}
 
 2. Verify the API is healthy:
-  curl -fsS -H 'Authorization: Bearer {{ .Values.apiKey }}' http://127.0.0.1:3000/api/health
+  curl -fsS http://127.0.0.1:3000/api/health
 
 3. Run the Helm test:
   helm test {{ .Release.Name }}
 
-4. Rotate the default API key before production use:
-  helm upgrade {{ .Release.Name }} {{ .Chart.Name }} --set apiKey='<strong-random-value>'
+4. Rotate or supply the API key via Secret before production use:
+  helm upgrade {{ .Release.Name }} {{ .Chart.Name }} --set secret.apiKey='<strong-random-value>'

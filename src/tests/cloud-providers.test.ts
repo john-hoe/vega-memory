@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -43,11 +46,46 @@ const exerciseProvider = async (
 };
 
 test("S3Provider supports upload download list and delete", async () => {
+  const objects = new Map<string, Buffer>();
   await exerciseProvider(
     new S3Provider({
       bucket: "vega-backups",
       region: "us-east-1",
       enabled: true
+    }, {
+      async send(command: { input?: Record<string, unknown>; constructor?: { name?: string } }): Promise<unknown> {
+        const input = command.input ?? {};
+        const key = String(input.Key ?? "");
+        const commandName = command.constructor?.name;
+
+        if (commandName === "PutObjectCommand") {
+          objects.set(key, Buffer.from(input.Body as Buffer));
+          return {};
+        }
+
+        if (commandName === "ListObjectsV2Command") {
+          return {
+            Contents: [...objects.entries()].map(([storedKey, buffer]) => ({
+              Key: storedKey,
+              Size: buffer.byteLength,
+              LastModified: new Date(0)
+            }))
+          };
+        }
+
+        if (commandName === "GetObjectCommand" && objects.has(key)) {
+          const value = objects.get(key)!;
+          return {
+            Body: value
+          };
+        }
+
+        if (commandName === "DeleteObjectCommand") {
+          return objects.delete(key) ? {} : {};
+        }
+
+        return {};
+      }
     }),
     "s3",
     true
@@ -55,26 +93,70 @@ test("S3Provider supports upload download list and delete", async () => {
 });
 
 test("GDriveProvider supports upload download list and delete", async () => {
+  const files = new Map<string, { id: string; data: Buffer }>();
   await exerciseProvider(
     new GDriveProvider({
       folderId: "folder-123",
       credentialsPath: "/tmp/gdrive-creds.json",
       enabled: true
-    }),
+    }, async () => ({
+      files: {
+        async create(args: Record<string, unknown>) {
+          const requestBody = args.requestBody as { name?: string };
+          const media = args.media as { body?: Buffer };
+          const id = `file-${requestBody.name}`;
+          files.set(String(requestBody.name), { id, data: Buffer.from(media.body ?? "") });
+          return { data: { id } };
+        },
+        async get(args: Record<string, unknown>) {
+          const match = [...files.values()].find((entry) => entry.id === args.fileId);
+          return { data: match?.data };
+        },
+        async list(args: Record<string, unknown>) {
+          const q = String(args.q ?? "");
+          if (q.includes("name =")) {
+            const name = q.split("name = '")[1]?.split("'")[0] ?? "";
+            const entry = files.get(name);
+            return { data: { files: entry ? [{ id: entry.id, name }] : [] } };
+          }
+
+          return {
+            data: {
+              files: [...files.entries()].map(([name, entry]) => ({
+                id: entry.id,
+                name,
+                size: entry.data.byteLength,
+                modifiedTime: new Date(0).toISOString(),
+                md5Checksum: "checksum"
+              }))
+            }
+          };
+        },
+        async delete(args: Record<string, unknown>) {
+          const match = [...files.entries()].find(([, entry]) => entry.id === args.fileId);
+          if (match) {
+            files.delete(match[0]);
+          }
+          return {};
+        }
+      }
+    })),
     "gdrive",
     true
   );
 });
 
 test("ICloudProvider supports upload download list and delete", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "vega-icloud-"));
   await exerciseProvider(
     new ICloudProvider({
-      containerPath: "/tmp/icloud-container",
+      containerPath: directory,
       enabled: true
     }),
     "icloud",
     true
   );
+  rmSync(directory, { recursive: true, force: true });
 });
 
 test("createCloudProvider builds provider instances", () => {

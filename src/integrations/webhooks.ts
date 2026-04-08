@@ -17,7 +17,10 @@ export interface WebhookPayload {
 export class WebhookService {
   private readonly webhooks = new Map<string, WebhookConfig[]>();
 
-  constructor(configs?: WebhookConfig[]) {
+  constructor(
+    configs?: WebhookConfig[],
+    private readonly fetchImpl: typeof fetch = fetch
+  ) {
     if (configs) {
       this.webhooks.set(this.getBucketKey(null), configs.map((config) => this.cloneWebhook(config)));
     }
@@ -75,12 +78,23 @@ export class WebhookService {
       }
 
       try {
-        if (webhook.secret) {
-          this.signPayload(serializedPayload, webhook.secret);
-        }
+        const signature = webhook.secret
+          ? this.signPayload(serializedPayload, webhook.secret)
+          : undefined;
+        const response = await this.fetchImpl(webhook.url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(signature === undefined ? {} : { "x-vega-signature": signature })
+          },
+          body: serializedPayload
+        });
 
-        console.log(`Webhook would fire: ${webhook.url} ${event}`);
-        sent += 1;
+        if (response.ok) {
+          sent += 1;
+        } else {
+          failed += 1;
+        }
       } catch {
         failed += 1;
       }

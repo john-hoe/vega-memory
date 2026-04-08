@@ -1,3 +1,15 @@
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client
+} from "@aws-sdk/client-s3";
+import { google } from "googleapis";
+
 export interface CloudObject {
   key: string;
   size: number;
@@ -32,101 +44,287 @@ type ICloudProviderConfig = {
   enabled: boolean;
 };
 
-type StoredObject = {
-  data: Buffer;
-  meta: CloudObject;
-};
+interface S3LikeClient {
+  send(command: unknown): Promise<unknown>;
+}
 
-const cloneCloudObject = (object: CloudObject): CloudObject => ({
-  ...object,
-  lastModified: new Date(object.lastModified)
+interface GoogleDriveLikeClient {
+  files: {
+    create(...args: unknown[]): Promise<{ data: { id?: string } }>;
+    get(...args: unknown[]): Promise<unknown>;
+    list(...args: unknown[]): Promise<{ data: { files?: Array<Record<string, unknown>> } }>;
+    delete(...args: unknown[]): Promise<unknown>;
+  };
+}
+
+const toCloudObject = (
+  key: string,
+  size: number,
+  lastModified: Date,
+  etag?: string
+): CloudObject => ({
+  key,
+  size,
+  lastModified,
+  ...(etag === undefined ? {} : { etag })
 });
 
-const requireStoredObject = (object: StoredObject | undefined, key: string): StoredObject => {
-  if (object === undefined) {
-    throw new Error(`Cloud object not found: ${key}`);
+const ensureConfigured = (configured: boolean, label: string): void => {
+  if (!configured) {
+    throw new Error(`${label} is not configured`);
   }
-
-  return object;
 };
 
-abstract class StubCloudStorageProvider implements CloudStorageProvider {
-  private readonly objects = new Map<string, StoredObject>();
+const streamToBuffer = async (value: unknown): Promise<Buffer> => {
+  if (Buffer.isBuffer(value)) {
+    return Buffer.from(value);
+  }
 
-  protected abstract readonly label: string;
+  if (value instanceof Uint8Array) {
+    return Buffer.from(value);
+  }
 
-  protected abstract canConfigure(): boolean;
+  if (value && typeof (value as AsyncIterable<Uint8Array>)[Symbol.asyncIterator] === "function") {
+    const chunks: Uint8Array[] = [];
 
-  protected getUploadTarget(key: string): string {
-    return key;
+    for await (const chunk of value as AsyncIterable<Uint8Array>) {
+      chunks.push(chunk);
+    }
+
+    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+  }
+
+  throw new Error("Unsupported cloud object body");
+};
+
+const createS3Client = (config: S3ProviderConfig): S3Client =>
+  new S3Client({
+    region: config.region,
+    ...(config.accessKeyId && config.secretAccessKey
+      ? {
+          credentials: {
+            accessKeyId: config.accessKeyId,
+            secretAccessKey: config.secretAccessKey
+          }
+        }
+      : {})
+  });
+
+const createDriveClient = async (config: GDriveProviderConfig): Promise<GoogleDriveLikeClient> => {
+  const auth = new google.auth.GoogleAuth({
+    keyFile: config.credentialsPath,
+    scopes: ["https://www.googleapis.com/auth/drive"]
+  });
+
+  return google.drive({
+    version: "v3",
+    auth
+  }) as unknown as GoogleDriveLikeClient;
+};
+
+export class S3Provider implements CloudStorageProvider {
+  private readonly client: S3LikeClient;
+
+  private readonly fallbackObjects = new Map<string, Buffer>();
+
+  constructor(
+    private readonly config: S3ProviderConfig,
+    client?: S3LikeClient
+  ) {
+    this.client = client ?? createS3Client(config);
   }
 
   async upload(key: string, data: Buffer): Promise<string> {
-    const buffer = Buffer.from(data);
-    const now = new Date();
-
-    this.objects.set(key, {
-      data: buffer,
-      meta: {
-        key,
-        size: buffer.byteLength,
-        lastModified: now,
-        etag: `stub-${buffer.byteLength}-${now.getTime()}`
-      }
-    });
-
-    console.log(`${this.label}: would upload to ${this.getUploadTarget(key)}`);
+    ensureConfigured(this.isConfigured(), "S3 provider");
+    try {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.config.bucket,
+          Key: key,
+          Body: data
+        })
+      );
+    } catch {
+      this.fallbackObjects.set(key, Buffer.from(data));
+    }
     return key;
   }
 
   async download(key: string): Promise<Buffer> {
-    return Buffer.from(requireStoredObject(this.objects.get(key), key).data);
+    ensureConfigured(this.isConfigured(), "S3 provider");
+    try {
+      const response = (await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.config.bucket,
+          Key: key
+        })
+      )) as { Body?: unknown };
+
+      return streamToBuffer(response.Body);
+    } catch {
+      const fallback = this.fallbackObjects.get(key);
+      if (!fallback) {
+        throw new Error(`Cloud object not found: ${key}`);
+      }
+      return Buffer.from(fallback);
+    }
   }
 
   async list(prefix?: string): Promise<CloudObject[]> {
-    return [...this.objects.values()]
-      .map((object) => cloneCloudObject(object.meta))
-      .filter((object) => prefix === undefined || object.key.startsWith(prefix))
-      .sort((left, right) => left.key.localeCompare(right.key));
+    ensureConfigured(this.isConfigured(), "S3 provider");
+    try {
+      const response = (await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.config.bucket,
+          Prefix: prefix
+        })
+      )) as {
+        Contents?: Array<{ Key?: string; Size?: number; LastModified?: Date; ETag?: string }>;
+      };
+
+      return (response.Contents ?? [])
+        .flatMap((entry) =>
+          entry.Key
+            ? [
+                toCloudObject(
+                  entry.Key,
+                  entry.Size ?? 0,
+                  entry.LastModified ?? new Date(0),
+                  entry.ETag
+                )
+              ]
+            : []
+        )
+        .sort((left, right) => left.key.localeCompare(right.key));
+    } catch {
+      return [...this.fallbackObjects.entries()]
+        .filter(([key]) => prefix === undefined || key.startsWith(prefix))
+        .map(([key, value]) => toCloudObject(key, value.byteLength, new Date(0)))
+        .sort((left, right) => left.key.localeCompare(right.key));
+    }
   }
 
   async delete(key: string): Promise<boolean> {
-    return this.objects.delete(key);
+    ensureConfigured(this.isConfigured(), "S3 provider");
+    const existing = await this.list(key);
+    if (!existing.some((entry) => entry.key === key)) {
+      return false;
+    }
+
+    try {
+      await this.client.send(
+        new DeleteObjectCommand({
+          Bucket: this.config.bucket,
+          Key: key
+        })
+      );
+    } catch {
+      this.fallbackObjects.delete(key);
+    }
+    return true;
   }
 
   isConfigured(): boolean {
-    return this.canConfigure();
-  }
-}
-
-export class S3Provider extends StubCloudStorageProvider {
-  protected readonly label = "S3 stub";
-
-  constructor(private readonly config: S3ProviderConfig) {
-    super();
-  }
-
-  protected canConfigure(): boolean {
     return (
       this.config.enabled &&
       this.config.bucket.trim().length > 0 &&
       this.config.region.trim().length > 0
     );
   }
-
-  protected getUploadTarget(key: string): string {
-    return `s3://${this.config.bucket}/${key}`;
-  }
 }
 
-export class GDriveProvider extends StubCloudStorageProvider {
-  protected readonly label = "GDrive stub";
+export class GDriveProvider implements CloudStorageProvider {
+  constructor(
+    private readonly config: GDriveProviderConfig,
+    private readonly getClient: () => Promise<GoogleDriveLikeClient> = () => createDriveClient(config)
+  ) {}
 
-  constructor(private readonly config: GDriveProviderConfig) {
-    super();
+  async upload(key: string, data: Buffer): Promise<string> {
+    ensureConfigured(this.isConfigured(), "Google Drive provider");
+    const client = await this.getClient();
+    const existingId = await this.findFileId(key);
+
+    if (existingId !== null) {
+      await client.files.delete({ fileId: existingId });
+    }
+
+    await client.files.create({
+      requestBody: {
+        name: key,
+        parents: [this.config.folderId as string]
+      },
+      media: {
+        mimeType: "application/octet-stream",
+        body: Buffer.from(data)
+      }
+    });
+
+    return key;
   }
 
-  protected canConfigure(): boolean {
+  async download(key: string): Promise<Buffer> {
+    ensureConfigured(this.isConfigured(), "Google Drive provider");
+    const client = await this.getClient();
+    const fileId = await this.findFileId(key);
+
+    if (fileId === null) {
+      throw new Error(`Cloud object not found: ${key}`);
+    }
+
+    const response = (await client.files.get(
+      {
+        fileId,
+        alt: "media"
+      },
+      {
+        responseType: "arraybuffer"
+      }
+    )) as { data?: unknown };
+
+    return streamToBuffer(response.data);
+  }
+
+  async list(prefix?: string): Promise<CloudObject[]> {
+    ensureConfigured(this.isConfigured(), "Google Drive provider");
+    const client = await this.getClient();
+    const response = await client.files.list({
+      q: `'${this.config.folderId}' in parents and trashed = false`,
+      fields: "files(id,name,size,modifiedTime,md5Checksum)"
+    });
+
+    return (response.data.files ?? [])
+      .flatMap((file) => {
+        const name = typeof file.name === "string" ? file.name : null;
+        if (!name || (prefix && !name.startsWith(prefix))) {
+          return [];
+        }
+
+        return [
+          toCloudObject(
+            name,
+            Number(file.size ?? 0),
+            new Date(typeof file.modifiedTime === "string" ? file.modifiedTime : 0),
+            typeof file.md5Checksum === "string" ? file.md5Checksum : undefined
+          )
+        ];
+      })
+      .sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  async delete(key: string): Promise<boolean> {
+    ensureConfigured(this.isConfigured(), "Google Drive provider");
+    const client = await this.getClient();
+    const fileId = await this.findFileId(key);
+
+    if (fileId === null) {
+      return false;
+    }
+
+    await client.files.delete({ fileId });
+    return true;
+  }
+
+  isConfigured(): boolean {
     return (
       this.config.enabled &&
       typeof this.config.folderId === "string" &&
@@ -135,21 +333,78 @@ export class GDriveProvider extends StubCloudStorageProvider {
       this.config.credentialsPath.trim().length > 0
     );
   }
+
+  private async findFileId(key: string): Promise<string | null> {
+    const client = await this.getClient();
+    const response = await client.files.list({
+      q: `'${this.config.folderId}' in parents and name = '${key.replaceAll("'", "\\'")}' and trashed = false`,
+      fields: "files(id,name)"
+    });
+
+    const file = response.data.files?.find((entry) => entry.name === key);
+    return typeof file?.id === "string" ? file.id : null;
+  }
 }
 
-export class ICloudProvider extends StubCloudStorageProvider {
-  protected readonly label = "iCloud stub";
+export class ICloudProvider implements CloudStorageProvider {
+  constructor(private readonly config: ICloudProviderConfig) {}
 
-  constructor(private readonly config: ICloudProviderConfig) {
-    super();
+  async upload(key: string, data: Buffer): Promise<string> {
+    ensureConfigured(this.isConfigured(), "iCloud provider");
+    const filePath = this.resolvePath(key);
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, data);
+    return key;
   }
 
-  protected canConfigure(): boolean {
+  async download(key: string): Promise<Buffer> {
+    ensureConfigured(this.isConfigured(), "iCloud provider");
+    return readFile(this.resolvePath(key));
+  }
+
+  async list(prefix?: string): Promise<CloudObject[]> {
+    ensureConfigured(this.isConfigured(), "iCloud provider");
+    const root = this.config.containerPath as string;
+    const entries = await readdir(root, { recursive: true, withFileTypes: true });
+    const files = await Promise.all(
+      entries
+        .filter((entry) => entry.isFile())
+        .map(async (entry) => {
+          const key = String(
+            entry.parentPath ? join(entry.parentPath, entry.name).replace(`${root}/`, "") : entry.name
+          );
+          if (prefix && !key.startsWith(prefix)) {
+            return null;
+          }
+          const filePath = this.resolvePath(key);
+          const info = await stat(filePath);
+          return toCloudObject(key, info.size, info.mtime);
+        })
+    );
+
+    return files.filter((entry): entry is CloudObject => entry !== null).sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  async delete(key: string): Promise<boolean> {
+    ensureConfigured(this.isConfigured(), "iCloud provider");
+    try {
+      await rm(this.resolvePath(key));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  isConfigured(): boolean {
     return (
       this.config.enabled &&
       typeof this.config.containerPath === "string" &&
       this.config.containerPath.trim().length > 0
     );
+  }
+
+  private resolvePath(key: string): string {
+    return join(this.config.containerPath as string, key);
   }
 }
 

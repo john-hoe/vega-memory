@@ -22,35 +22,29 @@ test("SlackIntegration.sendMessage returns false when Slack is disabled", async 
   }
 });
 
-test("SlackIntegration.sendMessage logs stub output when Slack is enabled", async () => {
+test("SlackIntegration.sendMessage posts to the configured webhook when enabled", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
   const integration = new SlackIntegration({
     enabled: true,
     webhookUrl: "https://hooks.slack.test/services/T000/B000/XXX",
     defaultChannel: "#alerts"
+  }, async (url, init) => {
+    requests.push({ url: String(url), init });
+    return new Response(null, { status: 200 });
   });
-  const originalLog = console.log;
-  const logs: unknown[][] = [];
 
-  console.log = (...args: unknown[]): void => {
-    logs.push(args);
+  const result = await integration.sendMessage({ text: "Memory stored" });
+  const body = JSON.parse(String(requests[0]?.init?.body ?? "{}")) as {
+    text: string;
+    channel: string;
   };
 
-  try {
-    const result = await integration.sendMessage({ text: "Memory stored" });
-
-    assert.equal(result, true);
-    assert.deepEqual(logs, [
-      [
-        "Slack message would be sent:",
-        {
-          text: "Memory stored",
-          channel: "#alerts"
-        }
-      ]
-    ]);
-  } finally {
-    console.log = originalLog;
-  }
+  assert.equal(result, true);
+  assert.equal(requests[0]?.url, "https://hooks.slack.test/services/T000/B000/XXX");
+  assert.deepEqual(body, {
+    text: "Memory stored",
+    channel: "#alerts"
+  });
 });
 
 test("SlackIntegration.sendMessage throws when enabled without a webhook URL", async () => {

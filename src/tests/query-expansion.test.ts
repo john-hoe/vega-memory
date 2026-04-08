@@ -79,3 +79,35 @@ test("expandWithLLM falls back to heuristic expansion", async () => {
     method: "heuristic"
   });
 });
+
+test("expandWithLLM uses remote variants when available", async () => {
+  const expander = new QueryExpander({
+    enabled: true,
+    model: "qwen2.5",
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          message: {
+            content: JSON.stringify({
+              variants: ["repository config", "repo settings"]
+            })
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      )
+  });
+
+  const expanded = await expander.expandWithLLM("repo config", "http://localhost:11434");
+
+  assert.equal(expanded.method, "llm");
+  assert.deepEqual(expanded.variants, [
+    "repo config",
+    "repository config",
+    "repo settings"
+  ]);
+});

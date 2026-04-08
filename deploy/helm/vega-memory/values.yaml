@@ -1,11 +1,15 @@
-replicaCount: 2
+replicaCount: 1
 
 image:
   repository: vega-memory
   tag: latest
   pullPolicy: IfNotPresent
 
-apiKey: dev-api-key
+existingSecret: ""
+existingSecretKey: VEGA_API_KEY
+secret:
+  create: true
+  apiKey: dev-api-key
 
 service:
   type: ClusterIP
@@ -29,8 +33,8 @@ resources:
     memory: 512Mi
 
 autoscaling:
-  enabled: true
-  minReplicas: 2
+  enabled: false
+  minReplicas: 1
   maxReplicas: 10
   targetCPUUtilization: 70
   targetMemoryUtilization: 80

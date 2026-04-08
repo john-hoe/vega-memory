@@ -160,8 +160,6 @@ resource "aws_lb_listener" "http" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.this.arn
   }
-
-  # TODO: Replace placeholder values with an ACM certificate and Route 53 records before enabling HTTPS for var.domain_name.
 }
 
 resource "aws_ecs_cluster" "this" {
@@ -186,11 +184,10 @@ resource "aws_ecs_task_definition" "this" {
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
 
-  # TODO: Replace placeholder values for VEGA_API_KEY, database credentials, and OLLAMA_BASE_URL with account-specific secrets and service endpoints.
   container_definitions = jsonencode([
     {
       name      = local.container_name
-      image     = "${aws_ecr_repository.this.repository_url}:latest"
+      image     = "${aws_ecr_repository.this.repository_url}:${var.image_tag}"
       essential = true
       command   = ["node", "dist/scheduler/index.js"]
       portMappings = [
@@ -207,7 +204,7 @@ resource "aws_ecs_task_definition" "this" {
         },
         {
           name  = "VEGA_API_KEY"
-          value = "TODO_REPLACE_ME"
+          value = var.vega_api_key
         },
         {
           name  = "VEGA_PG_HOST"
@@ -227,7 +224,7 @@ resource "aws_ecs_task_definition" "this" {
         },
         {
           name  = "VEGA_PG_PASSWORD"
-          value = "TODO_REPLACE_ME"
+          value = var.pg_password
         },
         {
           name  = "VEGA_PG_SSL"
@@ -247,7 +244,7 @@ resource "aws_ecs_task_definition" "this" {
         },
         {
           name  = "OLLAMA_BASE_URL"
-          value = "http://replace-me.internal:11434"
+          value = var.ollama_base_url
         }
       ]
       logConfiguration = {
@@ -263,13 +260,13 @@ resource "aws_ecs_task_definition" "this" {
 }
 
 resource "aws_ecs_service" "this" {
-  name                               = "${local.base_name}-service"
-  cluster                            = aws_ecs_cluster.this.id
-  task_definition                    = aws_ecs_task_definition.this.arn
-  desired_count                      = var.app_replicas
-  launch_type                        = "FARGATE"
-  health_check_grace_period_seconds  = 60
-  enable_execute_command             = true
+  name                              = "${local.base_name}-service"
+  cluster                           = aws_ecs_cluster.this.id
+  task_definition                   = aws_ecs_task_definition.this.arn
+  desired_count                     = var.app_replicas
+  launch_type                       = "FARGATE"
+  health_check_grace_period_seconds = 60
+  enable_execute_command            = true
 
   network_configuration {
     subnets          = var.private_subnet_ids

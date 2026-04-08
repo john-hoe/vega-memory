@@ -36,3 +36,27 @@ variable "domain_name" {
   description = "Primary DNS name intended for the application."
   type        = string
 }
+
+variable "image_tag" {
+  description = "Container image tag to deploy."
+  type        = string
+  default     = "latest"
+}
+
+variable "vega_api_key" {
+  description = "API key exposed to the application container."
+  type        = string
+  sensitive   = true
+}
+
+variable "pg_password" {
+  description = "PostgreSQL password exposed to the application container."
+  type        = string
+  sensitive   = true
+}
+
+variable "ollama_base_url" {
+  description = "Ollama base URL exposed to the application container."
+  type        = string
+  default     = "http://127.0.0.1:11434"
+}

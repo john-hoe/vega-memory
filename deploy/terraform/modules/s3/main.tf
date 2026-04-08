@@ -8,8 +8,6 @@ locals {
 resource "aws_s3_bucket" "this" {
   bucket = local.bucket_name
 
-  # TODO: Replace placeholder values if your AWS account requires a different bucket naming convention, replication policy, or KMS key.
-
   tags = merge(var.tags, {
     Name = local.bucket_name
   })

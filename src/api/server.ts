@@ -7,6 +7,9 @@ import type { VegaConfig } from "../config.js";
 import { createAuthMiddleware, getRequestTenantId } from "./auth.js";
 import { createOidcRouter } from "./oidc.js";
 import { createRouter, type APIRouterServices } from "./routes.js";
+import { StructuredLogger } from "../monitoring/logger.js";
+import { MetricsCollector } from "../monitoring/metrics.js";
+import { SentryStub } from "../monitoring/sentry.js";
 
 const isAddressInfo = (value: string | AddressInfo | null): value is AddressInfo =>
   typeof value === "object" && value !== null;
@@ -23,6 +26,22 @@ export function createAPIServer(
 } {
   const app = express();
   let server: Server | null = null;
+  const logger = new StructuredLogger({
+    level: config.logLevel ?? "info",
+    format: config.logFormat ?? "json",
+    service: "vega-memory"
+  });
+  const metrics = new MetricsCollector({
+    enabled: config.metricsEnabled ?? false,
+    prefix: "vega"
+  });
+  const sentry = new SentryStub({
+    dsn: config.sentryDsn,
+    environment: config.mode,
+    enabled: Boolean(config.sentryDsn)
+  });
+  const requestCounter = metrics.counter("http_requests_total", "Total HTTP requests", ["method", "path", "status"]);
+  const requestLatency = metrics.histogram("http_request_duration_seconds", "HTTP request duration", [0.05, 0.1, 0.5, 1, 2, 5], ["method", "path"]);
 
   app.use(
     "/api/billing/webhook",
@@ -44,6 +63,16 @@ export function createAPIServer(
 
     const startedAt = Date.now();
     res.once("finish", () => {
+      const durationSeconds = (Date.now() - startedAt) / 1000;
+      requestCounter.inc({
+        method: req.method.toUpperCase(),
+        path: req.path,
+        status: String(res.statusCode)
+      });
+      requestLatency.observe(durationSeconds, {
+        method: req.method.toUpperCase(),
+        path: req.path
+      });
       services.repository.logPerformance({
         timestamp: new Date().toISOString(),
         tenant_id: getRequestTenantId(res),
@@ -52,9 +81,23 @@ export function createAPIServer(
         memory_count: 0,
         result_count: 0
       });
+      logger.info("http request", {
+        method: req.method.toUpperCase(),
+        path: req.path,
+        status: res.statusCode,
+        latency_ms: Date.now() - startedAt
+      });
     });
 
     next();
+  });
+  app.get("/metrics", async (_req, res) => {
+    if (!(config.metricsEnabled ?? false)) {
+      res.status(404).send("metrics disabled");
+      return;
+    }
+
+    res.type("text/plain").send(await metrics.getMetrics());
   });
   app.use(createOidcRouter(config, services.repository));
   app.use(createAuthMiddleware(config, services.repository));
@@ -65,6 +108,11 @@ export function createAPIServer(
     })
   );
   app.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (error instanceof Error) {
+      sentry.captureException(error, {
+        route: _req.path
+      });
+    }
     if (error instanceof SyntaxError) {
       res.status(400).json({
         error: "invalid json"

@@ -8,10 +8,14 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 env:
-  AWS_REGION: us-east-1
-  AWS_ACCOUNT_ID: "123456789012"
-  ECR_REPOSITORY: vega-memory
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'vega-memory' }}
+  HELM_RELEASE_NAME: ${{ vars.HELM_RELEASE_NAME || 'vega-memory' }}
 
 jobs:
   build-and-push:
@@ -28,10 +32,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION }}
-          # TODO: Replace with real AWS credentials
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          # TODO: Replace with real AWS credentials
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -68,7 +69,6 @@ jobs:
       - name: Configure kubeconfig
         shell: bash
         env:
-          # TODO: Replace with real AWS credentials
           KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
         run: |
           mkdir -p "${HOME}/.kube"
@@ -78,5 +78,5 @@ jobs:
         env:
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
         run: |
-          helm upgrade --install vega-memory deploy/helm/vega-memory \
+          helm upgrade --install "${HELM_RELEASE_NAME}" deploy/helm/vega-memory \
             --set image.tag="${IMAGE_TAG}"

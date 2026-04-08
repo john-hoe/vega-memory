@@ -96,6 +96,14 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_OPENAI_API_KEY;
   delete process.env.VEGA_OPENAI_BASE_URL;
   delete process.env.VEGA_OPENAI_EMBEDDING_MODEL;
+  delete process.env.VEGA_AZURE_OPENAI_API_KEY;
+  delete process.env.VEGA_AZURE_OPENAI_BASE_URL;
+  delete process.env.VEGA_AZURE_OPENAI_API_VERSION;
+  delete process.env.VEGA_AZURE_OPENAI_CHAT_DEPLOYMENT;
+  delete process.env.VEGA_AZURE_OPENAI_EMBEDDING_DEPLOYMENT;
+  delete process.env.VEGA_BEDROCK_REGION;
+  delete process.env.VEGA_BEDROCK_CHAT_MODEL;
+  delete process.env.VEGA_BEDROCK_EMBEDDING_MODEL;
   delete process.env.VEGA_TOKEN_BUDGET;
   delete process.env.VEGA_SIMILARITY_THRESHOLD;
   delete process.env.VEGA_SHARDING_ENABLED;
@@ -163,6 +171,14 @@ test("loadConfig returns the documented defaults", () => {
     openaiApiKey: undefined,
     openaiBaseUrl: undefined,
     openaiEmbeddingModel: undefined,
+    azureOpenaiApiKey: undefined,
+    azureOpenaiBaseUrl: undefined,
+    azureOpenaiApiVersion: undefined,
+    azureOpenaiChatDeployment: undefined,
+    azureOpenaiEmbeddingDeployment: undefined,
+    bedrockRegion: undefined,
+    bedrockChatModel: undefined,
+    bedrockEmbeddingModel: undefined,
     tokenBudget: 2000,
     similarityThreshold: 0.85,
     shardingEnabled: false,
@@ -298,6 +314,14 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_OPENAI_API_KEY = "openai-secret";
   process.env.VEGA_OPENAI_BASE_URL = "https://azure.example.com/openai/v1";
   process.env.VEGA_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
+  process.env.VEGA_AZURE_OPENAI_API_KEY = "azure-secret";
+  process.env.VEGA_AZURE_OPENAI_BASE_URL = "https://azure-openai.example";
+  process.env.VEGA_AZURE_OPENAI_API_VERSION = "2024-10-21";
+  process.env.VEGA_AZURE_OPENAI_CHAT_DEPLOYMENT = "gpt-4o-mini";
+  process.env.VEGA_AZURE_OPENAI_EMBEDDING_DEPLOYMENT = "text-embedding";
+  process.env.VEGA_BEDROCK_REGION = "us-east-1";
+  process.env.VEGA_BEDROCK_CHAT_MODEL = "anthropic.claude-3-5-sonnet";
+  process.env.VEGA_BEDROCK_EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0";
   process.env.VEGA_TOKEN_BUDGET = "4096";
   process.env.VEGA_SIMILARITY_THRESHOLD = "0.91";
   process.env.VEGA_SHARDING_ENABLED = "true";
@@ -373,6 +397,14 @@ test("loadConfig reads overrides from process.env", () => {
     openaiApiKey: "openai-secret",
     openaiBaseUrl: "https://azure.example.com/openai/v1",
     openaiEmbeddingModel: "text-embedding-3-small",
+    azureOpenaiApiKey: "azure-secret",
+    azureOpenaiBaseUrl: "https://azure-openai.example",
+    azureOpenaiApiVersion: "2024-10-21",
+    azureOpenaiChatDeployment: "gpt-4o-mini",
+    azureOpenaiEmbeddingDeployment: "text-embedding",
+    bedrockRegion: "us-east-1",
+    bedrockChatModel: "anthropic.claude-3-5-sonnet",
+    bedrockEmbeddingModel: "amazon.titan-embed-text-v2:0",
     tokenBudget: 4096,
     similarityThreshold: 0.91,
     shardingEnabled: true,

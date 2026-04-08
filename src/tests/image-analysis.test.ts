@@ -10,7 +10,13 @@ const createTempImage = (): { directory: string; imagePath: string } => {
   const directory = mkdtempSync(join(tmpdir(), "vega-image-analysis-"));
   const imagePath = join(directory, "fixture.png");
 
-  writeFileSync(imagePath, Buffer.from("image-bytes"));
+  writeFileSync(
+    imagePath,
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jxO8AAAAASUVORK5CYII=",
+      "base64"
+    )
+  );
 
   return {
     directory,
@@ -18,20 +24,26 @@ const createTempImage = (): { directory: string; imagePath: string } => {
   };
 };
 
-test("ImageAnalyzer.extractText returns the OCR stub result", async () => {
+test("ImageAnalyzer.extractText returns OCR output", async () => {
   const { directory, imagePath } = createTempImage();
   const analyzer = new ImageAnalyzer({
     ocrEnabled: true,
-    analysisEnabled: true
+    analysisEnabled: true,
+    ocrExecutor: async () => ({
+      text: "hello image",
+      confidence: 0.91,
+      language: "eng",
+      regions: []
+    })
   });
 
   try {
     const result = await analyzer.extractText(imagePath);
 
     assert.deepEqual(result, {
-      text: "OCR stub: text extraction pending",
-      confidence: 0,
-      language: "unknown",
+      text: "hello image",
+      confidence: 0.91,
+      language: "eng",
       regions: []
     });
   } finally {
@@ -39,24 +51,34 @@ test("ImageAnalyzer.extractText returns the OCR stub result", async () => {
   }
 });
 
-test("ImageAnalyzer.analyzeImage returns structured stub analysis", async () => {
+test("ImageAnalyzer.analyzeImage returns structured analysis", async () => {
   const { directory, imagePath } = createTempImage();
   const analyzer = new ImageAnalyzer({
     ocrEnabled: true,
-    analysisEnabled: true
+    analysisEnabled: true,
+    analysisExecutor: async () => ({
+      description: "A tiny pixel",
+      tags: ["tiny"],
+      objects: ["pixel"],
+      colors: ["white"],
+      dimensions: {
+        width: 1,
+        height: 1
+      }
+    })
   });
 
   try {
     const result = await analyzer.analyzeImage(imagePath);
 
     assert.deepEqual(result, {
-      description: "Image analysis stub",
-      tags: [],
-      objects: [],
-      colors: [],
+      description: "A tiny pixel",
+      tags: ["tiny"],
+      objects: ["pixel"],
+      colors: ["white"],
       dimensions: {
-        width: 0,
-        height: 0
+        width: 1,
+        height: 1
       }
     });
   } finally {
@@ -68,7 +90,23 @@ test("ImageAnalyzer.generateEmbeddingDescription combines OCR text and tags", as
   const { directory, imagePath } = createTempImage();
   const analyzer = new ImageAnalyzer({
     ocrEnabled: true,
-    analysisEnabled: true
+    analysisEnabled: true,
+    ocrExecutor: async () => ({
+      text: "room text",
+      confidence: 0.9,
+      language: "eng",
+      regions: []
+    }),
+    analysisExecutor: async () => ({
+      description: "Room",
+      tags: ["indoors", "room"],
+      objects: ["desk"],
+      colors: ["white"],
+      dimensions: {
+        width: 1,
+        height: 1
+      }
+    })
   });
 
   try {
@@ -76,7 +114,7 @@ test("ImageAnalyzer.generateEmbeddingDescription combines OCR text and tags", as
 
     assert.equal(
       result,
-      "Image fixture.png. OCR: OCR stub: text extraction pending. Tags: none."
+      "Image fixture.png. OCR: room text. Tags: indoors, room."
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -110,7 +148,7 @@ test("ImageAnalyzer reports disabled mode while keeping stub output stable", asy
     assert.equal(analyzer.isAvailable(), false);
     assert.equal(
       await analyzer.generateEmbeddingDescription(imagePath),
-      "Image fixture.png. OCR: OCR stub: text extraction pending. Tags: none."
+      "Image fixture.png. OCR: . Tags: none."
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });

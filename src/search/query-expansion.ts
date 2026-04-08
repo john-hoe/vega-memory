@@ -8,6 +8,7 @@ interface QueryExpanderConfig {
   enabled: boolean;
   maxVariants?: number;
   model?: string;
+  fetchImpl?: typeof fetch;
 }
 
 type SearchResultSet = {
@@ -79,11 +80,13 @@ export class QueryExpander {
   private readonly enabled: boolean;
   private readonly maxVariants: number;
   private readonly model?: string;
+  private readonly fetchImpl: typeof fetch;
 
   constructor(config: QueryExpanderConfig) {
     this.enabled = config.enabled;
     this.maxVariants = Math.max(1, config.maxVariants ?? 3);
     this.model = config.model;
+    this.fetchImpl = config.fetchImpl ?? fetch;
   }
 
   async expand(query: string): Promise<ExpandedQuery> {
@@ -112,11 +115,59 @@ export class QueryExpander {
   }
 
   async expandWithLLM(query: string, ollamaUrl: string): Promise<ExpandedQuery> {
-    void ollamaUrl;
-    void this.model;
-    logExpansionInfo("LLM expansion not connected");
+    if (!this.model) {
+      return this.expand(query);
+    }
 
-    return this.expand(query);
+    try {
+      const response = await this.fetchImpl(`${ollamaUrl.replace(/\/+$/, "")}/api/chat`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          model: this.model,
+          stream: false,
+          format: "json",
+          messages: [
+            {
+              role: "system",
+              content: "Return strict JSON with a top-level array field `variants` containing up to 3 alternate search queries."
+            },
+            {
+              role: "user",
+              content: query
+            }
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`LLM expansion failed: ${response.status}`);
+      }
+
+      const body = (await response.json()) as { message?: { content?: string }; response?: string };
+      const raw =
+        typeof body.message?.content === "string"
+          ? body.message.content
+          : typeof body.response === "string"
+            ? body.response
+            : "{}";
+      const parsed = JSON.parse(raw) as { variants?: string[] };
+      const llmVariants = Array.isArray(parsed.variants)
+        ? parsed.variants.map((variant) => normalizeQuery(String(variant))).filter((variant) => variant.length > 0)
+        : [];
+      const fallback = await this.expand(query);
+
+      return {
+        original: fallback.original,
+        variants: [...new Set([fallback.original, ...llmVariants, ...fallback.variants])].slice(0, this.maxVariants),
+        method: "llm"
+      };
+    } catch {
+      logExpansionInfo("LLM expansion not connected");
+      return this.expand(query);
+    }
   }
 
   mergeResults(

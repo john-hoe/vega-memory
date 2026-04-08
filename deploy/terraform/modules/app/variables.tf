@@ -38,6 +38,28 @@ variable "app_replicas" {
   type        = number
 }
 
+variable "image_tag" {
+  description = "Container image tag to deploy."
+  type        = string
+}
+
+variable "vega_api_key" {
+  description = "API key exposed to the application container."
+  type        = string
+  sensitive   = true
+}
+
+variable "pg_password" {
+  description = "PostgreSQL password exposed to the application container."
+  type        = string
+  sensitive   = true
+}
+
+variable "ollama_base_url" {
+  description = "Ollama base URL exposed to the application container."
+  type        = string
+}
+
 variable "rds_host" {
   description = "RDS hostname exposed to the container as configuration."
   type        = string

@@ -33,14 +33,14 @@ spec:
                 name: {{ include "vega-memory.fullname" . }}
           env:
             - name: VEGA_API_KEY
-              value: {{ .Values.apiKey | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret | default (printf "%s-secrets" (include "vega-memory.fullname" .)) }}
+                  key: {{ .Values.existingSecretKey }}
           livenessProbe:
             httpGet:
               path: /api/health
               port: http
-              httpHeaders:
-                - name: Authorization
-                  value: "Bearer {{ .Values.apiKey }}"
             initialDelaySeconds: 30
             periodSeconds: 15
             timeoutSeconds: 5
@@ -49,9 +49,6 @@ spec:
             httpGet:
               path: /api/health
               port: http
-              httpHeaders:
-                - name: Authorization
-                  value: "Bearer {{ .Values.apiKey }}"
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5

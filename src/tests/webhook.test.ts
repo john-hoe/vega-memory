@@ -122,6 +122,7 @@ test("WebhookService registers, lists, and removes webhooks", () => {
 });
 
 test("WebhookService emit only logs enabled matching events", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
   const service = new WebhookService([
     {
       url: "https://jira.example/webhooks/memory",
@@ -139,61 +140,51 @@ test("WebhookService emit only logs enabled matching events", async () => {
       events: ["memory.created"],
       enabled: false
     }
-  ]);
-  const logs: string[] = [];
-  const originalLog = console.log;
+  ], async (url, init) => {
+    requests.push({ url: String(url), init });
+    return new Response(null, { status: 200 });
+  });
 
-  console.log = (...args: unknown[]): void => {
-    logs.push(args.join(" "));
+  const result = await service.emit("memory.created", {
+    id: "memory-1",
+    project: "vega-memory"
+  });
+  const body = JSON.parse(String(requests[0]?.init?.body ?? "{}")) as {
+    event: string;
+    data: { id: string; project: string };
   };
+  const headers = new Headers(requests[0]?.init?.headers);
 
-  try {
-    const result = await service.emit("memory.created", {
-      id: "memory-1",
-      project: "vega-memory"
-    });
-
-    assert.deepEqual(result, { sent: 1, failed: 0 });
-    assert.deepEqual(logs, [
-      "Webhook would fire: https://jira.example/webhooks/memory memory.created"
-    ]);
-  } finally {
-    console.log = originalLog;
-  }
+  assert.deepEqual(result, { sent: 1, failed: 0 });
+  assert.equal(requests[0]?.url, "https://jira.example/webhooks/memory");
+  assert.equal(body.event, "memory.created");
+  assert.equal(body.data.id, "memory-1");
+  assert.equal(headers.get("x-vega-signature"), service.signPayload(JSON.stringify(body), "jira-secret"));
 });
 
 test("WebhookService helper emitters delegate to the expected events", async () => {
+  const events: string[] = [];
   const service = new WebhookService([
     {
       url: "https://hooks.example/webhooks/memory",
       events: ["memory.created", "memory.updated", "memory.deleted"],
       enabled: true
     }
-  ]);
-  const logs: string[] = [];
-  const originalLog = console.log;
+  ], async (_url, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { event: string };
+    events.push(body.event);
+    return new Response(null, { status: 200 });
+  });
 
-  console.log = (...args: unknown[]): void => {
-    logs.push(args.join(" "));
-  };
+  await service.emitMemoryCreated({
+    id: "memory-1",
+    content: "Webhook support added",
+    project: "vega-memory"
+  });
+  await service.emitMemoryUpdated("memory-1");
+  await service.emitMemoryDeleted("memory-1");
 
-  try {
-    await service.emitMemoryCreated({
-      id: "memory-1",
-      content: "Webhook support added",
-      project: "vega-memory"
-    });
-    await service.emitMemoryUpdated("memory-1");
-    await service.emitMemoryDeleted("memory-1");
-
-    assert.deepEqual(logs, [
-      "Webhook would fire: https://hooks.example/webhooks/memory memory.created",
-      "Webhook would fire: https://hooks.example/webhooks/memory memory.updated",
-      "Webhook would fire: https://hooks.example/webhooks/memory memory.deleted"
-    ]);
-  } finally {
-    console.log = originalLog;
-  }
+  assert.deepEqual(events, ["memory.created", "memory.updated", "memory.deleted"]);
 });
 
 test("WebhookService signPayload returns sha256 HMAC", () => {
@@ -212,13 +203,17 @@ test("WebhookService signPayload returns sha256 HMAC", () => {
 });
 
 test("webhook API routes register, list, test, and delete webhooks", async () => {
-  const harness = await createHarness();
-  const logs: string[] = [];
-  const originalLog = console.log;
+  const originalFetch = global.fetch;
 
-  console.log = (...args: unknown[]): void => {
-    logs.push(args.join(" "));
-  };
+  global.fetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith("http://127.0.0.1:")) {
+      return originalFetch(input, init);
+    }
+
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  const harness = await createHarness();
 
   try {
     const createResponse = await harness.request("/api/webhooks", {
@@ -291,9 +286,6 @@ test("webhook API routes register, list, test, and delete webhooks", async () =>
       sent: 1,
       failed: 0
     });
-    assert.deepEqual(logs, [
-      "Webhook would fire: https://jira.example/webhooks/memory memory.created"
-    ]);
     assert.equal(deleteResponse.status, 200);
     assert.deepEqual(deleted, {
       url: "https://jira.example/webhooks/memory",
@@ -301,7 +293,7 @@ test("webhook API routes register, list, test, and delete webhooks", async () =>
     });
     assert.deepEqual(finalList, []);
   } finally {
-    console.log = originalLog;
+    global.fetch = originalFetch;
     await harness.cleanup();
   }
 });

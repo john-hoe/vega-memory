@@ -24,6 +24,7 @@ import { registerListCommand } from "./commands/list.js";
 import { registerMaintenanceCommands } from "./commands/maintenance.js";
 import { registerMigrateCommand } from "./commands/migrate.js";
 import { registerNoteCommand } from "./commands/note.js";
+import { registerOpenClawCommands } from "./commands/openclaw.js";
 import { registerQualityCommand } from "./commands/quality.js";
 import { registerRecallCommand } from "./commands/recall.js";
 import { registerReindexCommand } from "./commands/reindex.js";
@@ -45,7 +46,7 @@ import { CompressionService } from "../core/compression.js";
 import { DocGenerator } from "../core/doc-generator.js";
 import { DocIndexService } from "../core/doc-index.js";
 import { GitHistoryService } from "../core/git-history.js";
-import { ImageMemoryService } from "../core/image-memory.js";
+import { ImageAnalyzer, ImageMemoryService } from "../core/image-memory.js";
 import { KnowledgeGraphService } from "../core/knowledge-graph.js";
 import { MemoryService } from "../core/memory.js";
 import { QualityService } from "../core/quality.js";
@@ -67,6 +68,7 @@ import { CrossReferenceService } from "../wiki/cross-reference.js";
 import { PageManager } from "../wiki/page-manager.js";
 import { SynthesisEngine } from "../wiki/synthesis.js";
 import { StalenessService } from "../wiki/staleness.js";
+import { OpenClawClient } from "../integrations/openclaw.js";
 
 const ensureDataDirectory = (dbPath: string): void => {
   if (dbPath === ":memory:") {
@@ -125,7 +127,13 @@ async function main(): Promise<void> {
   const codeIndexService = new CodeIndexService(repository, memoryService);
   const docGenerator = new DocGenerator(repository);
   const gitHistoryService = new GitHistoryService(repository, memoryService);
-  const imageMemoryService = new ImageMemoryService(repository, memoryService);
+  const imageAnalyzer = new ImageAnalyzer({
+    ocrEnabled: true,
+    analysisEnabled: true,
+    ollamaModel: config.ollamaModel,
+    ollamaBaseUrl: config.ollamaBaseUrl
+  });
+  const imageMemoryService = new ImageMemoryService(repository, memoryService, imageAnalyzer);
   const docIndexService = new DocIndexService(repository, memoryService);
   const qualityService = new QualityService(repository, config);
   const pluginLoader = new PluginLoader();
@@ -149,6 +157,11 @@ async function main(): Promise<void> {
     config
   );
   const rssService = new RSSService(repository);
+  const openClawClient = new OpenClawClient({
+    enabled: config.openclawEnabled ?? false,
+    apiUrl: config.openclawUrl,
+    apiKey: config.openclawKey
+  });
 
   registerStoreCommand(program, memoryService);
   registerRecallCommand(program, recallService);
@@ -186,6 +199,7 @@ async function main(): Promise<void> {
     stalenessService
   );
   registerWhiteLabelCommand(program, whiteLabelConfig);
+  registerOpenClawCommands(program, openClawClient);
 
   try {
     await program.parseAsync(process.argv);

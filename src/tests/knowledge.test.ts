@@ -15,7 +15,7 @@ import type { VegaConfig } from "../config.js";
 import { CodeIndexService } from "../core/code-index.js";
 import { DocIndexService } from "../core/doc-index.js";
 import { GitHistoryService } from "../core/git-history.js";
-import { ImageMemoryService } from "../core/image-memory.js";
+import { ImageAnalyzer, ImageMemoryService } from "../core/image-memory.js";
 import { KnowledgeGraphService } from "../core/knowledge-graph.js";
 import { MemoryService } from "../core/memory.js";
 import { Repository } from "../db/repository.js";
@@ -399,6 +399,52 @@ test("ImageMemoryService.storeScreenshot updates within a project and keeps cros
     assert.match(repository.getMemory(projectAFirst)?.content ?? "", /^Updated capture/);
     assert.equal(service.listScreenshots("alpha").length, 1);
     assert.equal(service.listScreenshots("beta").length, 1);
+  } finally {
+    restoreFetch();
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ImageMemoryService generates a description when none is supplied", async () => {
+  const restoreFetch = installEmbeddingMock();
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-image-memory-auto-"));
+  const imagePath = join(tempDir, "shot.png");
+  const repository = new Repository(":memory:");
+  const memoryService = new MemoryService(repository, baseConfig);
+  const analyzer = new ImageAnalyzer({
+    ocrEnabled: true,
+    analysisEnabled: true,
+    ocrExecutor: async () => ({
+      text: "auto text",
+      confidence: 1,
+      language: "eng",
+      regions: []
+    }),
+    analysisExecutor: async () => ({
+      description: "auto description",
+      tags: ["auto"],
+      objects: [],
+      colors: [],
+      dimensions: { width: 1, height: 1 }
+    })
+  });
+  const service = new ImageMemoryService(repository, memoryService, analyzer);
+
+  writeFileSync(
+    imagePath,
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jxO8AAAAASUVORK5CYII=",
+      "base64"
+    )
+  );
+
+  try {
+    const memoryId = await service.storeScreenshot(imagePath, "", "alpha");
+    const memory = repository.getMemory(memoryId);
+
+    assert.match(memory?.content ?? "", /auto text/);
+    assert.match(memory?.content ?? "", /\[Image:/);
   } finally {
     restoreFetch();
     repository.close();

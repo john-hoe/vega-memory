@@ -14,7 +14,5 @@ spec:
         - sh
         - -ec
         - >
-          curl -fsS
-          -H "Authorization: Bearer {{ .Values.apiKey }}"
-          http://{{ include "vega-memory.fullname" . }}:{{ .Values.service.port }}/api/health
+          curl -fsS http://{{ include "vega-memory.fullname" . }}:{{ .Values.service.port }}/api/health
   restartPolicy: Never

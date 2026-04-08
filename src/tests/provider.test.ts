@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { VegaConfig } from "../config.js";
+import { AzureOpenAIChatProvider, AzureOpenAIEmbeddingProvider } from "../embedding/azure-openai-provider.js";
+import { BedrockChatProvider, BedrockEmbeddingProvider } from "../embedding/bedrock-provider.js";
 import { createChatProvider, createEmbeddingProvider } from "../embedding/factory.js";
 import { generateEmbedding, chatWithOllama } from "../embedding/ollama.js";
 import { OllamaChatProvider, OllamaEmbeddingProvider } from "../embedding/ollama-provider.js";
@@ -66,6 +68,33 @@ test("factory returns OpenAI providers when configured", () => {
   assert.equal(chatProvider.name, "openai");
   assert.ok(embeddingProvider instanceof OpenAIEmbeddingProvider);
   assert.ok(chatProvider instanceof OpenAIChatProvider);
+});
+
+test("factory returns Azure OpenAI providers when configured", () => {
+  const config: VegaConfig = {
+    ...baseConfig,
+    embeddingProvider: "azure-openai",
+    azureOpenaiApiKey: "azure-key",
+    azureOpenaiBaseUrl: "https://azure.example.com",
+    azureOpenaiChatDeployment: "gpt-4o-mini",
+    azureOpenaiEmbeddingDeployment: "text-embedding-3-small"
+  };
+
+  assert.ok(createEmbeddingProvider(config) instanceof AzureOpenAIEmbeddingProvider);
+  assert.ok(createChatProvider(config) instanceof AzureOpenAIChatProvider);
+});
+
+test("factory returns Bedrock providers when configured", () => {
+  const config: VegaConfig = {
+    ...baseConfig,
+    embeddingProvider: "bedrock",
+    bedrockRegion: "us-east-1",
+    bedrockChatModel: "anthropic.claude-3-5-sonnet",
+    bedrockEmbeddingModel: "amazon.titan-embed-text-v2:0"
+  };
+
+  assert.ok(createEmbeddingProvider(config) instanceof BedrockEmbeddingProvider);
+  assert.ok(createChatProvider(config) instanceof BedrockChatProvider);
 });
 
 test("OpenAIEmbeddingProvider uses configured base URL, API key, and embedding model", async () => {
@@ -165,6 +194,108 @@ test("OpenAIChatProvider uses configured base URL and explicit chat model", asyn
   } finally {
     restoreFetch();
   }
+});
+
+test("AzureOpenAI providers hit deployment endpoints", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const restoreFetch = installFetchMock((url, init) => {
+    requests.push({ url, init });
+
+    return new Response(
+      JSON.stringify(
+        url.includes("/embeddings")
+          ? { data: [{ embedding: [0.5, 0.25] }] }
+          : { choices: [{ message: { content: "azure reply" } }] }
+      ),
+      {
+        status: 200,
+        headers: {
+          "content-type": "application/json"
+        }
+      }
+    );
+  });
+  const config: VegaConfig = {
+    ...baseConfig,
+    azureOpenaiApiKey: "azure-key",
+    azureOpenaiBaseUrl: "https://azure.example.com",
+    azureOpenaiApiVersion: "2024-10-21",
+    azureOpenaiChatDeployment: "chat-deployment",
+    azureOpenaiEmbeddingDeployment: "embedding-deployment"
+  };
+
+  try {
+    const embeddingProvider = new AzureOpenAIEmbeddingProvider(config);
+    const chatProvider = new AzureOpenAIChatProvider(config);
+
+    assert.deepEqual(await embeddingProvider.generateEmbedding("azure text"), [0.5, 0.25]);
+    assert.equal(await chatProvider.chat([{ role: "user", content: "hello" }]), "azure reply");
+    assert.match(requests[0]?.url ?? "", /deployments\/embedding-deployment\/embeddings/);
+    assert.match(requests[1]?.url ?? "", /deployments\/chat-deployment\/chat\/completions/);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("Bedrock providers use the injected client", async () => {
+  const calls: string[] = [];
+  const embeddingProvider = new BedrockEmbeddingProvider(
+    {
+      ...baseConfig,
+      bedrockRegion: "us-east-1",
+      bedrockEmbeddingModel: "amazon.titan-embed-text-v2:0",
+      bedrockChatModel: "anthropic.claude-3-5-sonnet"
+    },
+    {
+      async send(command: { constructor?: { name?: string } }): Promise<unknown> {
+        calls.push(command.constructor?.name ?? "unknown");
+        if (command.constructor?.name === "InvokeModelCommand") {
+          return {
+            body: Buffer.from(JSON.stringify({ embedding: [0.3, 0.7] }))
+          };
+        }
+
+        return {
+          output: {
+            message: {
+              content: [{ text: "bedrock reply" }]
+            }
+          }
+        };
+      }
+    }
+  );
+  const chatProvider = new BedrockChatProvider(
+    {
+      ...baseConfig,
+      bedrockRegion: "us-east-1",
+      bedrockEmbeddingModel: "amazon.titan-embed-text-v2:0",
+      bedrockChatModel: "anthropic.claude-3-5-sonnet"
+    },
+    {
+      async send(command: { constructor?: { name?: string } }): Promise<unknown> {
+        calls.push(command.constructor?.name ?? "unknown");
+        if (command.constructor?.name === "InvokeModelCommand") {
+          return {
+            body: Buffer.from(JSON.stringify({ embedding: [0.3, 0.7] }))
+          };
+        }
+
+        return {
+          output: {
+            message: {
+              content: [{ text: "bedrock reply" }]
+            }
+          }
+        };
+      }
+    }
+  );
+
+  assert.deepEqual(await embeddingProvider.generateEmbedding("bedrock text"), [0.3, 0.7]);
+  assert.equal(await chatProvider.chat([{ role: "user", content: "hello" }]), "bedrock reply");
+  assert.ok(calls.includes("InvokeModelCommand"));
+  assert.ok(calls.includes("ConverseCommand"));
 });
 
 test("existing Ollama wrapper exports remain compatible with default provider selection", async () => {

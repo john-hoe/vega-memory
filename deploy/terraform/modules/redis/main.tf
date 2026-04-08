@@ -53,9 +53,6 @@ resource "aws_elasticache_replication_group" "this" {
   at_rest_encryption_enabled = true
   transit_encryption_enabled = true
   apply_immediately          = true
-
-  # TODO: Replace placeholder values if your AWS account or environment needs different shard counts, maintenance windows, or auth token handling.
-
   tags = merge(var.tags, {
     Name = "${local.name_prefix}-redis"
   })

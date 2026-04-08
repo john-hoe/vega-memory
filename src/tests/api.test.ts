@@ -33,7 +33,7 @@ interface TestHarness {
   request(path: string, init?: RequestInit): Promise<Response>;
 }
 
-const createHarness = async (apiKey?: string): Promise<TestHarness> => {
+const createHarness = async (apiKey?: string, overrides: Partial<VegaConfig> = {}): Promise<TestHarness> => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-api-"));
   const config: VegaConfig = {
     dbPath: join(tempDir, "memory.db"),
@@ -51,7 +51,8 @@ const createHarness = async (apiKey?: string): Promise<TestHarness> => {
     telegramBotToken: undefined,
     telegramChatId: undefined,
     observerEnabled: false,
-    dbEncryption: false
+    dbEncryption: false,
+    ...overrides
   };
   const repository = new Repository(config.dbPath);
   const searchEngine = new SearchEngine(repository, config);
@@ -131,6 +132,22 @@ test("GET /api/health returns the expanded health payload", async () => {
     assert.equal(typeof body.db_size_mb, "number");
     assert.equal(Array.isArray(body.issues), true);
     assert.equal(Array.isArray(body.fix_suggestions), true);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("GET /metrics returns Prometheus text when metrics are enabled", async () => {
+  const harness = await createHarness(undefined, {
+    metricsEnabled: true
+  });
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/metrics`);
+    const body = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(body, /vega_http_requests_total/);
   } finally {
     await harness.cleanup();
   }

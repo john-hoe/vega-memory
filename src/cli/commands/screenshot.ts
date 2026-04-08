@@ -10,7 +10,7 @@ export function registerScreenshotCommand(
     .command("screenshot")
     .description("Store a screenshot reference as memory")
     .argument("<image-path>", "image file path")
-    .requiredOption("--description <description>", "screenshot description")
+    .option("--description <description>", "screenshot description", "")
     .option("--project <project>", "project name", "global")
     .action(
       async (

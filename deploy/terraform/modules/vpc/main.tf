@@ -1,8 +1,8 @@
 locals {
-  name_prefix         = lower(replace("${var.project_name}-${var.environment}", "_", "-"))
-  public_subnet_cidrs = ["10.40.0.0/20", "10.40.16.0/20"]
+  name_prefix          = lower(replace("${var.project_name}-${var.environment}", "_", "-"))
+  public_subnet_cidrs  = ["10.40.0.0/20", "10.40.16.0/20"]
   private_subnet_cidrs = ["10.40.128.0/20", "10.40.144.0/20"]
-  selected_azs        = slice(var.availability_zones, 0, 2)
+  selected_azs         = slice(var.availability_zones, 0, 2)
 }
 
 resource "aws_vpc" "this" {

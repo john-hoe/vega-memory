@@ -50,12 +50,20 @@ export interface VegaConfig {
   sentryDsn?: string;
   logLevel?: "debug" | "info" | "warn" | "error";
   logFormat?: "json" | "text";
-  embeddingProvider?: "ollama" | "openai";
+  embeddingProvider?: "ollama" | "openai" | "azure-openai" | "bedrock";
   ollamaBaseUrl: string;
   ollamaModel: string;
   openaiApiKey?: string;
   openaiBaseUrl?: string;
   openaiEmbeddingModel?: string;
+  azureOpenaiApiKey?: string;
+  azureOpenaiBaseUrl?: string;
+  azureOpenaiApiVersion?: string;
+  azureOpenaiChatDeployment?: string;
+  azureOpenaiEmbeddingDeployment?: string;
+  bedrockRegion?: string;
+  bedrockChatModel?: string;
+  bedrockEmbeddingModel?: string;
   tokenBudget: number;
   similarityThreshold: number;
   shardingEnabled: boolean;
@@ -422,12 +430,26 @@ export const loadConfig = (): VegaConfig => {
     logLevel: parseLogLevel(process.env.VEGA_LOG_LEVEL),
     logFormat: parseLogFormat(process.env.VEGA_LOG_FORMAT),
     embeddingProvider:
-      process.env.VEGA_EMBEDDING_PROVIDER === "openai" ? "openai" : "ollama",
+      process.env.VEGA_EMBEDDING_PROVIDER === "openai"
+        ? "openai"
+        : process.env.VEGA_EMBEDDING_PROVIDER === "azure-openai"
+          ? "azure-openai"
+          : process.env.VEGA_EMBEDDING_PROVIDER === "bedrock"
+            ? "bedrock"
+            : "ollama",
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
     ollamaModel: process.env.OLLAMA_MODEL ?? "bge-m3",
     openaiApiKey: process.env.VEGA_OPENAI_API_KEY || undefined,
     openaiBaseUrl: process.env.VEGA_OPENAI_BASE_URL || undefined,
     openaiEmbeddingModel: process.env.VEGA_OPENAI_EMBEDDING_MODEL || undefined,
+    azureOpenaiApiKey: process.env.VEGA_AZURE_OPENAI_API_KEY || undefined,
+    azureOpenaiBaseUrl: process.env.VEGA_AZURE_OPENAI_BASE_URL || undefined,
+    azureOpenaiApiVersion: process.env.VEGA_AZURE_OPENAI_API_VERSION || undefined,
+    azureOpenaiChatDeployment: process.env.VEGA_AZURE_OPENAI_CHAT_DEPLOYMENT || undefined,
+    azureOpenaiEmbeddingDeployment: process.env.VEGA_AZURE_OPENAI_EMBEDDING_DEPLOYMENT || undefined,
+    bedrockRegion: process.env.VEGA_BEDROCK_REGION || undefined,
+    bedrockChatModel: process.env.VEGA_BEDROCK_CHAT_MODEL || undefined,
+    bedrockEmbeddingModel: process.env.VEGA_BEDROCK_EMBEDDING_MODEL || undefined,
     tokenBudget: clamp(parseNumber(process.env.VEGA_TOKEN_BUDGET, 2000), 500, 10_000),
     similarityThreshold: clamp(parseNumber(process.env.VEGA_SIMILARITY_THRESHOLD, 0.85), 0, 1),
     shardingEnabled: parseBoolean(process.env.VEGA_SHARDING_ENABLED, false),

@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.5.0"
 
   required_providers {
     aws = {
@@ -11,8 +11,6 @@ terraform {
 
 provider "aws" {
   region = var.region
-
-  # TODO: Replace placeholder values if your AWS account requires a named profile, role assumption, or default tags.
 }
 
 data "aws_availability_zones" "available" {
@@ -71,6 +69,10 @@ module "app" {
   public_subnet_ids  = module.vpc.public_subnet_ids
   private_subnet_ids = module.vpc.private_subnet_ids
   app_replicas       = var.app_replicas
+  image_tag          = var.image_tag
+  vega_api_key       = var.vega_api_key
+  pg_password        = var.pg_password
+  ollama_base_url    = var.ollama_base_url
   rds_host           = module.rds.rds_address
   redis_endpoint     = module.redis.redis_endpoint
   tags               = local.common_tags
