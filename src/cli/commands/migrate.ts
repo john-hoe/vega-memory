@@ -1,94 +1,43 @@
-import { readFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 
-import { MemoryService } from "../../core/memory.js";
-import type { AuditContext } from "../../core/types.js";
+import { MigrationTool } from "../../db/migration.js";
 
-interface MarkdownSection {
-  title: string;
-  content: string;
-}
-
-const CONTENT_FACTORY_PROJECT = "content-factory";
-const CLI_AUDIT_CONTEXT: AuditContext = { actor: "cli", ip: null };
-
-const parseSections = (content: string): MarkdownSection[] => {
-  const lines = content.split(/\r?\n/);
-  const sections: MarkdownSection[] = [];
-  let currentTitle: string | null = null;
-  let currentContent: string[] = [];
-
-  const pushSection = (): void => {
-    if (currentTitle === null) {
-      return;
-    }
-
-    sections.push({
-      title: currentTitle,
-      content: currentContent.join("\n").trim()
-    });
-  };
-
-  for (const line of lines) {
-    if (line.startsWith("## ")) {
-      pushSection();
-      currentTitle = line.slice(3).trim();
-      currentContent = [];
-      continue;
-    }
-
-    if (currentTitle !== null) {
-      currentContent.push(line);
-    }
+const parseEngine = (value: string): "sqlite" | "postgres" => {
+  if (value === "sqlite" || value === "postgres") {
+    return value;
   }
 
-  pushSection();
-
-  if (sections.length === 0) {
-    throw new Error("No markdown sections found. Expected headings starting with ## ");
-  }
-
-  return sections;
+  throw new InvalidArgumentError("supported engines are sqlite and postgres");
 };
 
-const inferProject = (title: string, filePath: string): string => {
-  const normalizedTitle = title.toLowerCase();
-  const normalizedFileName = basename(filePath).toLowerCase();
-
-  if (normalizedTitle.includes(CONTENT_FACTORY_PROJECT)) {
-    return CONTENT_FACTORY_PROJECT;
-  }
-
-  if (normalizedFileName.includes(CONTENT_FACTORY_PROJECT)) {
-    return CONTENT_FACTORY_PROJECT;
-  }
-
-  return "global";
-};
-
-export function registerMigrateCommand(program: Command, memoryService: MemoryService): void {
+export function registerMigrateCommand(program: Command): void {
   program
-    .command("migrate")
-    .description("Migrate markdown sections into memories")
-    .argument("<file>", "markdown file to import")
-    .action(async (file: string) => {
-      const inputPath = resolve(file);
-      const content = readFileSync(inputPath, "utf8");
-      const sections = parseSections(content);
-
-      for (const section of sections) {
-        await memoryService.store({
-          title: section.title,
-          content: section.content,
-          type: "pitfall",
-          project: inferProject(section.title, inputPath),
-          source: "explicit",
-          auditContext: CLI_AUDIT_CONTEXT
-        });
+    .command("migrate-db")
+    .description("Generate PostgreSQL DDL from a SQLite database")
+    .requiredOption("--from <engine>", "source database engine", parseEngine)
+    .requiredOption("--to <engine>", "target database engine", parseEngine)
+    .requiredOption("--source <path>", "source SQLite database path")
+    .requiredOption("--output <file>", "output file for generated PostgreSQL SQL")
+    .action((options: {
+      from: "sqlite" | "postgres";
+      to: "sqlite" | "postgres";
+      source: string;
+      output: string;
+    }) => {
+      if (options.from !== "sqlite" || options.to !== "postgres") {
+        throw new Error("Only sqlite-to-postgres migration is supported");
       }
 
-      console.log(`imported ${sections.length} memories`);
+      const tool = new MigrationTool();
+      const outputPath = resolve(options.output);
+      const migrationData = tool.exportSqlite(resolve(options.source));
+      const statements = tool.generatePgSql(migrationData);
+
+      mkdirSync(dirname(outputPath), { recursive: true });
+      writeFileSync(outputPath, `${statements.join("\n\n")}\n`, "utf8");
+      console.log(`wrote ${statements.length} statements to ${outputPath}`);
     });
 }
