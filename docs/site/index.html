@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vega Memory</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #07111f;
+        --bg-soft: rgba(12, 26, 44, 0.82);
+        --panel: rgba(13, 26, 45, 0.88);
+        --panel-strong: rgba(17, 35, 59, 0.98);
+        --border: rgba(149, 173, 212, 0.18);
+        --text: #f5f7fb;
+        --muted: #9fb3cd;
+        --accent: #78e6c7;
+        --accent-strong: #5cc0ff;
+        --warning: #ffd166;
+        --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+        --radius: 22px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Inter", "Helvetica Neue", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(92, 192, 255, 0.2), transparent 34%),
+          radial-gradient(circle at top right, rgba(120, 230, 199, 0.15), transparent 28%),
+          linear-gradient(180deg, #08111d 0%, #0b1423 48%, #060b14 100%);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .shell {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        backdrop-filter: blur(20px);
+        background: rgba(6, 11, 20, 0.72);
+        border-bottom: 1px solid rgba(149, 173, 212, 0.08);
+        z-index: 10;
+      }
+
+      .topbar .shell {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 18px 0;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .brand-mark {
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+        box-shadow: 0 0 30px rgba(92, 192, 255, 0.75);
+      }
+
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        color: var(--muted);
+      }
+
+      nav a:hover,
+      .link:hover,
+      .cta:hover {
+        color: var(--text);
+      }
+
+      main {
+        padding: 48px 0 72px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr);
+        gap: 28px;
+        align-items: stretch;
+      }
+
+      .hero-card,
+      .panel,
+      .feature,
+      .plan,
+      .cta-panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+      }
+
+      .hero-card {
+        padding: 40px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        color: var(--accent);
+        background: rgba(120, 230, 199, 0.08);
+        border: 1px solid rgba(120, 230, 199, 0.18);
+        font-size: 0.92rem;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        margin-top: 18px;
+        font-size: clamp(2.8rem, 7vw, 4.8rem);
+        line-height: 0.98;
+        letter-spacing: -0.04em;
+      }
+
+      .hero p {
+        margin-top: 20px;
+        font-size: 1.08rem;
+        line-height: 1.7;
+        color: var(--muted);
+        max-width: 60ch;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-top: 28px;
+      }
+
+      .cta,
+      .ghost {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 14px 18px;
+        border-radius: 999px;
+        font-weight: 600;
+        transition: 160ms ease;
+      }
+
+      .cta {
+        color: #07111f;
+        background: linear-gradient(135deg, var(--accent), #b4fff2);
+      }
+
+      .ghost {
+        color: var(--text);
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .stats {
+        display: grid;
+        gap: 16px;
+        padding: 28px;
+      }
+
+      .stat-block {
+        padding: 18px;
+        border-radius: 18px;
+        background: var(--panel-strong);
+        border: 1px solid rgba(149, 173, 212, 0.15);
+      }
+
+      .stat-label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 0.86rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+      }
+
+      .section {
+        margin-top: 30px;
+        padding: 34px;
+      }
+
+      .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        gap: 18px;
+        margin-bottom: 22px;
+      }
+
+      .section-header p {
+        color: var(--muted);
+        max-width: 60ch;
+        line-height: 1.7;
+      }
+
+      .grid {
+        display: grid;
+        gap: 18px;
+      }
+
+      .features {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .feature {
+        padding: 22px;
+      }
+
+      .feature h3 {
+        font-size: 1.18rem;
+        margin-bottom: 10px;
+      }
+
+      .feature p,
+      .plan p,
+      footer {
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .pricing {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .plan {
+        padding: 26px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .plan.featured::before {
+        content: "Most Popular";
+        position: absolute;
+        top: 18px;
+        right: 18px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(92, 192, 255, 0.12);
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .plan h3 {
+        font-size: 1.45rem;
+      }
+
+      .price {
+        margin: 16px 0 10px;
+        font-size: 2.4rem;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+      }
+
+      .price small {
+        font-size: 1rem;
+        color: var(--muted);
+      }
+
+      ul {
+        margin: 18px 0 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.8;
+      }
+
+      .cta-panel {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 18px;
+        padding: 26px 28px;
+        align-items: center;
+        margin-top: 30px;
+      }
+
+      footer {
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 36px;
+        padding: 24px 0 16px;
+      }
+
+      .footer-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+
+      .license {
+        color: var(--warning);
+      }
+
+      @media (max-width: 920px) {
+        .hero,
+        .features,
+        .pricing,
+        .cta-panel {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-card,
+        .section,
+        .stats {
+          padding: 28px;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .topbar .shell,
+        .section-header,
+        footer {
+          display: block;
+        }
+
+        nav {
+          margin-top: 12px;
+        }
+
+        .hero-card,
+        .section,
+        .stats,
+        .cta-panel {
+          padding: 22px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="shell">
+        <a class="brand" href="./index.html">
+          <span class="brand-mark"></span>
+          <span>Vega Memory</span>
+        </a>
+        <nav>
+          <a href="./api.html">API Docs</a>
+          <a href="./getting-started.html">Getting Started</a>
+          <a href="https://github.com/john-hoe/vega-memory">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main class="shell">
+      <section class="hero">
+        <article class="hero-card">
+          <div class="eyebrow">SQLite-backed memory for coding agents and MCP clients</div>
+          <h1>Vega Memory — AI-Native Memory Server</h1>
+          <p>Local-first memory for AI tools. SQLite + vector search + MCP protocol.</p>
+          <p>
+            Persist decisions, pitfalls, preferences, and project context across sessions with a
+            runtime that works over MCP, CLI, and HTTP. Keep the data local, keep the search fast,
+            and keep every tool pointed at the same source of truth.
+          </p>
+          <div class="actions">
+            <a class="cta" href="./getting-started.html">Get Started</a>
+            <a class="ghost" href="./api.html">Browse API</a>
+          </div>
+        </article>
+        <aside class="stats">
+          <div class="stat-block">
+            <span class="stat-label">Search Stack</span>
+            <div class="stat-value">Hybrid</div>
+            <p>Vector similarity plus keyword retrieval for precise memory recall.</p>
+          </div>
+          <div class="stat-block">
+            <span class="stat-label">Deployment</span>
+            <div class="stat-value">Local-First</div>
+            <p>Run it on one machine, behind Tailscale, in Docker, or as part of a team service.</p>
+          </div>
+          <div class="stat-block">
+            <span class="stat-label">Integration</span>
+            <div class="stat-value">MCP + REST</div>
+            <p>Connect Cursor, Claude Code, Codex, scripts, and any HTTP client.</p>
+          </div>
+        </aside>
+      </section>
+
+      <section class="section panel" id="features">
+        <div class="section-header">
+          <div>
+            <h2>Core Features</h2>
+            <p>Built for agent workflows that need durable state, fast retrieval, and controlled deployment.</p>
+          </div>
+        </div>
+        <div class="grid features">
+          <article class="feature">
+            <h3>Hybrid Search</h3>
+            <p>Blend semantic similarity with exact-match lookup so recovered memories stay relevant and debuggable.</p>
+          </article>
+          <article class="feature">
+            <h3>Multi-tenant</h3>
+            <p>Scope API traffic, billing, dashboard access, and memory retrieval per tenant without fragmenting the platform.</p>
+          </article>
+          <article class="feature">
+            <h3>Wiki Knowledge Base</h3>
+            <p>Promote recurring lessons into structured wiki pages with comments, notifications, and permissions.</p>
+          </article>
+          <article class="feature">
+            <h3>MCP Protocol</h3>
+            <p>Expose memory operations directly to MCP-capable clients so AI tools can store and recall context automatically.</p>
+          </article>
+          <article class="feature">
+            <h3>Enterprise Security</h3>
+            <p>API keys, tenant isolation, admin controls, audit trails, and dashboard auth are built into the service layer.</p>
+          </article>
+          <article class="feature">
+            <h3>Self-hosted or SaaS</h3>
+            <p>Start on a laptop, move to a server, or package it for a managed offer without changing the application model.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section panel" id="pricing">
+        <div class="section-header">
+          <div>
+            <h2>Pricing</h2>
+            <p>The plans below match the current billing definitions in <code>src/billing/plans.ts</code>.</p>
+          </div>
+        </div>
+        <div class="grid pricing">
+          <article class="plan">
+            <h3>Free</h3>
+            <div class="price">$0 <small>/month</small></div>
+            <p>For local evaluation, solo workflows, and lightweight wiki usage.</p>
+            <ul>
+              <li>100 memories</li>
+              <li>1 user</li>
+              <li>10 MB storage</li>
+              <li>Core memory storage</li>
+              <li>Single-user workspace</li>
+              <li>Basic wiki pages</li>
+            </ul>
+          </article>
+          <article class="plan featured">
+            <h3>Pro</h3>
+            <div class="price">$29 <small>/month</small></div>
+            <p>For teams that need higher throughput, collaboration, and deeper wiki capacity.</p>
+            <ul>
+              <li>10,000 memories</li>
+              <li>10 users</li>
+              <li>1,024 MB storage</li>
+              <li>Team collaboration</li>
+              <li>Higher API throughput</li>
+              <li>Expanded wiki capacity</li>
+            </ul>
+          </article>
+          <article class="plan">
+            <h3>Enterprise</h3>
+            <div class="price">Contact us</div>
+            <p>For organizations that need custom contracts, advanced identity, and effectively unbounded limits.</p>
+            <ul>
+              <li>Unlimited memories</li>
+              <li>Unlimited users</li>
+              <li>Unlimited storage</li>
+              <li>Unlimited wiki pages</li>
+              <li>Custom contract</li>
+              <li>SSO and custom branding</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="cta-panel">
+        <div>
+          <h2>Start with the docs, wire in the API, and keep your agents stateful.</h2>
+          <p>Use the quick start for local setup, then move into the API reference when you are ready to automate memory storage and recall.</p>
+        </div>
+        <div class="actions">
+          <a class="cta" href="./getting-started.html">Quick Start</a>
+          <a class="ghost" href="./api.html">API Reference</a>
+        </div>
+      </section>
+
+      <footer>
+        <div>Vega Memory docs scaffold for a static, no-build deployment.</div>
+        <div class="footer-links">
+          <a class="link" href="https://github.com/john-hoe/vega-memory">GitHub</a>
+          <a class="link" href="./getting-started.html">Docs</a>
+          <span class="license">MIT License</span>
+        </div>
+      </footer>
+    </main>
+  </body>
+</html>

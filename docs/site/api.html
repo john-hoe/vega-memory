@@ -1,0 +1,1304 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vega Memory API</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #07111f;
+        --bg-soft: rgba(12, 26, 44, 0.82);
+        --panel: rgba(13, 26, 45, 0.88);
+        --panel-strong: rgba(17, 35, 59, 0.98);
+        --border: rgba(149, 173, 212, 0.18);
+        --text: #f5f7fb;
+        --muted: #9fb3cd;
+        --accent: #78e6c7;
+        --accent-strong: #5cc0ff;
+        --warning: #ffd166;
+        --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+        --radius: 22px;
+        --get: #78e6c7;
+        --post: #5cc0ff;
+        --patch: #ffd166;
+        --delete: #ff8a80;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Inter", "Helvetica Neue", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(92, 192, 255, 0.2), transparent 34%),
+          radial-gradient(circle at top right, rgba(120, 230, 199, 0.15), transparent 28%),
+          linear-gradient(180deg, #08111d 0%, #0b1423 48%, #060b14 100%);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      code,
+      pre {
+        font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+      }
+
+      .shell {
+        width: min(1160px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        backdrop-filter: blur(20px);
+        background: rgba(6, 11, 20, 0.72);
+        border-bottom: 1px solid rgba(149, 173, 212, 0.08);
+        z-index: 10;
+      }
+
+      .topbar .shell {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 18px 0;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .brand-mark {
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+        box-shadow: 0 0 30px rgba(92, 192, 255, 0.75);
+      }
+
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        color: var(--muted);
+      }
+
+      nav a:hover {
+        color: var(--text);
+      }
+
+      main {
+        padding: 48px 0 72px;
+      }
+
+      .hero,
+      .section,
+      .endpoint,
+      .auth-card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+      }
+
+      .hero,
+      .section {
+        padding: 34px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+        gap: 24px;
+        align-items: start;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2.4rem, 6vw, 4rem);
+        line-height: 1.02;
+        letter-spacing: -0.04em;
+      }
+
+      h2 {
+        font-size: 1.8rem;
+        letter-spacing: -0.03em;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        color: var(--accent);
+        background: rgba(120, 230, 199, 0.08);
+        border: 1px solid rgba(120, 230, 199, 0.18);
+        font-size: 0.92rem;
+      }
+
+      .hero p,
+      .section-intro,
+      .auth-card p,
+      footer {
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .hero p {
+        margin-top: 18px;
+      }
+
+      .toc {
+        display: grid;
+        gap: 12px;
+      }
+
+      .toc a {
+        padding: 14px 16px;
+        border-radius: 16px;
+        border: 1px solid rgba(149, 173, 212, 0.12);
+        background: var(--panel-strong);
+      }
+
+      .toc a:hover {
+        border-color: rgba(120, 230, 199, 0.35);
+      }
+
+      .stack {
+        display: grid;
+        gap: 18px;
+        margin-top: 28px;
+      }
+
+      .section-intro {
+        margin-top: 10px;
+      }
+
+      .auth-card,
+      .endpoint {
+        padding: 22px;
+      }
+
+      .auth-grid,
+      .example-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 18px;
+      }
+
+      .endpoint-head {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 72px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .get {
+        color: #042117;
+        background: var(--get);
+      }
+
+      .post {
+        color: #041827;
+        background: var(--post);
+      }
+
+      .patch {
+        color: #322400;
+        background: var(--patch);
+      }
+
+      .delete {
+        color: #300400;
+        background: var(--delete);
+      }
+
+      .path {
+        font-size: 1.02rem;
+        color: var(--text);
+      }
+
+      .endpoint p {
+        color: var(--muted);
+        line-height: 1.65;
+      }
+
+      .subhead {
+        margin-top: 18px;
+        margin-bottom: 8px;
+        font-size: 0.92rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      pre {
+        margin: 0;
+        padding: 16px;
+        border-radius: 18px;
+        background: rgba(6, 11, 20, 0.88);
+        border: 1px solid rgba(149, 173, 212, 0.12);
+        color: #dbe8ff;
+        overflow: auto;
+        line-height: 1.55;
+        font-size: 0.92rem;
+      }
+
+      footer {
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 36px;
+        padding: 24px 0 16px;
+      }
+
+      .footer-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+
+      .footer-links span {
+        color: var(--warning);
+      }
+
+      @media (max-width: 920px) {
+        .hero,
+        .auth-grid,
+        .example-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .hero,
+        .section {
+          padding: 26px;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .topbar .shell,
+        footer {
+          display: block;
+        }
+
+        nav {
+          margin-top: 12px;
+        }
+
+        .hero,
+        .section,
+        .endpoint,
+        .auth-card {
+          padding: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="shell">
+        <a class="brand" href="./index.html">
+          <span class="brand-mark"></span>
+          <span>Vega Memory</span>
+        </a>
+        <nav>
+          <a href="./index.html">Overview</a>
+          <a href="./getting-started.html">Getting Started</a>
+          <a href="https://github.com/john-hoe/vega-memory">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Reference generated from current route patterns</div>
+          <h1>HTTP API</h1>
+          <p>
+            This page documents the route surface currently registered in
+            <code>src/api/routes.ts</code>. Examples are representative request and response
+            payloads for the scaffolded API.
+          </p>
+        </div>
+        <div class="toc">
+          <a href="#auth">Authentication</a>
+          <a href="#memory">Memory CRUD</a>
+          <a href="#search">Search</a>
+          <a href="#sessions">Sessions</a>
+          <a href="#wiki">Wiki</a>
+          <a href="#admin">Admin</a>
+        </div>
+      </section>
+
+      <div class="stack">
+        <section class="section" id="auth">
+          <h2>Authentication</h2>
+          <p class="section-intro">
+            When <code>VEGA_API_KEY</code> is configured, API routes require
+            <code>Authorization: Bearer &lt;token&gt;</code>. Root API keys authorize globally,
+            tenant API keys scope requests to a single tenant, and <code>/api/billing/webhook</code>
+            is intentionally exempt from auth.
+          </p>
+          <div class="auth-grid">
+            <article class="auth-card">
+              <h3>Header</h3>
+              <pre>{
+  "Authorization": "Bearer YOUR_VEGA_API_KEY",
+  "Content-Type": "application/json"
+}</pre>
+            </article>
+            <article class="auth-card">
+              <h3>Error Response</h3>
+              <pre>{
+  "error": "unauthorized"
+}</pre>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="memory">
+          <h2>Memory CRUD</h2>
+          <p class="section-intro">Store, list, update, and delete memory records.</p>
+
+          <article class="endpoint">
+            <div class="endpoint-head">
+              <span class="badge post">POST</span>
+              <code class="path">/api/store</code>
+            </div>
+            <p>Create a new memory entry with content, type, and optional metadata.</p>
+            <div class="example-grid">
+              <div>
+                <div class="subhead">Request JSON</div>
+                <pre>{
+  "content": "Use WAL mode for concurrent SQLite access.",
+  "type": "decision",
+  "project": "vega-memory",
+  "title": "SQLite concurrency default",
+  "tags": ["sqlite", "decision"],
+  "importance": 0.92,
+  "source": "auto"
+}</pre>
+              </div>
+              <div>
+                <div class="subhead">Response JSON</div>
+                <pre>{
+  "id": "mem_123",
+  "type": "decision",
+  "project": "vega-memory",
+  "title": "SQLite concurrency default",
+  "content": "Use WAL mode for concurrent SQLite access.",
+  "importance": 0.92,
+  "source": "auto",
+  "tags": ["sqlite", "decision"],
+  "created_at": "2026-04-08T00:00:00.000Z",
+  "updated_at": "2026-04-08T00:00:00.000Z"
+}</pre>
+              </div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head">
+              <span class="badge get">GET</span>
+              <code class="path">/api/list</code>
+            </div>
+            <p>List stored memories, optionally filtered by project, type, tenant, limit, and sort order.</p>
+            <div class="example-grid">
+              <div>
+                <div class="subhead">Request JSON</div>
+                <pre>{
+  "query": {
+    "project": "vega-memory",
+    "type": "decision",
+    "limit": 20,
+    "sort": "updated_at"
+  }
+}</pre>
+              </div>
+              <div>
+                <div class="subhead">Response JSON</div>
+                <pre>[
+  {
+    "id": "mem_123",
+    "type": "decision",
+    "project": "vega-memory",
+    "title": "SQLite concurrency default",
+    "content": "Use WAL mode for concurrent SQLite access.",
+    "tags": ["sqlite", "decision"]
+  }
+]</pre>
+              </div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head">
+              <span class="badge patch">PATCH</span>
+              <code class="path">/api/memory/:id</code>
+            </div>
+            <p>Update mutable memory fields including content, importance, and tags.</p>
+            <div class="example-grid">
+              <div>
+                <div class="subhead">Request JSON</div>
+                <pre>{
+  "path": { "id": "mem_123" },
+  "body": {
+    "content": "Use WAL mode plus checkpointing before backup.",
+    "importance": 0.95,
+    "tags": ["sqlite", "backup", "decision"]
+  }
+}</pre>
+              </div>
+              <div>
+                <div class="subhead">Response JSON</div>
+                <pre>{
+  "id": "mem_123",
+  "action": "updated"
+}</pre>
+              </div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head">
+              <span class="badge delete">DELETE</span>
+              <code class="path">/api/memory/:id</code>
+            </div>
+            <p>Delete a memory record by identifier.</p>
+            <div class="example-grid">
+              <div>
+                <div class="subhead">Request JSON</div>
+                <pre>{
+  "path": { "id": "mem_123" }
+}</pre>
+              </div>
+              <div>
+                <div class="subhead">Response JSON</div>
+                <pre>{
+  "id": "mem_123",
+  "action": "deleted"
+}</pre>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="section" id="search">
+          <h2>Search</h2>
+          <p class="section-intro">Recall memories by similarity, stream results, and inspect service health.</p>
+
+          <article class="endpoint">
+            <div class="endpoint-head">
+              <span class="badge post">POST</span>
+              <code class="path">/api/recall</code>
+            </div>
+            <p>Run a ranked recall query against the memory corpus.</p>
+            <div class="example-grid">
+              <div>
+                <div class="subhead">Request JSON</div>
+                <pre>{
+  "query": "sqlite backup",
+  "project": "vega-memory",
+  "type": "pitfall",
+  "limit": 5,
+  "min_similarity": 0.3
+}</pre>
+              </div>
+              <div>
+                <div class="subhead">Response JSON</div>
+                <pre>[
+  {
+    "id": "mem_987",
+    "type": "pitfall",
+    "project": "vega-memory",
+    "content": "Checkpoint WAL before copying SQLite files.",
+    "similarity": 0.91,
+    "finalScore": 0.94
+  }
+]</pre>
+              </div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head">
+              <span class="badge get">GET</span>
+              <code class="path">/api/recall/stream</code>
+            </div>
+            <p>Stream recall results over server-sent events using the same query shape as <code>/api/recall</code>.</p>
+            <div class="example-grid">
+              <div>
+                <div class="subhead">Request JSON</div>
+                <pre>{
+  "query": {
+    "query": "tenant isolation",
+    "project": "vega-memory",
+    "limit": 3,
+    "min_similarity": 0.25
+  }
+}</pre>
+              </div>
+              <div>
+                <div class="subhead">Event Data</div>
+                <pre>{
+  "id": "mem_321",
+  "type": "decision",
+  "content": "Block tenant bearer keys from admin routes.",
+  "similarity": 0.88,
+  "finalScore": 0.9
+}</pre>
+              </div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head">
+              <span class="badge get">GET</span>
+              <code class="path">/api/health</code>
+            </div>
+            <p>Return a health summary for the runtime, database, and configured integrations.</p>
+            <div class="example-grid">
+              <div>
+                <div class="subhead">Request JSON</div>
+                <pre>{}</pre>
+              </div>
+              <div>
+                <div class="subhead">Response JSON</div>
+                <pre>{
+  "status": "healthy",
+  "database": true,
+  "ollama": true,
+  "api": true
+}</pre>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="section" id="sessions">
+          <h2>Sessions</h2>
+          <p class="section-intro">Load relevant context at the start of work and summarize outcomes at the end.</p>
+
+          <article class="endpoint">
+            <div class="endpoint-head">
+              <span class="badge post">POST</span>
+              <code class="path">/api/session/start</code>
+            </div>
+            <p>Collect relevant memories, warnings, and wiki references for a working directory.</p>
+            <div class="example-grid">
+              <div>
+                <div class="subhead">Request JSON</div>
+                <pre>{
+  "working_directory": "/Users/johnmacmini/workspace/vega-memory",
+  "task_hint": "T92 docs scaffold"
+}</pre>
+              </div>
+              <div>
+                <div class="subhead">Response JSON</div>
+                <pre>{
+  "project": "vega-memory",
+  "active_tasks": [],
+  "preferences": [],
+  "context": [],
+  "relevant": [],
+  "relevant_wiki_pages": [],
+  "wiki_drafts_pending": 0,
+  "recent_unverified": [],
+  "conflicts": [],
+  "proactive_warnings": [],
+  "token_estimate": 944.75
+}</pre>
+              </div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head">
+              <span class="badge post">POST</span>
+              <code class="path">/api/session/end</code>
+            </div>
+            <p>Record a session summary and optional completed task identifiers.</p>
+            <div class="example-grid">
+              <div>
+                <div class="subhead">Request JSON</div>
+                <pre>{
+  "project": "vega-memory",
+  "summary": "Built docs/site scaffold and verified build + tests.",
+  "completed_tasks": ["T92"]
+}</pre>
+              </div>
+              <div>
+                <div class="subhead">Response JSON</div>
+                <pre>{
+  "project": "vega-memory",
+  "action": "ended"
+}</pre>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="section" id="wiki">
+          <h2>Wiki</h2>
+          <p class="section-intro">Manage spaces, pages, versions, permissions, comments, notifications, and search.</p>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge post">POST</span><code class="path">/api/wiki/spaces</code></div>
+            <p>Create a wiki space for a tenant.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "name": "Engineering",
+  "slug": "engineering",
+  "tenant_id": "tenant_123",
+  "visibility": "private"
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "id": "space_123",
+  "name": "Engineering",
+  "slug": "engineering",
+  "tenant_id": "tenant_123",
+  "visibility": "private"
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/wiki/spaces</code></div>
+            <p>List wiki spaces for the provided tenant.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "query": { "tenant_id": "tenant_123" }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>[
+  {
+    "id": "space_123",
+    "name": "Engineering",
+    "slug": "engineering",
+    "visibility": "private"
+  }
+]</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge patch">PATCH</span><code class="path">/api/wiki/spaces/:id</code></div>
+            <p>Update space metadata including name, slug, and visibility.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": { "id": "space_123" },
+  "body": {
+    "tenant_id": "tenant_123",
+    "name": "Platform Engineering",
+    "visibility": "team"
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "id": "space_123",
+  "name": "Platform Engineering",
+  "slug": "engineering",
+  "visibility": "team"
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/wiki/spaces/:id/pages</code></div>
+            <p>List pages within a specific space, with optional project, type, status, and limit filters.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": { "id": "space_123" },
+  "query": {
+    "tenant_id": "tenant_123",
+    "project": "vega-memory",
+    "status": "published",
+    "limit": 50
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>[
+  {
+    "id": "page_123",
+    "slug": "memory-architecture",
+    "title": "Memory Architecture",
+    "page_type": "guide",
+    "status": "published"
+  }
+]</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/wiki/pages</code></div>
+            <p>List wiki pages across the workspace.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "query": {
+    "project": "vega-memory",
+    "page_type": "guide",
+    "status": "published",
+    "limit": 50
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>[
+  {
+    "id": "page_123",
+    "slug": "memory-architecture",
+    "title": "Memory Architecture",
+    "summary": "How Vega stores and recalls memories."
+  }
+]</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/wiki/pages/:slug/versions</code></div>
+            <p>Retrieve the version history for a wiki page.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": { "slug": "memory-architecture" }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>[
+  {
+    "id": "version_1",
+    "page_id": "page_123",
+    "version": 1,
+    "created_at": "2026-04-08T00:00:00.000Z"
+  }
+]</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge post">POST</span><code class="path">/api/wiki/pages/:id/permissions</code></div>
+            <p>Assign a page permission to either a user or a role.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": { "id": "page_123" },
+  "body": {
+    "user_id": "user_123",
+    "level": "write"
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "page_id": "page_123",
+  "action": "updated",
+  "permissions": [
+    {
+      "user_id": "user_123",
+      "level": "write"
+    }
+  ]
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge post">POST</span><code class="path">/api/wiki/pages/:id/comments</code></div>
+            <p>Create a comment on a wiki page, with optional threaded reply support.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": { "id": "page_123" },
+  "body": {
+    "user_id": "user_123",
+    "content": "This page should reference the tenant dashboard work."
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "id": "comment_123",
+  "page_id": "page_123",
+  "user_id": "user_123",
+  "content": "This page should reference the tenant dashboard work."
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/wiki/pages/:id/comments</code></div>
+            <p>List comments for a page with optional limit and sort arguments.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": { "id": "page_123" },
+  "query": {
+    "limit": 20,
+    "sort": "newest"
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>[
+  {
+    "id": "comment_123",
+    "page_id": "page_123",
+    "content": "This page should reference the tenant dashboard work."
+  }
+]</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge patch">PATCH</span><code class="path">/api/wiki/comments/:id</code></div>
+            <p>Edit an existing comment as the acting user.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": { "id": "comment_123" },
+  "body": {
+    "user_id": "user_123",
+    "content": "Add the tenant dashboard reference in the intro."
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "id": "comment_123",
+  "content": "Add the tenant dashboard reference in the intro."
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge delete">DELETE</span><code class="path">/api/wiki/comments/:id</code></div>
+            <p>Delete a comment as the acting user.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": { "id": "comment_123" },
+  "query": { "user_id": "user_123" }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "id": "comment_123",
+  "action": "deleted"
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/wiki/notifications</code></div>
+            <p>Fetch unread wiki notifications for a specific user.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "query": { "user_id": "user_123" }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>[
+  {
+    "id": "notif_123",
+    "user_id": "user_123",
+    "read": false,
+    "kind": "comment_reply"
+  }
+]</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge post">POST</span><code class="path">/api/wiki/notifications/read</code></div>
+            <p>Mark all wiki notifications as read for a user.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "user_id": "user_123"
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "user_id": "user_123",
+  "action": "marked_all_read"
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/wiki/pages/:slug</code></div>
+            <p>Fetch a wiki page together with its backlinks.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": { "slug": "memory-architecture" }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "page": {
+    "id": "page_123",
+    "slug": "memory-architecture",
+    "title": "Memory Architecture",
+    "content": "..."
+  },
+  "backlinks": []
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge post">POST</span><code class="path">/api/wiki/search</code></div>
+            <p>Search wiki content by query string, project, and result limit.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "query": "tenant dashboard",
+  "project": "vega-memory",
+  "limit": 10
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>[
+  {
+    "id": "page_123",
+    "slug": "tenant-dashboard",
+    "title": "Tenant Dashboard",
+    "score": 0.88
+  }
+]</pre></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="section" id="admin">
+          <h2>Admin</h2>
+          <p class="section-intro">
+            Administrative routes require an admin-capable context. This section also covers billing
+            and webhook operations exposed by the same router.
+          </p>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/analytics</code></div>
+            <p>Retrieve aggregated usage statistics, optionally filtered by <code>since</code>.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "query": { "since": "2026-04-01T00:00:00.000Z" }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "total_memories": 1024,
+  "active_projects": 18,
+  "recent_sessions": 44
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge post">POST</span><code class="path">/api/compact</code></div>
+            <p>Run memory compaction for the full workspace or a single project.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "project": "vega-memory"
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "scanned": 120,
+  "merged": 8,
+  "archived": 2
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/admin/audit</code></div>
+            <p>List audit entries with actor, action, time, tenant, and pagination filters.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "query": {
+    "action": "store_created",
+    "limit": 20,
+    "offset": 0
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "total": 1,
+  "entries": [
+    {
+      "id": "audit_123",
+      "actor": "system",
+      "action": "store_created",
+      "memory_id": "mem_123"
+    }
+  ]
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/admin/audit/stats</code></div>
+            <p>Return grouped audit totals by action and actor.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "query": {
+    "since": "2026-04-01T00:00:00.000Z"
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "total": 42,
+  "by_action": {
+    "store_created": 19,
+    "session_end": 8
+  },
+  "by_actor": {
+    "system": 30,
+    "admin": 12
+  }
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge delete">DELETE</span><code class="path">/api/admin/audit/purge</code></div>
+            <p>Purge audit rows before a cutoff timestamp.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "query": { "before": "2026-01-01T00:00:00.000Z" }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "deleted": 128
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/admin/users</code></div>
+            <p>List users, optionally scoped to a tenant.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "query": { "tenant_id": "tenant_123" }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>[
+  {
+    "id": "user_123",
+    "name": "Admin User",
+    "role": "admin",
+    "tenant_id": "tenant_123"
+  }
+]</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge patch">PATCH</span><code class="path">/api/admin/users/:id/role</code></div>
+            <p>Change a user role inside the allowed tenant scope.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": { "id": "user_123" },
+  "body": {
+    "role": "member"
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "id": "user_123",
+  "name": "Admin User",
+  "role": "member",
+  "tenant_id": "tenant_123"
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/admin/dashboard</code></div>
+            <p>Return an operational dashboard payload with health, usage, counts, and recent events.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "query": { "tenant_id": "tenant_123" }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "health": { "status": "healthy" },
+  "usage": {},
+  "recent_activity": [],
+  "total_users": 5,
+  "total_memories": 620,
+  "active_tenants": 1,
+  "recent_audit_events": []
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge post">POST</span><code class="path">/api/billing/webhook</code></div>
+            <p>Receive Stripe webhook payloads. This route accepts unsigned JSON or raw string payload plus the Stripe signature header.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "headers": {
+    "stripe-signature": "t=123,v1=abc"
+  },
+  "body": {
+    "type": "invoice.paid"
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "received": true
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/billing/plans</code></div>
+            <p>List the plans currently exposed by the Stripe billing service.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>[
+  {
+    "id": "free",
+    "name": "Free",
+    "priceMonthly": 0
+  },
+  {
+    "id": "pro",
+    "name": "Pro",
+    "priceMonthly": 29
+  }
+]</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge post">POST</span><code class="path">/api/billing/subscribe</code></div>
+            <p>Create or reuse a billing customer and subscribe the tenant to a plan.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "tenant_id": "tenant_123",
+  "plan_id": "pro",
+  "email": "team@example.com",
+  "name": "Platform Team"
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "customer": {
+    "id": "cus_123",
+    "tenantId": "tenant_123"
+  },
+  "subscription": {
+    "id": "sub_123",
+    "planId": "pro",
+    "status": "active"
+  }
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge delete">DELETE</span><code class="path">/api/billing/subscribe/:id</code></div>
+            <p>Cancel a subscription after tenant ownership checks.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": { "id": "sub_123" },
+  "query": { "tenant_id": "tenant_123" }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "id": "sub_123",
+  "status": "canceled"
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/billing/status</code></div>
+            <p>Inspect the configured billing state for a tenant.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "query": { "tenant_id": "tenant_123" }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "tenant_id": "tenant_123",
+  "configured": true,
+  "subscription": {
+    "id": "sub_123",
+    "planId": "pro",
+    "status": "active"
+  }
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge post">POST</span><code class="path">/api/webhooks</code></div>
+            <p>Register an outbound webhook target and event list.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "url": "https://example.com/hooks/vega",
+  "events": ["memory.created", "wiki.updated"],
+  "enabled": true,
+  "secret": "hook-secret"
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "url": "https://example.com/hooks/vega",
+  "events": ["memory.created", "wiki.updated"],
+  "enabled": true,
+  "secret": "hook-secret"
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge get">GET</span><code class="path">/api/webhooks</code></div>
+            <p>List configured outbound webhooks.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>[
+  {
+    "url": "https://example.com/hooks/vega",
+    "events": ["memory.created"],
+    "enabled": true
+  }
+]</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge delete">DELETE</span><code class="path">/api/webhooks/:url</code></div>
+            <p>Delete a registered outbound webhook by URL.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "path": {
+    "url": "https%3A%2F%2Fexample.com%2Fhooks%2Fvega"
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "url": "https://example.com/hooks/vega",
+  "action": "deleted"
+}</pre></div>
+            </div>
+          </article>
+
+          <article class="endpoint">
+            <div class="endpoint-head"><span class="badge post">POST</span><code class="path">/api/webhooks/test</code></div>
+            <p>Emit a test event against all configured outbound webhooks.</p>
+            <div class="example-grid">
+              <div><div class="subhead">Request JSON</div><pre>{
+  "event": "webhook.test",
+  "data": {
+    "ping": true
+  }
+}</pre></div>
+              <div><div class="subhead">Response JSON</div><pre>{
+  "event": "webhook.test",
+  "delivered": 1,
+  "failed": 0
+}</pre></div>
+            </div>
+          </article>
+        </section>
+      </div>
+
+      <footer>
+        <div>Vega Memory route reference for <code>docs/site/api.html</code>.</div>
+        <div class="footer-links">
+          <a href="https://github.com/john-hoe/vega-memory">GitHub</a>
+          <a href="./getting-started.html">Docs</a>
+          <span>MIT License</span>
+        </div>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vega Memory Getting Started</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #07111f;
+        --panel: rgba(13, 26, 45, 0.88);
+        --panel-strong: rgba(17, 35, 59, 0.98);
+        --border: rgba(149, 173, 212, 0.18);
+        --text: #f5f7fb;
+        --muted: #9fb3cd;
+        --accent: #78e6c7;
+        --accent-strong: #5cc0ff;
+        --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+        --radius: 22px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Inter", "Helvetica Neue", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(92, 192, 255, 0.2), transparent 34%),
+          radial-gradient(circle at top right, rgba(120, 230, 199, 0.15), transparent 28%),
+          linear-gradient(180deg, #08111d 0%, #0b1423 48%, #060b14 100%);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      code,
+      pre {
+        font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+      }
+
+      .shell {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        backdrop-filter: blur(20px);
+        background: rgba(6, 11, 20, 0.72);
+        border-bottom: 1px solid rgba(149, 173, 212, 0.08);
+        z-index: 10;
+      }
+
+      .topbar .shell {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 18px 0;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .brand-mark {
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+        box-shadow: 0 0 30px rgba(92, 192, 255, 0.75);
+      }
+
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        color: var(--muted);
+      }
+
+      nav a:hover {
+        color: var(--text);
+      }
+
+      main {
+        padding: 48px 0 72px;
+      }
+
+      .hero,
+      .section,
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+      }
+
+      .hero,
+      .section {
+        padding: 34px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+        gap: 24px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2.5rem, 6vw, 4.2rem);
+        line-height: 1.02;
+        letter-spacing: -0.04em;
+      }
+
+      h2 {
+        font-size: 1.8rem;
+        letter-spacing: -0.03em;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        color: var(--accent);
+        background: rgba(120, 230, 199, 0.08);
+        border: 1px solid rgba(120, 230, 199, 0.18);
+        font-size: 0.92rem;
+      }
+
+      .hero p,
+      .section-intro,
+      .card p,
+      footer {
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .hero p {
+        margin-top: 18px;
+      }
+
+      .checklist {
+        display: grid;
+        gap: 12px;
+      }
+
+      .checklist .card {
+        padding: 18px;
+        background: var(--panel-strong);
+      }
+
+      .stack {
+        display: grid;
+        gap: 24px;
+        margin-top: 28px;
+      }
+
+      .section-intro {
+        margin-top: 10px;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 20px;
+      }
+
+      .card {
+        padding: 22px;
+      }
+
+      .card h3 {
+        margin-bottom: 10px;
+        font-size: 1.18rem;
+      }
+
+      pre {
+        margin: 16px 0 0;
+        padding: 16px;
+        border-radius: 18px;
+        background: rgba(6, 11, 20, 0.88);
+        border: 1px solid rgba(149, 173, 212, 0.12);
+        color: #dbe8ff;
+        overflow: auto;
+        line-height: 1.55;
+        font-size: 0.92rem;
+      }
+
+      footer {
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 36px;
+        padding: 24px 0 16px;
+      }
+
+      .footer-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+
+      @media (max-width: 920px) {
+        .hero,
+        .cards {
+          grid-template-columns: 1fr;
+        }
+
+        .hero,
+        .section {
+          padding: 26px;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .topbar .shell,
+        footer {
+          display: block;
+        }
+
+        nav {
+          margin-top: 12px;
+        }
+
+        .hero,
+        .section,
+        .card {
+          padding: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="shell">
+        <a class="brand" href="./index.html">
+          <span class="brand-mark"></span>
+          <span>Vega Memory</span>
+        </a>
+        <nav>
+          <a href="./index.html">Overview</a>
+          <a href="./api.html">API Docs</a>
+          <a href="https://github.com/john-hoe/vega-memory">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Fast path to a working local-first memory server</div>
+          <h1>Getting Started</h1>
+          <p>
+            Install Vega Memory, point it at SQLite and Ollama, store a first memory, and wire the
+            runtime into Cursor or Claude Code. This page uses the current repo scripts, config
+            defaults, and Docker definitions.
+          </p>
+        </div>
+        <div class="checklist">
+          <div class="card">
+            <h3>Prerequisites</h3>
+            <p>Node.js 18+, a writable local filesystem, and optional Ollama at <code>http://localhost:11434</code>.</p>
+          </div>
+          <div class="card">
+            <h3>Build Target</h3>
+            <p><code>npm run build</code> compiles TypeScript and copies the web assets.</p>
+          </div>
+          <div class="card">
+            <h3>API Mode</h3>
+            <p>Set <code>VEGA_API_KEY</code> to enable authenticated HTTP access and the scheduler API.</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="stack">
+        <section class="section">
+          <h2>1. Installation</h2>
+          <p class="section-intro">Install dependencies, build the project, and expose the CLI locally.</p>
+          <pre>git clone https://github.com/john-hoe/vega-memory.git
+cd vega-memory
+npm install
+npm run build
+npm link</pre>
+        </section>
+
+        <section class="section">
+          <h2>2. Configuration</h2>
+          <p class="section-intro">
+            The repo ships <code>.env.example</code> for the core local settings. Add API-specific
+            values when you want HTTP access or the scheduler.
+          </p>
+          <div class="cards">
+            <article class="card">
+              <h3>Minimal Local Config</h3>
+              <pre>cp .env.example .env</pre>
+              <pre>VEGA_DB_PATH=./data/memory.db
+VEGA_DB_ENCRYPTION=false
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=bge-m3</pre>
+            </article>
+            <article class="card">
+              <h3>Enable HTTP API</h3>
+              <pre>VEGA_API_KEY=$(openssl rand -hex 16)
+VEGA_API_PORT=3271
+export VEGA_API_KEY VEGA_API_PORT
+node dist/scheduler/index.js</pre>
+            </article>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>3. Store Your First Memory</h2>
+          <p class="section-intro">Verify the installation, then store and recall a concrete fact.</p>
+          <div class="cards">
+            <article class="card">
+              <h3>CLI</h3>
+              <pre>vega health
+
+vega store "Always checkpoint WAL before backup" \
+  --type pitfall \
+  --project my-project
+
+vega recall "sqlite backup" \
+  --project my-project \
+  --json</pre>
+            </article>
+            <article class="card">
+              <h3>HTTP API</h3>
+              <pre>curl -X POST http://127.0.0.1:3271/api/store \
+  -H "Authorization: Bearer $VEGA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Always checkpoint WAL before backup",
+    "type": "pitfall",
+    "project": "my-project"
+  }'</pre>
+            </article>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>4. MCP Setup</h2>
+          <p class="section-intro">Use MCP for automatic tool calls in Cursor, or CLI rules for Claude Code.</p>
+          <div class="cards">
+            <article class="card">
+              <h3>Cursor</h3>
+              <p>Add Vega as an MCP server in <code>~/.cursor/mcp.json</code>.</p>
+              <pre>{
+  "mcpServers": {
+    "vega": {
+      "command": "node",
+      "args": ["/absolute/path/to/vega-memory/dist/index.js"],
+      "env": {
+        "VEGA_DB_PATH": "/absolute/path/to/vega-memory/data/memory.db",
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "bge-m3"
+      }
+    }
+  }
+}</pre>
+              <p>Then add a workspace rule that auto-calls <code>session_start</code> and <code>memory_store</code> as work happens.</p>
+            </article>
+            <article class="card">
+              <h3>Claude Code</h3>
+              <p>Add the memory workflow to your project <code>CLAUDE.md</code>.</p>
+              <pre># Vega Memory Rules
+
+## Session start
+Run: `vega session-start --dir $(pwd) --json`
+
+## Auto-store
+- Task completed: `vega store "what was done" --type task_state --project PROJECT_NAME`
+- Bug fixed: `vega store "error + solution" --type pitfall --project PROJECT_NAME`
+- Decision made: `vega store "decision + reasoning" --type decision --project PROJECT_NAME`
+
+## Before making changes
+Run: `vega recall "relevant query" --project PROJECT_NAME --json`
+
+## Session end
+Run: `vega session-end --project PROJECT_NAME --summary "what was accomplished"`</pre>
+            </article>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>5. Docker Deployment</h2>
+          <p class="section-intro">
+            The repository includes a multi-stage <code>Dockerfile</code> and a
+            <code>docker-compose.yml</code> that starts Vega plus Ollama.
+          </p>
+          <div class="cards">
+            <article class="card">
+              <h3>Compose</h3>
+              <pre>export VEGA_API_KEY=dev-api-key
+docker compose up --build -d
+
+curl -H "Authorization: Bearer $VEGA_API_KEY" \
+  http://127.0.0.1:3000/api/health</pre>
+              <p>The compose file binds Vega on port <code>3000</code> and mounts <code>./data</code> into the container.</p>
+            </article>
+            <article class="card">
+              <h3>Runtime Notes</h3>
+              <pre>services:
+  vega:
+    command: ["node", "dist/scheduler/index.js"]
+    ports:
+      - "3000:3000"
+  ollama:
+    ports:
+      - "11434:11434"</pre>
+              <p>For production, replace the default API key, persist the volume, and front the service with your preferred network policy.</p>
+            </article>
+          </div>
+        </section>
+      </div>
+
+      <footer>
+        <div>Static getting-started guide for <code>docs/site/</code>.</div>
+        <div class="footer-links">
+          <a href="https://github.com/john-hoe/vega-memory">GitHub</a>
+          <a href="./api.html">Docs</a>
+          <span>MIT License</span>
+        </div>
+      </footer>
+    </main>
+  </body>
+</html>
