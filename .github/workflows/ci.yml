@@ -28,7 +28,23 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: rm -rf dist && npm run build
+        run: npm run build
 
       - name: Run tests
-        run: node --test dist/tests/*.test.js
+        shell: bash
+        run: |
+          mkdir -p test-results
+          set -o pipefail
+          npm test 2>&1 | tee test-results/node-test-output.txt
+
+      - name: Upload test results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-node-${{ matrix.node-version }}
+          path: test-results/
+          if-no-files-found: warn
+
+      - name: Run npm audit
+        continue-on-error: true
+        run: npm audit --audit-level=moderate

@@ -1,0 +1,82 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: "123456789012"
+  ECR_REPOSITORY: vega-memory
+
+jobs:
+  build-and-push:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.image-meta.outputs.image_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          # TODO: Replace with real AWS credentials
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          # TODO: Replace with real AWS credentials
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: image-meta
+        run: echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t "${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${{ steps.image-meta.outputs.image_tag }}" \
+            .
+
+      - name: Push Docker image
+        run: docker push "${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${{ steps.image-meta.outputs.image_tag }}"
+
+  deploy-k8s:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Configure kubeconfig
+        shell: bash
+        env:
+          # TODO: Replace with real AWS credentials
+          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+        run: |
+          mkdir -p "${HOME}/.kube"
+          echo "${KUBE_CONFIG_DATA}" | base64 --decode > "${HOME}/.kube/config"
+
+      - name: Deploy with Helm
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          helm upgrade --install vega-memory deploy/helm/vega-memory \
+            --set image.tag="${IMAGE_TAG}"
