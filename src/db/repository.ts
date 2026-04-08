@@ -1,7 +1,3 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-
-import BetterSqlite3 from "better-sqlite3-multiple-ciphers";
 import { v4 as uuidv4 } from "uuid";
 
 import type {
@@ -22,7 +18,8 @@ import type { User, UserRole } from "../core/user.js";
 import type { WikiComment } from "../wiki/comments.js";
 import type { WikiNotification } from "../wiki/notifications.js";
 import type { WikiSpace, WikiSpaceVisibility } from "../wiki/types.js";
-import { initializeDatabase } from "./schema.js";
+import type { DatabaseAdapter } from "./adapter.js";
+import { SQLiteAdapter } from "./sqlite-adapter.js";
 
 interface MemoryRow {
   id: string;
@@ -74,6 +71,10 @@ interface MetadataRow {
 
 interface CountRow {
   total: number;
+}
+
+interface RowIdRow {
+  rowid: number;
 }
 
 interface EmbeddingIndexSnapshotRow {
@@ -371,18 +372,15 @@ function normalizeNonNegativeInteger(value: number): number {
 }
 
 export class Repository {
-  readonly db: BetterSqlite3.Database;
+  readonly db: DatabaseAdapter & { loadExtension(path: string): void; name: string };
 
-  constructor(dbPath: string, encryptionKey?: string) {
-    if (dbPath !== ":memory:") {
-      mkdirSync(dirname(dbPath), { recursive: true });
-    }
-
-    this.db = new BetterSqlite3(dbPath);
-    if (encryptionKey) {
-      this.db.pragma(`key = "x'${encryptionKey}'"`);
-    }
-    initializeDatabase(this.db);
+  constructor(dbPath: string, encryptionKey?: string);
+  constructor(adapter: DatabaseAdapter);
+  constructor(dbPathOrAdapter: DatabaseAdapter | string, encryptionKey?: string) {
+    this.db =
+      typeof dbPathOrAdapter === "string"
+        ? new SQLiteAdapter(dbPathOrAdapter, encryptionKey)
+        : (dbPathOrAdapter as DatabaseAdapter & { loadExtension(path: string): void; name: string });
   }
 
   createMemory(memory: Omit<Memory, "access_count">, auditContext?: AuditContext): void {
@@ -417,9 +415,10 @@ export class Repository {
     const insertFts = this.db.prepare<[number, string, string, string]>(
       "INSERT INTO memories_fts(rowid, title, content, tags) VALUES (?, ?, ?, ?)"
     );
+    const getRowId = this.db.prepare<[string], RowIdRow>("SELECT rowid FROM memories WHERE id = ?");
 
-    const transaction = this.db.transaction(() => {
-      const result = insertMemory.run(
+    this.db.transaction(() => {
+      insertMemory.run(
         memory.id,
         memory.tenant_id ?? null,
         memory.type,
@@ -439,9 +438,14 @@ export class Repository {
         memory.scope,
         serializeJsonArray(memory.accessed_projects)
       );
+      const row = getRowId.get(memory.id);
+
+      if (!row) {
+        throw new Error(`Failed to resolve rowid for memory ${memory.id}`);
+      }
 
       insertFts.run(
-        Number(result.lastInsertRowid),
+        row.rowid,
         memory.title,
         memory.content,
         serializeJsonArray(memory.tags)
@@ -457,8 +461,6 @@ export class Repository {
         tenant_id: memory.tenant_id ?? resolvedAuditContext.tenant_id ?? null
       });
     });
-
-    transaction();
   }
 
   getMemory(id: string): Memory | null {
@@ -552,7 +554,7 @@ export class Repository {
       "INSERT INTO memories_fts(rowid, title, content, tags) VALUES (?, ?, ?, ?)"
     );
 
-    const transaction = this.db.transaction(() => {
+    this.db.transaction(() => {
       if (shouldCreateVersion) {
         this.createVersion(existing.id, existing.content, existing.embedding, existing.importance);
       }
@@ -601,8 +603,6 @@ export class Repository {
         tenant_id: nextMemory.tenant_id ?? resolvedAuditContext.tenant_id ?? null
       });
     });
-
-    transaction();
   }
 
   deleteMemory(id: string, auditContext?: AuditContext): void {
@@ -621,7 +621,7 @@ export class Repository {
       "INSERT INTO memories_fts(memories_fts, rowid, title, content, tags) VALUES ('delete', ?, ?, ?, ?)"
     );
 
-    const transaction = this.db.transaction(() => {
+    this.db.transaction(() => {
       deleteFts.run(
         rowid.rowid,
         existing.title,
@@ -640,8 +640,6 @@ export class Repository {
         tenant_id: existing.tenant_id ?? resolvedAuditContext.tenant_id ?? null
       });
     });
-
-    transaction();
   }
 
   listMemories(filters: MemoryListFilters): Memory[] {
@@ -936,7 +934,7 @@ export class Repository {
       created_at: existing.created_at
     };
 
-    const result = this.db
+    this.db
       .prepare<[string, string, UserRole, string, string | null, string | null, string]>(
         `UPDATE users
          SET email = ?, name = ?, role = ?, tenant_id = ?, sso_provider = ?, sso_subject = ?
@@ -952,7 +950,7 @@ export class Repository {
         id
       );
 
-    if (result.changes === 0) {
+    if (this.getUser(id) === null) {
       throw new Error(`User not found: ${id}`);
     }
   }
@@ -1042,7 +1040,7 @@ export class Repository {
       created_at: existing.created_at
     };
 
-    const result = this.db
+    this.db
       .prepare<[string, string, WikiSpaceVisibility, string]>(
         `UPDATE wiki_spaces
          SET name = ?, slug = ?, visibility = ?
@@ -1050,7 +1048,7 @@ export class Repository {
       )
       .run(nextSpace.name, nextSpace.slug, nextSpace.visibility, id);
 
-    if (result.changes === 0) {
+    if (this.getWikiSpace(id) === null) {
       throw new Error(`Wiki space not found: ${id}`);
     }
   }
@@ -1207,7 +1205,7 @@ export class Repository {
     id: string,
     updates: Pick<WikiComment, "content" | "mentions"> & { updated_at: string }
   ): void {
-    const result = this.db
+    this.db
       .prepare<[string, string, string, string]>(
         `UPDATE wiki_comments
          SET content = ?, mentions = ?, updated_at = ?
@@ -1215,7 +1213,7 @@ export class Repository {
       )
       .run(updates.content, serializeJsonArray(updates.mentions), updates.updated_at, id);
 
-    if (result.changes === 0) {
+    if (this.getWikiComment(id) === null) {
       throw new Error(`Wiki comment not found: ${id}`);
     }
   }
@@ -1609,8 +1607,6 @@ export class Repository {
   }
 
   close(): void {
-    if (this.db.open) {
-      this.db.close();
-    }
+    this.db.close();
   }
 }
