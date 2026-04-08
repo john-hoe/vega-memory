@@ -216,11 +216,14 @@ export class TenantSchemaManager {
         [
           "  id BIGSERIAL PRIMARY KEY,",
           "  tenant_id TEXT,",
-          "  month TEXT NOT NULL,",
+          "  month TEXT,",
           "  memory_count INTEGER DEFAULT 0,",
           "  api_calls INTEGER DEFAULT 0,",
           "  storage_bytes INTEGER DEFAULT 0,",
-          "  updated_at TEXT NOT NULL"
+          "  updated_at TEXT,",
+          "  metric TEXT,",
+          "  amount DOUBLE PRECISION,",
+          "  recorded_at TEXT"
         ].join("\n")
       ),
       createTable(
@@ -441,6 +444,7 @@ export class TenantSchemaManager {
       `CREATE INDEX IF NOT EXISTS idx_memories_tenant_status ON ${schemaName}.memories(tenant_id, status);`,
       `CREATE INDEX IF NOT EXISTS idx_performance_log_tenant_timestamp ON ${schemaName}.performance_log(tenant_id, timestamp);`,
       `CREATE INDEX IF NOT EXISTS idx_usage_log_tenant_month ON ${schemaName}.usage_log(tenant_id, month);`,
+      `CREATE INDEX IF NOT EXISTS idx_usage_log_tenant_metric_recorded_at ON ${schemaName}.usage_log(tenant_id, metric, recorded_at);`,
       `CREATE INDEX IF NOT EXISTS idx_wiki_pages_space ON ${schemaName}.wiki_pages(space_id);`,
       `CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON ${schemaName}.audit_log(timestamp);`,
       `CREATE INDEX IF NOT EXISTS idx_audit_log_action ON ${schemaName}.audit_log(action);`,

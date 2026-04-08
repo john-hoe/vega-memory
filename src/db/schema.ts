@@ -136,11 +136,14 @@ export function initializeDatabase(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS usage_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       tenant_id TEXT,
-      month TEXT NOT NULL,
+      month TEXT,
       memory_count INTEGER DEFAULT 0,
       api_calls INTEGER DEFAULT 0,
       storage_bytes INTEGER DEFAULT 0,
-      updated_at TEXT NOT NULL
+      updated_at TEXT,
+      metric TEXT,
+      amount REAL,
+      recorded_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS entities (
@@ -381,6 +384,9 @@ export function initializeDatabase(db: Database.Database): void {
   ensureColumn(db, "performance_log", "tenant_id", "TEXT");
   ensureColumn(db, "performance_log", "result_types", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, "performance_log", "bm25_result_count", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "usage_log", "metric", "TEXT");
+  ensureColumn(db, "usage_log", "amount", "REAL");
+  ensureColumn(db, "usage_log", "recorded_at", "TEXT");
   ensureColumn(db, "wiki_pages", "space_id", "TEXT");
 
   db.exec(`
@@ -392,6 +398,9 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_usage_log_tenant_month
       ON usage_log(tenant_id, month);
+
+    CREATE INDEX IF NOT EXISTS idx_usage_log_tenant_metric_recorded_at
+      ON usage_log(tenant_id, metric, recorded_at);
 
     CREATE INDEX IF NOT EXISTS idx_wiki_pages_space
       ON wiki_pages(space_id);

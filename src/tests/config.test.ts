@@ -19,6 +19,10 @@ test("loadConfig returns the documented defaults", () => {
   const previous = {
     VEGA_DB_PATH: process.env.VEGA_DB_PATH,
     VEGA_DATABASE_TYPE: process.env.VEGA_DATABASE_TYPE,
+    VEGA_METRICS_ENABLED: process.env.VEGA_METRICS_ENABLED,
+    VEGA_SENTRY_DSN: process.env.VEGA_SENTRY_DSN,
+    VEGA_LOG_LEVEL: process.env.VEGA_LOG_LEVEL,
+    VEGA_LOG_FORMAT: process.env.VEGA_LOG_FORMAT,
     VEGA_EMBEDDING_PROVIDER: process.env.VEGA_EMBEDDING_PROVIDER,
     OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
     OLLAMA_MODEL: process.env.OLLAMA_MODEL,
@@ -41,6 +45,9 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_SLACK_BOT_TOKEN: process.env.VEGA_SLACK_BOT_TOKEN,
     VEGA_SLACK_CHANNEL: process.env.VEGA_SLACK_CHANNEL,
     VEGA_SLACK_ENABLED: process.env.VEGA_SLACK_ENABLED,
+    VEGA_OPENCLAW_URL: process.env.VEGA_OPENCLAW_URL,
+    VEGA_OPENCLAW_KEY: process.env.VEGA_OPENCLAW_KEY,
+    VEGA_OPENCLAW_ENABLED: process.env.VEGA_OPENCLAW_ENABLED,
     VEGA_STRIPE_SECRET_KEY: process.env.VEGA_STRIPE_SECRET_KEY,
     VEGA_STRIPE_WEBHOOK_SECRET: process.env.VEGA_STRIPE_WEBHOOK_SECRET,
     VEGA_STRIPE_PUBLISHABLE_KEY: process.env.VEGA_STRIPE_PUBLISHABLE_KEY,
@@ -55,6 +62,9 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_REDIS_PASSWORD: process.env.VEGA_REDIS_PASSWORD,
     VEGA_REDIS_DB: process.env.VEGA_REDIS_DB,
     VEGA_REDIS_ENABLED: process.env.VEGA_REDIS_ENABLED,
+    VEGA_QUEUE_ENABLED: process.env.VEGA_QUEUE_ENABLED,
+    VEGA_QUEUE_REDIS_URL: process.env.VEGA_QUEUE_REDIS_URL,
+    VEGA_QUEUE_CONCURRENCY: process.env.VEGA_QUEUE_CONCURRENCY,
     VEGA_PG_HOST: process.env.VEGA_PG_HOST,
     VEGA_PG_PORT: process.env.VEGA_PG_PORT,
     VEGA_PG_DATABASE: process.env.VEGA_PG_DATABASE,
@@ -63,13 +73,23 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_PG_SSL: process.env.VEGA_PG_SSL,
     VEGA_PG_SCHEMA: process.env.VEGA_PG_SCHEMA,
     VEGA_DB_ENCRYPTION: process.env.VEGA_DB_ENCRYPTION,
+    VEGA_BYOK_ENABLED: process.env.VEGA_BYOK_ENABLED,
+    VEGA_CSRF_ENABLED: process.env.VEGA_CSRF_ENABLED,
+    VEGA_CORS_ORIGINS: process.env.VEGA_CORS_ORIGINS,
     VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
     VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR,
+    VEGA_CLOUD_BACKUP_TYPE: process.env.VEGA_CLOUD_BACKUP_TYPE,
+    VEGA_S3_BUCKET: process.env.VEGA_S3_BUCKET,
+    VEGA_S3_REGION: process.env.VEGA_S3_REGION,
     VEGA_WEBHOOKS: process.env.VEGA_WEBHOOKS
   };
 
   delete process.env.VEGA_DB_PATH;
   delete process.env.VEGA_DATABASE_TYPE;
+  delete process.env.VEGA_METRICS_ENABLED;
+  delete process.env.VEGA_SENTRY_DSN;
+  delete process.env.VEGA_LOG_LEVEL;
+  delete process.env.VEGA_LOG_FORMAT;
   delete process.env.VEGA_EMBEDDING_PROVIDER;
   delete process.env.OLLAMA_BASE_URL;
   delete process.env.OLLAMA_MODEL;
@@ -92,6 +112,9 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_SLACK_BOT_TOKEN;
   delete process.env.VEGA_SLACK_CHANNEL;
   delete process.env.VEGA_SLACK_ENABLED;
+  delete process.env.VEGA_OPENCLAW_URL;
+  delete process.env.VEGA_OPENCLAW_KEY;
+  delete process.env.VEGA_OPENCLAW_ENABLED;
   delete process.env.VEGA_STRIPE_SECRET_KEY;
   delete process.env.VEGA_STRIPE_WEBHOOK_SECRET;
   delete process.env.VEGA_STRIPE_PUBLISHABLE_KEY;
@@ -106,6 +129,9 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_REDIS_PASSWORD;
   delete process.env.VEGA_REDIS_DB;
   delete process.env.VEGA_REDIS_ENABLED;
+  delete process.env.VEGA_QUEUE_ENABLED;
+  delete process.env.VEGA_QUEUE_REDIS_URL;
+  delete process.env.VEGA_QUEUE_CONCURRENCY;
   delete process.env.VEGA_PG_HOST;
   delete process.env.VEGA_PG_PORT;
   delete process.env.VEGA_PG_DATABASE;
@@ -114,13 +140,23 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_PG_SSL;
   delete process.env.VEGA_PG_SCHEMA;
   delete process.env.VEGA_DB_ENCRYPTION;
+  delete process.env.VEGA_BYOK_ENABLED;
+  delete process.env.VEGA_CSRF_ENABLED;
+  delete process.env.VEGA_CORS_ORIGINS;
   delete process.env.VEGA_ENCRYPTION_KEY;
   delete process.env.VEGA_CLOUD_BACKUP_DIR;
+  delete process.env.VEGA_CLOUD_BACKUP_TYPE;
+  delete process.env.VEGA_S3_BUCKET;
+  delete process.env.VEGA_S3_REGION;
   delete process.env.VEGA_WEBHOOKS;
 
   assertConfigSubset(loadConfig() as unknown as Record<string, unknown>, {
     dbPath: "./data/memory.db",
     databaseType: "sqlite",
+    metricsEnabled: false,
+    sentryDsn: undefined,
+    logLevel: "info",
+    logFormat: "json",
     embeddingProvider: "ollama",
     ollamaBaseUrl: "http://localhost:11434",
     ollamaModel: "bge-m3",
@@ -142,6 +178,9 @@ test("loadConfig returns the documented defaults", () => {
     slackBotToken: undefined,
     slackChannel: undefined,
     slackEnabled: false,
+    openclawUrl: undefined,
+    openclawKey: undefined,
+    openclawEnabled: false,
     stripeSecretKey: undefined,
     stripeWebhookSecret: undefined,
     stripePublishableKey: undefined,
@@ -156,6 +195,9 @@ test("loadConfig returns the documented defaults", () => {
     redisPassword: undefined,
     redisDb: undefined,
     redisEnabled: false,
+    queueEnabled: false,
+    queueRedisUrl: undefined,
+    queueConcurrency: 1,
     pgHost: undefined,
     pgPort: undefined,
     pgDatabase: undefined,
@@ -165,6 +207,9 @@ test("loadConfig returns the documented defaults", () => {
     pgSchema: undefined,
     observerEnabled: false,
     dbEncryption: false,
+    byokEnabled: false,
+    csrfEnabled: false,
+    corsOrigins: undefined,
     cloudBackup: undefined,
     customRedactionPatterns: []
   });
@@ -176,6 +221,10 @@ test("loadConfig reads overrides from process.env", () => {
   const previous = {
     VEGA_DB_PATH: process.env.VEGA_DB_PATH,
     VEGA_DATABASE_TYPE: process.env.VEGA_DATABASE_TYPE,
+    VEGA_METRICS_ENABLED: process.env.VEGA_METRICS_ENABLED,
+    VEGA_SENTRY_DSN: process.env.VEGA_SENTRY_DSN,
+    VEGA_LOG_LEVEL: process.env.VEGA_LOG_LEVEL,
+    VEGA_LOG_FORMAT: process.env.VEGA_LOG_FORMAT,
     VEGA_EMBEDDING_PROVIDER: process.env.VEGA_EMBEDDING_PROVIDER,
     OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
     OLLAMA_MODEL: process.env.OLLAMA_MODEL,
@@ -198,6 +247,9 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_SLACK_BOT_TOKEN: process.env.VEGA_SLACK_BOT_TOKEN,
     VEGA_SLACK_CHANNEL: process.env.VEGA_SLACK_CHANNEL,
     VEGA_SLACK_ENABLED: process.env.VEGA_SLACK_ENABLED,
+    VEGA_OPENCLAW_URL: process.env.VEGA_OPENCLAW_URL,
+    VEGA_OPENCLAW_KEY: process.env.VEGA_OPENCLAW_KEY,
+    VEGA_OPENCLAW_ENABLED: process.env.VEGA_OPENCLAW_ENABLED,
     VEGA_STRIPE_SECRET_KEY: process.env.VEGA_STRIPE_SECRET_KEY,
     VEGA_STRIPE_WEBHOOK_SECRET: process.env.VEGA_STRIPE_WEBHOOK_SECRET,
     VEGA_STRIPE_PUBLISHABLE_KEY: process.env.VEGA_STRIPE_PUBLISHABLE_KEY,
@@ -212,6 +264,9 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_REDIS_PASSWORD: process.env.VEGA_REDIS_PASSWORD,
     VEGA_REDIS_DB: process.env.VEGA_REDIS_DB,
     VEGA_REDIS_ENABLED: process.env.VEGA_REDIS_ENABLED,
+    VEGA_QUEUE_ENABLED: process.env.VEGA_QUEUE_ENABLED,
+    VEGA_QUEUE_REDIS_URL: process.env.VEGA_QUEUE_REDIS_URL,
+    VEGA_QUEUE_CONCURRENCY: process.env.VEGA_QUEUE_CONCURRENCY,
     VEGA_PG_HOST: process.env.VEGA_PG_HOST,
     VEGA_PG_PORT: process.env.VEGA_PG_PORT,
     VEGA_PG_DATABASE: process.env.VEGA_PG_DATABASE,
@@ -220,13 +275,23 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_PG_SSL: process.env.VEGA_PG_SSL,
     VEGA_PG_SCHEMA: process.env.VEGA_PG_SCHEMA,
     VEGA_DB_ENCRYPTION: process.env.VEGA_DB_ENCRYPTION,
+    VEGA_BYOK_ENABLED: process.env.VEGA_BYOK_ENABLED,
+    VEGA_CSRF_ENABLED: process.env.VEGA_CSRF_ENABLED,
+    VEGA_CORS_ORIGINS: process.env.VEGA_CORS_ORIGINS,
     VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
     VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR,
+    VEGA_CLOUD_BACKUP_TYPE: process.env.VEGA_CLOUD_BACKUP_TYPE,
+    VEGA_S3_BUCKET: process.env.VEGA_S3_BUCKET,
+    VEGA_S3_REGION: process.env.VEGA_S3_REGION,
     VEGA_WEBHOOKS: process.env.VEGA_WEBHOOKS
   };
 
   process.env.VEGA_DB_PATH = "/tmp/vega.db";
   process.env.VEGA_DATABASE_TYPE = "postgres";
+  process.env.VEGA_METRICS_ENABLED = "true";
+  process.env.VEGA_SENTRY_DSN = "https://example@sentry.test/1";
+  process.env.VEGA_LOG_LEVEL = "debug";
+  process.env.VEGA_LOG_FORMAT = "text";
   process.env.VEGA_EMBEDDING_PROVIDER = "openai";
   process.env.OLLAMA_BASE_URL = "http://localhost:9999";
   process.env.OLLAMA_MODEL = "nomic-embed-text";
@@ -249,6 +314,9 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_SLACK_BOT_TOKEN = "xoxb-test-token";
   process.env.VEGA_SLACK_CHANNEL = "#vega-alerts";
   process.env.VEGA_SLACK_ENABLED = "true";
+  process.env.VEGA_OPENCLAW_URL = "https://openclaw.example/api";
+  process.env.VEGA_OPENCLAW_KEY = "openclaw-secret";
+  process.env.VEGA_OPENCLAW_ENABLED = "true";
   process.env.VEGA_STRIPE_SECRET_KEY = "sk_test_123";
   process.env.VEGA_STRIPE_WEBHOOK_SECRET = "whsec_123";
   process.env.VEGA_STRIPE_PUBLISHABLE_KEY = "pk_test_123";
@@ -263,6 +331,9 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_REDIS_PASSWORD = "redis-secret";
   process.env.VEGA_REDIS_DB = "3";
   process.env.VEGA_REDIS_ENABLED = "true";
+  process.env.VEGA_QUEUE_ENABLED = "true";
+  process.env.VEGA_QUEUE_REDIS_URL = "redis://127.0.0.1:6379/9";
+  process.env.VEGA_QUEUE_CONCURRENCY = "6";
   process.env.VEGA_PG_HOST = "db.internal";
   process.env.VEGA_PG_PORT = "5433";
   process.env.VEGA_PG_DATABASE = "vega_prod";
@@ -271,9 +342,15 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_PG_SSL = "true";
   process.env.VEGA_PG_SCHEMA = "memory";
   process.env.VEGA_DB_ENCRYPTION = "true";
+  process.env.VEGA_BYOK_ENABLED = "true";
+  process.env.VEGA_CSRF_ENABLED = "true";
+  process.env.VEGA_CORS_ORIGINS = "https://app.example.com, https://admin.example.com";
   process.env.VEGA_ENCRYPTION_KEY =
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
   process.env.VEGA_CLOUD_BACKUP_DIR = "/tmp/vega-cloud";
+  delete process.env.VEGA_CLOUD_BACKUP_TYPE;
+  delete process.env.VEGA_S3_BUCKET;
+  delete process.env.VEGA_S3_REGION;
   process.env.VEGA_WEBHOOKS = JSON.stringify([
     {
       url: "https://example.com/hooks/memory",
@@ -286,6 +363,10 @@ test("loadConfig reads overrides from process.env", () => {
   assertConfigSubset(loadConfig() as unknown as Record<string, unknown>, {
     dbPath: "/tmp/vega.db",
     databaseType: "postgres",
+    metricsEnabled: true,
+    sentryDsn: "https://example@sentry.test/1",
+    logLevel: "debug",
+    logFormat: "text",
     embeddingProvider: "openai",
     ollamaBaseUrl: "http://localhost:9999",
     ollamaModel: "nomic-embed-text",
@@ -307,6 +388,9 @@ test("loadConfig reads overrides from process.env", () => {
     slackBotToken: "xoxb-test-token",
     slackChannel: "#vega-alerts",
     slackEnabled: true,
+    openclawUrl: "https://openclaw.example/api",
+    openclawKey: "openclaw-secret",
+    openclawEnabled: true,
     stripeSecretKey: "sk_test_123",
     stripeWebhookSecret: "whsec_123",
     stripePublishableKey: "pk_test_123",
@@ -321,6 +405,9 @@ test("loadConfig reads overrides from process.env", () => {
     redisPassword: "redis-secret",
     redisDb: 3,
     redisEnabled: true,
+    queueEnabled: true,
+    queueRedisUrl: "redis://127.0.0.1:6379/9",
+    queueConcurrency: 6,
     pgHost: "db.internal",
     pgPort: 5433,
     pgDatabase: "vega_prod",
@@ -330,6 +417,9 @@ test("loadConfig reads overrides from process.env", () => {
     pgSchema: "memory",
     observerEnabled: true,
     dbEncryption: true,
+    byokEnabled: true,
+    csrfEnabled: true,
+    corsOrigins: ["https://app.example.com", "https://admin.example.com"],
     encryptionKey:
       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     cloudBackup: {
@@ -396,7 +486,10 @@ test("loadConfig clamps invalid numeric values", () => {
     VEGA_SHARDING_ENABLED: process.env.VEGA_SHARDING_ENABLED,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
     VEGA_OBSERVER_ENABLED: process.env.VEGA_OBSERVER_ENABLED,
-    VEGA_API_PORT: process.env.VEGA_API_PORT
+    VEGA_API_PORT: process.env.VEGA_API_PORT,
+    VEGA_BYOK_ENABLED: process.env.VEGA_BYOK_ENABLED,
+    VEGA_CSRF_ENABLED: process.env.VEGA_CSRF_ENABLED,
+    VEGA_CORS_ORIGINS: process.env.VEGA_CORS_ORIGINS
   };
 
   process.env.VEGA_TOKEN_BUDGET = "100";
@@ -405,6 +498,9 @@ test("loadConfig clamps invalid numeric values", () => {
   process.env.VEGA_BACKUP_RETENTION_DAYS = "999";
   process.env.VEGA_OBSERVER_ENABLED = "not-a-bool";
   process.env.VEGA_API_PORT = "not-a-number";
+  process.env.VEGA_BYOK_ENABLED = "not-a-bool";
+  process.env.VEGA_CSRF_ENABLED = "not-a-bool";
+  process.env.VEGA_CORS_ORIGINS = " , ";
 
   const config = loadConfig();
 
@@ -413,8 +509,38 @@ test("loadConfig clamps invalid numeric values", () => {
   assert.equal(config.shardingEnabled, false);
   assert.equal(config.backupRetentionDays, 365);
   assert.equal(config.apiPort, 3271);
+  assert.equal(config.byokEnabled, false);
+  assert.equal(config.csrfEnabled, false);
+  assert.equal(config.corsOrigins, undefined);
 
   Object.assign(process.env, previous);
+});
+
+test("loadConfig reads s3 cloud backup env", () => {
+  const previous = {
+    VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR,
+    VEGA_CLOUD_BACKUP_TYPE: process.env.VEGA_CLOUD_BACKUP_TYPE,
+    VEGA_S3_BUCKET: process.env.VEGA_S3_BUCKET,
+    VEGA_S3_REGION: process.env.VEGA_S3_REGION
+  };
+
+  try {
+    delete process.env.VEGA_CLOUD_BACKUP_DIR;
+    process.env.VEGA_CLOUD_BACKUP_TYPE = "s3";
+    process.env.VEGA_S3_BUCKET = "vega-backups";
+    process.env.VEGA_S3_REGION = "us-east-1";
+
+    assert.deepEqual(loadConfig().cloudBackup, {
+      enabled: true,
+      provider: "s3",
+      bucket: "vega-backups",
+      region: "us-east-1",
+      accessKeyId: undefined,
+      secretAccessKey: undefined
+    });
+  } finally {
+    Object.assign(process.env, previous);
+  }
 });
 
 test("loadConfig reads ~/.vega/config.json values and lets env override them", () => {

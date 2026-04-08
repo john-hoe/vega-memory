@@ -84,9 +84,10 @@ const isBootstrapInvocation = (argv: string[]): boolean => {
 
   return (
     firstArg === "setup" ||
+    firstArg === "migrate-db" ||
     firstArg === "init-encryption" ||
     (firstArg === "help" &&
-      (secondArg === "setup" || secondArg === "init-encryption"))
+      (secondArg === "setup" || secondArg === "migrate-db" || secondArg === "init-encryption"))
   );
 };
 
@@ -94,6 +95,7 @@ async function main(): Promise<void> {
   const program = createProgram();
   registerSetupCommand(program);
   registerEncryptionCommand(program);
+  registerMigrateCommand(program);
 
   if (isBootstrapInvocation(process.argv.slice(2))) {
     await program.parseAsync(process.argv);
@@ -165,7 +167,6 @@ async function main(): Promise<void> {
   registerDiagnoseCommand(program, repository, config);
   registerMaintenanceCommands(program, repository, compactService, config);
   registerImportExportCommands(program, repository, memoryService, config);
-  registerMigrateCommand(program, memoryService);
   registerNoteCommand(program, ingestionService);
   registerQualityCommand(program, qualityService);
   registerAuditCommand(program, repository);

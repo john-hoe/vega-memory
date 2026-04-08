@@ -5,16 +5,51 @@ import { join, resolve } from "node:path";
 import type { RedactionPattern } from "./core/types.js";
 import type { WebhookConfig } from "./integrations/webhooks.js";
 
-export interface CloudBackupConfig {
+export interface LocalSyncCloudBackupConfig {
   enabled: boolean;
-  provider: "local-sync" | "s3";
+  provider: "local-sync";
   destDir: string;
 }
+
+export interface S3CloudBackupConfig {
+  enabled: boolean;
+  provider: "s3";
+  bucket: string;
+  region: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+}
+
+export interface GDriveCloudBackupConfig {
+  enabled: boolean;
+  provider: "gdrive";
+  folderId?: string;
+  credentialsPath?: string;
+}
+
+export interface ICloudCloudBackupConfig {
+  enabled: boolean;
+  provider: "icloud";
+  containerPath?: string;
+}
+
+export type CloudBackupConfig =
+  | LocalSyncCloudBackupConfig
+  | S3CloudBackupConfig
+  | GDriveCloudBackupConfig
+  | ICloudCloudBackupConfig;
 
 export interface VegaConfig {
   dbPath: string;
   dbEncryption: boolean;
+  byokEnabled?: boolean;
+  csrfEnabled?: boolean;
+  corsOrigins?: string[];
   databaseType?: "sqlite" | "postgres";
+  metricsEnabled?: boolean;
+  sentryDsn?: string;
+  logLevel?: "debug" | "info" | "warn" | "error";
+  logFormat?: "json" | "text";
   embeddingProvider?: "ollama" | "openai";
   ollamaBaseUrl: string;
   ollamaModel: string;
@@ -37,6 +72,9 @@ export interface VegaConfig {
   slackBotToken?: string;
   slackChannel?: string;
   slackEnabled?: boolean;
+  openclawUrl?: string;
+  openclawKey?: string;
+  openclawEnabled?: boolean;
   stripeSecretKey?: string;
   stripeWebhookSecret?: string;
   stripePublishableKey?: string;
@@ -51,6 +89,9 @@ export interface VegaConfig {
   redisPassword?: string;
   redisDb?: number;
   redisEnabled?: boolean;
+  queueEnabled?: boolean;
+  queueRedisUrl?: string;
+  queueConcurrency?: number;
   pgHost?: string;
   pgPort?: number;
   pgDatabase?: string;
@@ -108,6 +149,20 @@ const parseMode = (value: string | undefined): VegaConfig["mode"] =>
 
 const parseDatabaseType = (value: string | undefined): VegaConfig["databaseType"] =>
   value === "postgres" ? "postgres" : "sqlite";
+
+const parseLogLevel = (value: string | undefined): NonNullable<VegaConfig["logLevel"]> => {
+  switch (value) {
+    case "debug":
+    case "warn":
+    case "error":
+      return value;
+    default:
+      return "info";
+  }
+};
+
+const parseLogFormat = (value: string | undefined): NonNullable<VegaConfig["logFormat"]> =>
+  value === "text" ? "text" : "json";
 
 const parseOptionalString = (value: unknown): string | undefined => {
   if (typeof value !== "string") {
@@ -227,6 +282,36 @@ const parseBoolean = (value: string | undefined, fallback: boolean): boolean => 
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 };
 
+const parseCloudBackupProvider = (
+  value: string | undefined
+): CloudBackupConfig["provider"] | undefined => {
+  switch (parseOptionalString(value)?.toLowerCase()) {
+    case "local-sync":
+      return "local-sync";
+    case "s3":
+      return "s3";
+    case "gdrive":
+      return "gdrive";
+    case "icloud":
+      return "icloud";
+    default:
+      return undefined;
+  }
+};
+
+const parseStringArray = (value: string | undefined): string[] | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  return parsed.length > 0 ? parsed : undefined;
+};
+
 const getConfigFilePath = (): string => join(homedir(), ".vega", "config.json");
 
 const loadFileConfig = (): Partial<
@@ -265,15 +350,54 @@ const loadFileConfig = (): Partial<
 
 const parseCloudBackup = (): CloudBackupConfig | undefined => {
   const destDir = process.env.VEGA_CLOUD_BACKUP_DIR;
+  const provider = parseCloudBackupProvider(process.env.VEGA_CLOUD_BACKUP_TYPE);
 
-  if (!destDir) {
-    return undefined;
+  if (provider === undefined) {
+    if (!destDir) {
+      return undefined;
+    }
+
+    return {
+      enabled: true,
+      provider: "local-sync",
+      destDir: expandHomePath(destDir)
+    };
+  }
+
+  if (provider === "local-sync") {
+    if (!destDir) {
+      return undefined;
+    }
+
+    return {
+      enabled: true,
+      provider,
+      destDir: expandHomePath(destDir)
+    };
+  }
+
+  if (provider === "s3") {
+    return {
+      enabled: true,
+      provider,
+      bucket: process.env.VEGA_S3_BUCKET ?? "",
+      region: process.env.VEGA_S3_REGION ?? "",
+      accessKeyId: process.env.VEGA_S3_ACCESS_KEY_ID || undefined,
+      secretAccessKey: process.env.VEGA_S3_SECRET_ACCESS_KEY || undefined
+    };
+  }
+
+  if (provider === "gdrive") {
+    return {
+      enabled: true,
+      provider
+    };
   }
 
   return {
     enabled: true,
-    provider: "local-sync",
-    destDir: expandHomePath(destDir)
+    provider,
+    containerPath: process.env.VEGA_ICLOUD_CONTAINER_PATH || undefined
   };
 };
 
@@ -289,7 +413,14 @@ export const loadConfig = (): VegaConfig => {
   return {
     dbPath: expandHomePath(process.env.VEGA_DB_PATH ?? "./data/memory.db"),
     dbEncryption,
+    byokEnabled: parseBoolean(process.env.VEGA_BYOK_ENABLED, false),
+    csrfEnabled: parseBoolean(process.env.VEGA_CSRF_ENABLED, false),
+    corsOrigins: parseStringArray(process.env.VEGA_CORS_ORIGINS),
     databaseType: parseDatabaseType(process.env.VEGA_DATABASE_TYPE),
+    metricsEnabled: parseBoolean(process.env.VEGA_METRICS_ENABLED, false),
+    sentryDsn: process.env.VEGA_SENTRY_DSN || undefined,
+    logLevel: parseLogLevel(process.env.VEGA_LOG_LEVEL),
+    logFormat: parseLogFormat(process.env.VEGA_LOG_FORMAT),
     embeddingProvider:
       process.env.VEGA_EMBEDDING_PROVIDER === "openai" ? "openai" : "ollama",
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
@@ -319,6 +450,9 @@ export const loadConfig = (): VegaConfig => {
     slackBotToken: process.env.VEGA_SLACK_BOT_TOKEN || undefined,
     slackChannel: process.env.VEGA_SLACK_CHANNEL || undefined,
     slackEnabled: parseBoolean(process.env.VEGA_SLACK_ENABLED, false),
+    openclawUrl: process.env.VEGA_OPENCLAW_URL || undefined,
+    openclawKey: process.env.VEGA_OPENCLAW_KEY || undefined,
+    openclawEnabled: parseBoolean(process.env.VEGA_OPENCLAW_ENABLED, false),
     stripeSecretKey: process.env.VEGA_STRIPE_SECRET_KEY || undefined,
     stripeWebhookSecret: process.env.VEGA_STRIPE_WEBHOOK_SECRET || undefined,
     stripePublishableKey: process.env.VEGA_STRIPE_PUBLISHABLE_KEY || undefined,
@@ -333,6 +467,9 @@ export const loadConfig = (): VegaConfig => {
     redisPassword: process.env.VEGA_REDIS_PASSWORD || undefined,
     redisDb: parseOptionalNumber(process.env.VEGA_REDIS_DB),
     redisEnabled: parseBoolean(process.env.VEGA_REDIS_ENABLED, false),
+    queueEnabled: parseBoolean(process.env.VEGA_QUEUE_ENABLED, false),
+    queueRedisUrl: process.env.VEGA_QUEUE_REDIS_URL || undefined,
+    queueConcurrency: parseNumber(process.env.VEGA_QUEUE_CONCURRENCY, 1),
     pgHost: process.env.VEGA_PG_HOST || undefined,
     pgPort: parseOptionalNumber(process.env.VEGA_PG_PORT),
     pgDatabase: process.env.VEGA_PG_DATABASE || undefined,

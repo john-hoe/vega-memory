@@ -1,6 +1,7 @@
 import { Router, type Request, type RequestHandler, type Response } from "express";
 
 import { StripeService } from "../billing/stripe.js";
+import { GdprService } from "../compliance/gdpr.js";
 import type { VegaConfig } from "../config.js";
 import { WebhookService } from "../integrations/webhooks.js";
 import { getRequestTenantId, getRequestUser } from "./auth.js";
@@ -589,6 +590,7 @@ export function createRouter(services: APIRouterServices): Router {
   const router = Router();
   const analyticsService = new AnalyticsService(services.repository);
   const auditService = new AuditService(services.repository);
+  const gdprService = new GdprService(services.repository.db);
   const stripeService = new StripeService({
     secretKey: services.config.stripeSecretKey,
     webhookSecret: services.config.stripeWebhookSecret,
@@ -1064,6 +1066,47 @@ export function createRouter(services: APIRouterServices): Router {
       });
 
       res.status(200).json(services.repository.getUser(id));
+    })
+  );
+
+  router.get(
+    "/api/gdpr/export/:userId",
+    requireRole("admin"),
+    handleRoute(async (req, res) => {
+      const userId = requireString(req.params.userId, "userId");
+      const tenantId = requireTenantId(res, req.query.tenant_id);
+      const user = services.repository.getUser(userId);
+
+      if (user === null) {
+        throw new ApiError(404, `User not found: ${userId}`);
+      }
+
+      if (user.tenant_id !== tenantId) {
+        throw new ApiError(403, "forbidden");
+      }
+
+      res.status(200).json(await gdprService.exportUserData(userId, tenantId));
+    })
+  );
+
+  router.post(
+    "/api/gdpr/erase/:userId",
+    requireRole("admin"),
+    handleRoute(async (req, res) => {
+      const userId = requireString(req.params.userId, "userId");
+      const body = req.body === undefined ? {} : requireBody(req.body);
+      const tenantId = requireTenantId(res, body.tenant_id ?? req.query.tenant_id);
+      const user = services.repository.getUser(userId);
+
+      if (user === null) {
+        throw new ApiError(404, `User not found: ${userId}`);
+      }
+
+      if (user.tenant_id !== tenantId) {
+        throw new ApiError(403, "forbidden");
+      }
+
+      res.status(200).json(await gdprService.eraseUserData(userId, tenantId));
     })
   );
 
