@@ -36,14 +36,13 @@ const normalizeSlug = (slug: string): string => {
   return normalized;
 };
 
-const normalizeTenantId = (tenantId: string): string => {
-  const normalized = tenantId.trim();
-
-  if (normalized.length === 0) {
-    throw new Error("Wiki space tenant_id is required");
+const normalizeTenantId = (tenantId: string | null | undefined): string | null => {
+  if (tenantId === null || tenantId === undefined) {
+    return null;
   }
 
-  return normalized;
+  const normalized = tenantId.trim();
+  return normalized.length === 0 ? null : normalized;
 };
 
 const normalizeVisibility = (visibility: WikiSpaceVisibility | undefined): WikiSpaceVisibility => {
@@ -62,7 +61,7 @@ export class SpaceService {
   createSpace(
     name: string,
     slug: string,
-    tenantId: string,
+    tenantId?: string | null,
     visibility?: WikiSpaceVisibility
   ): WikiSpace {
     const space: WikiSpace = {
@@ -82,12 +81,29 @@ export class SpaceService {
     return this.repository.getWikiSpace(id.trim());
   }
 
-  getSpaceBySlug(slug: string, tenantId: string): WikiSpace | null {
+  getSpaceBySlug(slug: string, tenantId?: string | null): WikiSpace | null {
     return this.repository.getWikiSpaceBySlug(normalizeSlug(slug), normalizeTenantId(tenantId));
   }
 
-  listSpaces(tenantId: string): WikiSpace[] {
+  listSpaces(tenantId?: string | null): WikiSpace[] {
     return this.repository.listWikiSpaces(normalizeTenantId(tenantId));
+  }
+
+  ensureSpace(
+    name: string,
+    slug: string,
+    tenantId?: string | null,
+    visibility?: WikiSpaceVisibility
+  ): WikiSpace {
+    const normalizedSlug = normalizeSlug(slug);
+    const normalizedTenantId = normalizeTenantId(tenantId);
+    const existing = this.repository.getWikiSpaceBySlug(normalizedSlug, normalizedTenantId);
+
+    if (existing) {
+      return existing;
+    }
+
+    return this.createSpace(name, normalizedSlug, normalizedTenantId, visibility);
   }
 
   updateSpace(

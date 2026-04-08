@@ -171,6 +171,83 @@ test("synthesize creates a new wiki page from memories", async () => {
   }
 });
 
+test("synthesize falls back to deterministic output when Ollama model does not support chat", async () => {
+  const originalFetch = globalThis.fetch;
+  const { repository, pageManager, synthesisEngine } = createHarness();
+
+  globalThis.fetch = (async (input: URL | RequestInfo) => {
+    const url = String(input);
+
+    if (url.includes("/api/chat")) {
+      return new Response(JSON.stringify({ error: "\"bge-m3\" does not support chat" }), {
+        status: 400,
+        headers: {
+          "content-type": "application/json"
+        }
+      });
+    }
+
+    if (url.includes("/api/embed")) {
+      return new Response(
+        JSON.stringify({
+          embeddings: [Array.from({ length: 8 }, () => 0.1)]
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }
+
+    return originalFetch(input);
+  }) as typeof fetch;
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "auth-1",
+        title: "Auth Rollout",
+        content: "Auth rollout requires token refresh before deploy.",
+        tags: ["auth"]
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "auth-2",
+        title: "Auth Incident",
+        content: "Auth failed after stale secrets were deployed.",
+        tags: ["auth"],
+        updated_at: "2026-04-06T01:00:00.000Z",
+        accessed_at: "2026-04-06T01:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "auth-3",
+        title: "Auth Recovery",
+        content: "Auth recovered after secrets rotation and smoke tests.",
+        tags: ["auth"],
+        updated_at: "2026-04-06T02:00:00.000Z",
+        accessed_at: "2026-04-06T02:00:00.000Z"
+      })
+    );
+
+    const result = await synthesisEngine.synthesize("auth", "vega");
+    const page = pageManager.getPage(result.page_id);
+
+    assert.equal(result.action, "created");
+    assert.ok(page);
+    assert.match(page.content, /## Key Notes/);
+    assert.match(page.content, /Auth Rollout/);
+    assert.match(page.content, /Sources/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    repository.close();
+  }
+});
+
 test("synthesize returns unchanged when fewer than 3 memories", async () => {
   const mock = installOllamaMock();
   const { repository, pageManager, synthesisEngine } = createHarness();

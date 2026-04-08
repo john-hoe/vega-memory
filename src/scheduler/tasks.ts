@@ -466,6 +466,33 @@ export async function dailyMaintenance(
   log("Daily maintenance finished");
 }
 
+export async function refreshWikiProjection(
+  pageManager: PageManager,
+  synthesisEngine: SynthesisEngine,
+  crossReferenceService?: CrossReferenceService
+): Promise<{ spaces_backfilled: number; synthesized: number }> {
+  const spacesBackfilled = pageManager.ensureDefaultSpacesForPages();
+  const results = await synthesisEngine.synthesizeAll();
+
+  if (crossReferenceService) {
+    for (const result of results) {
+      if (result.action === "unchanged" || result.page_id.length === 0) {
+        continue;
+      }
+
+      const page = pageManager.getPage(result.page_id);
+      if (page) {
+        crossReferenceService.updateCrossReferences(page);
+      }
+    }
+  }
+
+  return {
+    spaces_backfilled: spacesBackfilled,
+    synthesized: results.length
+  };
+}
+
 export async function pollAllFeeds(
   rssService: RSSService,
   fetcher: ContentFetcher,

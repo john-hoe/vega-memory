@@ -2,6 +2,7 @@ import type Database from "better-sqlite3-multiple-ciphers";
 
 interface TableColumnRow {
   name: string;
+  notnull: number;
 }
 
 const ensureColumn = (
@@ -17,6 +18,39 @@ const ensureColumn = (
   if (!columns.some((column) => column.name === columnName)) {
     db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
   }
+};
+
+const ensureNullableWikiSpaceTenant = (db: Database.Database): void => {
+  const columns = db
+    .prepare<[], TableColumnRow>("PRAGMA table_info(wiki_spaces)")
+    .all();
+  const tenantColumn = columns.find((column) => column.name === "tenant_id");
+
+  if (!tenantColumn || tenantColumn.notnull === 0) {
+    return;
+  }
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS wiki_spaces__migrated (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      tenant_id TEXT,
+      visibility TEXT NOT NULL DEFAULT 'internal',
+      created_at TEXT NOT NULL,
+      UNIQUE(slug, tenant_id),
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+
+    INSERT INTO wiki_spaces__migrated (id, name, slug, tenant_id, visibility, created_at)
+    SELECT id, name, slug, tenant_id, visibility, created_at
+    FROM wiki_spaces;
+
+    DROP TABLE wiki_spaces;
+    ALTER TABLE wiki_spaces__migrated RENAME TO wiki_spaces;
+  `);
+  db.exec("PRAGMA foreign_keys = ON");
 };
 
 export function initializeDatabase(db: Database.Database): void {
@@ -198,7 +232,7 @@ export function initializeDatabase(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       slug TEXT NOT NULL,
-      tenant_id TEXT NOT NULL,
+      tenant_id TEXT,
       visibility TEXT NOT NULL DEFAULT 'internal',
       created_at TEXT NOT NULL,
       UNIQUE(slug, tenant_id),
@@ -390,6 +424,7 @@ export function initializeDatabase(db: Database.Database): void {
   ensureColumn(db, "usage_log", "recorded_at", "TEXT");
   ensureColumn(db, "wiki_pages", "space_id", "TEXT");
   ensureColumn(db, "wiki_pages", "tenant_id", "TEXT");
+  ensureNullableWikiSpaceTenant(db);
   db.exec(`
     UPDATE wiki_pages
     SET tenant_id = (

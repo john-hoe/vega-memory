@@ -28,6 +28,7 @@ import { SynthesisEngine } from "../wiki/synthesis.js";
 import { StalenessService } from "../wiki/staleness.js";
 import {
   dailyMaintenance,
+  refreshWikiProjection,
   monitorOllamaAvailability,
   weeklyHealthReport
 } from "./tasks.js";
@@ -193,6 +194,16 @@ async function main(): Promise<void> {
   const runOllamaMonitor = createGuardedRunner("ollama health check", async () => {
     await monitorOllamaAvailability(config, notificationManager);
   });
+  const runStartupWikiProjection = createGuardedRunner("wiki projection refresh", async () => {
+    const result = await refreshWikiProjection(
+      pageManager,
+      synthesisEngine,
+      crossReferenceService
+    );
+    log(
+      `Wiki projection refresh finished with ${result.synthesized} candidate topics and ${result.spaces_backfilled} space backfills`
+    );
+  });
 
   let shuttingDown = false;
   let lastDailyRun: number | null = null;
@@ -247,6 +258,7 @@ async function main(): Promise<void> {
   });
 
   log("Scheduler daemon started");
+  await runStartupWikiProjection();
   await runOllamaMonitor();
   await runScheduledTasks();
 }

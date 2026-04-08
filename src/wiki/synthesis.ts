@@ -294,19 +294,15 @@ const scorePageMatch = (page: WikiPage, topic: string): number => {
   const pageTokens = tokenize(page.title);
   const topicTokens = tokenize(topic);
 
-  if (page.tags.some((tag) => normalizeTopic(tag) === normalizedTopic)) {
-    return 1;
-  }
-
   if (normalizeSlug(page.slug) === normalizedSlug || normalizedTitle === normalizedTopic) {
-    return 0.95;
+    return 1;
   }
 
   if (
     normalizedTitle.includes(normalizedTopic) ||
     normalizedTopic.includes(normalizedTitle)
   ) {
-    return 0.85;
+    return 0.8;
   }
 
   if (topicTokens.size === 0 || pageTokens.size === 0) {
@@ -315,7 +311,8 @@ const scorePageMatch = (page: WikiPage, topic: string): number => {
 
   const intersection = [...topicTokens].filter((token) => pageTokens.has(token)).length;
   const union = new Set([...topicTokens, ...pageTokens]).size;
-  return union === 0 ? 0 : intersection / union;
+  const jaccard = union === 0 ? 0 : intersection / union;
+  return intersection === topicTokens.size ? Math.max(jaccard, 0.75) : jaccard;
 };
 
 const inferPageType = (memories: Memory[]): WikiPageType => {
@@ -417,6 +414,49 @@ const buildUserPrompt = (
   return parts.join("\n");
 };
 
+const buildDeterministicContent = (
+  topic: string,
+  memories: Memory[],
+  project?: string,
+  existingPage?: WikiPage
+): string => {
+  const lines = [
+    `# ${normalizeWhitespace(topic) || "Untitled Topic"}`,
+    "",
+    "## Overview",
+    "",
+    `- Project: ${project ?? "global"}`,
+    `- Memories covered: ${memories.length}`,
+    ""
+  ];
+
+  if (existingPage) {
+    lines.push("## Existing Context", "", existingPage.summary, "");
+  }
+
+  lines.push("## Key Notes", "");
+
+  for (const memory of memories) {
+    lines.push(
+      `### ${memory.title}`,
+      "",
+      `- Type: ${memory.type}`,
+      `- Updated: ${memory.updated_at}`,
+      `- Tags: ${(memory.tags.length === 0 ? ["none"] : memory.tags).join(", ")}`,
+      "",
+      memory.content,
+      ""
+    );
+  }
+
+  return lines.join("\n").trim();
+};
+
+const shouldUseDeterministicFallback = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error);
+  return /does not support chat|model.+chat|unsupported/i.test(message);
+};
+
 export class SynthesisEngine {
   constructor(
     private readonly repository: Repository,
@@ -506,7 +546,7 @@ export class SynthesisEngine {
       }
     }
 
-    return bestScore >= 0.6 ? bestMatch : null;
+    return bestScore >= 0.75 ? bestMatch : null;
   }
 
   async synthesize(topic: string, project?: string, force = false): Promise<SynthesizeResult> {
@@ -538,12 +578,22 @@ export class SynthesisEngine {
     }
 
     const userPrompt = buildUserPrompt(topic, memories, project, existingPage ?? undefined);
-    const rawContent = await chatWithOllama(
-      this.config.ollamaModel,
-      SYNTHESIS_SYSTEM_PROMPT,
-      userPrompt,
-      this.config.ollamaBaseUrl
-    );
+    const rawContent = await (async () => {
+      try {
+        return await chatWithOllama(
+          this.config.ollamaModel,
+          SYNTHESIS_SYSTEM_PROMPT,
+          userPrompt,
+          this.config.ollamaBaseUrl
+        );
+      } catch (error) {
+        if (!shouldUseDeterministicFallback(error)) {
+          throw error;
+        }
+
+        return buildDeterministicContent(topic, memories, project, existingPage ?? undefined);
+      }
+    })();
     const content = ensureSourcesSection(
       stripMarkdownFence(rawContent),
       memories.map((memory) => memory.id)

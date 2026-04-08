@@ -31,7 +31,9 @@ export class SearchEngine {
   ) {
     this.bruteForceEngine = new BruteForceEngine();
     this.sqliteVecEngine = new SqliteVecEngine(repository);
-    logSearchInfo("Vector search engine: brute-force");
+    if (!this.ensureSqliteVecReady()) {
+      logSearchInfo("Vector search engine: brute-force");
+    }
   }
 
   private ensureSqliteVecReady(): boolean {

@@ -1,5 +1,6 @@
 const state = {
   memories: [],
+  wikiPages: [],
   selectedId: null,
   mode: "list",
   query: ""
@@ -16,7 +17,9 @@ const elements = {
   detailBody: document.getElementById("detail-body"),
   searchForm: document.getElementById("search-form"),
   searchInput: document.getElementById("search-input"),
-  resetSearch: document.getElementById("reset-search")
+  resetSearch: document.getElementById("reset-search"),
+  wikiList: document.getElementById("wiki-list"),
+  wikiSummary: document.getElementById("wiki-summary")
 };
 
 const formatTimestamp = (value) => {
@@ -99,6 +102,34 @@ const renderStats = (health) => {
   elements.memoryCount.textContent = String(health.memories ?? 0);
   elements.dbSize.textContent = `${Number(health.db_size_mb ?? 0).toFixed(2)} MB`;
   elements.ollamaStatus.textContent = health.ollama ? "Online" : "Offline";
+};
+
+const renderWiki = () => {
+  elements.wikiList.replaceChildren();
+
+  if (state.wikiPages.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No wiki pages materialized yet.";
+    elements.wikiList.appendChild(empty);
+    elements.wikiSummary.textContent = "No wiki pages available.";
+    return;
+  }
+
+  elements.wikiSummary.textContent = `Showing ${state.wikiPages.length} recent wiki updates`;
+
+  for (const page of state.wikiPages) {
+    const item = document.createElement("div");
+    item.className = "wiki-item";
+    appendTextElement(item, "h3", page.title || "Untitled Wiki Page", "wiki-item-title");
+    appendTextElement(
+      item,
+      "div",
+      `${page.status || "draft"} • ${page.project || "global"} • ${formatTimestamp(page.updated_at)}`,
+      "wiki-item-meta"
+    );
+    elements.wikiList.appendChild(item);
+  }
 };
 
 const renderMessage = (message, isError = false) => {
@@ -246,6 +277,12 @@ const loadMemories = async () => {
   updateRefreshStatus("Live");
 };
 
+const loadWikiPages = async () => {
+  const pages = await fetchJson("/api/wiki/pages?limit=5");
+  state.wikiPages = Array.isArray(pages) ? pages : [];
+  renderWiki();
+};
+
 const searchMemories = async (query) => {
   updateRefreshStatus("Searching");
   renderMessage("");
@@ -273,6 +310,7 @@ const searchMemories = async (query) => {
 const refreshDashboard = async () => {
   try {
     await loadStats();
+    await loadWikiPages();
 
     if (state.mode === "search" && state.query) {
       await searchMemories(state.query);
@@ -291,6 +329,7 @@ elements.searchForm.addEventListener("submit", async (event) => {
 
   try {
     await loadStats();
+    await loadWikiPages();
 
     if (!query) {
       await loadMemories();

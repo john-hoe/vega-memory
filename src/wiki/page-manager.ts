@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 
 import { Repository } from "../db/repository.js";
+import { SpaceService } from "./spaces.js";
 import type {
   ContentSource,
   ContentSourceType,
@@ -188,7 +189,34 @@ function mapContentSource(row: ContentSourceRow): ContentSource {
 }
 
 export class PageManager {
-  constructor(readonly repository: Repository) {}
+  private readonly spaceService: SpaceService;
+
+  constructor(readonly repository: Repository) {
+    this.spaceService = new SpaceService(repository);
+  }
+
+  private buildDefaultSpaceName(project: string | null): string {
+    return project && project.trim().length > 0 ? `${project.trim()} Wiki` : "Workspace Wiki";
+  }
+
+  private buildDefaultSpaceSlug(project: string | null): string {
+    const base = project && project.trim().length > 0 ? project.trim() : "workspace";
+
+    return `${base
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")}-wiki`;
+  }
+
+  private ensureDefaultSpace(tenantId: string | null, project: string | null): string {
+    return this.spaceService.ensureSpace(
+      this.buildDefaultSpaceName(project),
+      this.buildDefaultSpaceSlug(project),
+      tenantId,
+      "internal"
+    ).id;
+  }
 
   private resolvePageTenantId(
     spaceId: string | null,
@@ -286,6 +314,8 @@ export class PageManager {
 
     const createdAt = timestamp();
     const tenantId = this.resolvePageTenantId(params.space_id ?? null, params.tenant_id);
+    const resolvedSpaceId =
+      params.space_id ?? this.ensureDefaultSpace(tenantId, params.project ?? null);
     const page: WikiPage = {
       id: uuidv4(),
       slug: this.generateSlug(title),
@@ -302,7 +332,7 @@ export class PageManager {
       auto_generated: params.auto_generated ?? true,
       reviewed: false,
       version: 1,
-      space_id: params.space_id ?? null,
+      space_id: resolvedSpaceId,
       parent_id: params.parent_id ?? null,
       tenant_id: tenantId,
       sort_order: 0,
@@ -395,6 +425,29 @@ export class PageManager {
     });
 
     return page;
+  }
+
+  ensureDefaultSpacesForPages(): number {
+    const pages = this.repository.db
+      .prepare<[], Pick<WikiPage, "id" | "tenant_id" | "project">>(
+        `SELECT id, tenant_id, project
+         FROM wiki_pages
+         WHERE space_id IS NULL`
+      )
+      .all();
+
+    for (const page of pages) {
+      const spaceId = this.ensureDefaultSpace(page.tenant_id ?? null, page.project ?? null);
+      this.repository.db
+        .prepare<[string, string, string]>(
+          `UPDATE wiki_pages
+           SET space_id = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(spaceId, timestamp(), page.id);
+    }
+
+    return pages.length;
   }
 
   getPage(idOrSlug: string, tenantId?: string): WikiPage | null {

@@ -69,7 +69,7 @@ export interface WikiSpace {
   id: string;
   name: string;
   slug: string;
-  tenant_id: string;
+  tenant_id: string | null;
   visibility: WikiSpaceVisibility;
   created_at: string;
 }

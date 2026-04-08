@@ -23,7 +23,7 @@ import { Repository } from "../db/repository.js";
 import { embeddingCache } from "../embedding/cache.js";
 import { SearchEngine } from "../search/engine.js";
 import { shouldRunDaily, shouldRunWeekly, startSchedulerApiServer } from "../scheduler/index.js";
-import { dailyMaintenance, weeklyHealthReport } from "../scheduler/tasks.js";
+import { dailyMaintenance, refreshWikiProjection, weeklyHealthReport } from "../scheduler/tasks.js";
 import {
   VEGA_ENCRYPTION_ACCOUNT,
   VEGA_KEYCHAIN_SERVICE,
@@ -340,6 +340,84 @@ test("dailyMaintenance polls RSS feeds, synthesizes wiki pages, and marks stale 
   } finally {
     repository.close();
     rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("refreshWikiProjection backfills legacy pages without spaces before synthesis", async () => {
+  const repository = new Repository(":memory:");
+  const pageManager = new PageManager(repository);
+  let crossReferenceUpdates = 0;
+
+  try {
+    repository.db
+      .prepare<
+        [
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          number,
+          number,
+          number,
+          string,
+          string
+        ]
+      >(
+        `INSERT INTO wiki_pages (
+           id, slug, title, content, summary, page_type, scope, tags, source_memory_ids,
+           auto_generated, reviewed, version, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "legacy-page",
+        "legacy-page",
+        "Legacy Page",
+        "Legacy content",
+        "Legacy summary",
+        "runbook",
+        "project",
+        "[]",
+        "[]",
+        1,
+        0,
+        1,
+        "2026-04-08T00:00:00.000Z",
+        "2026-04-08T00:00:00.000Z"
+      );
+
+    const result = await refreshWikiProjection(
+      pageManager,
+      {
+        synthesizeAll: async () => [
+          {
+            page_id: "legacy-page",
+            slug: "legacy-page",
+            action: "created",
+            memories_used: 3
+          }
+        ]
+      } as Parameters<typeof refreshWikiProjection>[1],
+      {
+        updateCrossReferences: () => {
+          crossReferenceUpdates += 1;
+        }
+      } as unknown as Parameters<typeof refreshWikiProjection>[2]
+    );
+
+    const page = pageManager.getPage("legacy-page");
+
+    assert.equal(result.spaces_backfilled, 1);
+    assert.equal(result.synthesized, 1);
+    assert.equal(crossReferenceUpdates, 1);
+    assert.notEqual(page?.space_id, null);
+    assert.equal(repository.listWikiSpaces(null).length, 1);
+  } finally {
+    repository.close();
   }
 });
 

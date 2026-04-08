@@ -150,6 +150,30 @@ test("SpaceService validates supported visibility values", () => {
   }
 });
 
+test("PageManager auto-assigns a default workspace space for tenantless pages", () => {
+  const repository = createRepository();
+  const pageManager = new PageManager(repository);
+  const spaceService = new SpaceService(repository);
+
+  try {
+    const page = pageManager.createPage({
+      title: "Runtime Notes",
+      content: "Local workspace wiki content.",
+      summary: "Local wiki summary.",
+      page_type: "runbook",
+      project: "vega-memory"
+    });
+    const spaces = spaceService.listSpaces(null);
+
+    assert.notEqual(page.space_id, null);
+    assert.equal(spaces.length, 1);
+    assert.equal(spaces[0]?.tenant_id, null);
+    assert.equal(spaces[0]?.slug, "vega-memory-wiki");
+  } finally {
+    repository.close();
+  }
+});
+
 test("PagePermissionService resolves direct, role-based, and visibility-based access", () => {
   const repository = createRepository();
   const tenant = new TenantService(repository).createTenant("Alpha", "free");

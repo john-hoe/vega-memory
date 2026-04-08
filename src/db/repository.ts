@@ -135,7 +135,7 @@ interface WikiSpaceRow {
   id: string;
   name: string;
   slug: string;
-  tenant_id: string;
+  tenant_id: string | null;
   visibility: WikiSpaceVisibility;
   created_at: string;
 }
@@ -975,7 +975,7 @@ export class Repository {
 
   createWikiSpace(space: WikiSpace): void {
     this.db
-      .prepare<[string, string, string, string, WikiSpaceVisibility, string]>(
+      .prepare<[string, string, string, string | null, WikiSpaceVisibility, string]>(
         `INSERT INTO wiki_spaces (id, name, slug, tenant_id, visibility, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`
       )
@@ -997,27 +997,46 @@ export class Repository {
     return row ? mapWikiSpace(row) : null;
   }
 
-  getWikiSpaceBySlug(slug: string, tenantId: string): WikiSpace | null {
-    const row = this.db
-      .prepare<[string, string], WikiSpaceRow>(
-        `SELECT *
-         FROM wiki_spaces
-         WHERE slug = ? AND tenant_id = ?`
-      )
-      .get(slug, tenantId);
+  getWikiSpaceBySlug(slug: string, tenantId: string | null): WikiSpace | null {
+    const row =
+      tenantId === null
+        ? this.db
+            .prepare<[string], WikiSpaceRow>(
+              `SELECT *
+               FROM wiki_spaces
+               WHERE slug = ? AND tenant_id IS NULL`
+            )
+            .get(slug)
+        : this.db
+            .prepare<[string, string], WikiSpaceRow>(
+              `SELECT *
+               FROM wiki_spaces
+               WHERE slug = ? AND tenant_id = ?`
+            )
+            .get(slug, tenantId);
 
     return row ? mapWikiSpace(row) : null;
   }
 
-  listWikiSpaces(tenantId: string): WikiSpace[] {
-    const rows = this.db
-      .prepare<[string], WikiSpaceRow>(
-        `SELECT *
-         FROM wiki_spaces
-         WHERE tenant_id = ?
-         ORDER BY created_at ASC, name ASC`
-      )
-      .all(tenantId);
+  listWikiSpaces(tenantId: string | null): WikiSpace[] {
+    const rows =
+      tenantId === null
+        ? this.db
+            .prepare<[], WikiSpaceRow>(
+              `SELECT *
+               FROM wiki_spaces
+               WHERE tenant_id IS NULL
+               ORDER BY created_at ASC, name ASC`
+            )
+            .all()
+        : this.db
+            .prepare<[string], WikiSpaceRow>(
+              `SELECT *
+               FROM wiki_spaces
+               WHERE tenant_id = ?
+               ORDER BY created_at ASC, name ASC`
+            )
+            .all(tenantId);
 
     return rows.map(mapWikiSpace);
   }
