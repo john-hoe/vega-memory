@@ -127,7 +127,7 @@ export class TeamService {
       insertTeam.run(team.id, team.name, team.owner_id, team.created_at);
       upsertMember.run(team.id, normalizedOwnerId, "admin", team.created_at);
       this.repository.setMetadata(`${TEAM_METADATA_PREFIX}${team.id}`, JSON.stringify(team));
-    })();
+    });
 
     return team;
   }

@@ -173,7 +173,7 @@ export class SqliteVecEngine {
 
         insertStatement.run(rowid, toVectorJson(candidate.vector));
       });
-    })();
+    });
 
     return this.indexedCount;
   }

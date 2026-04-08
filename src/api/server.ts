@@ -25,6 +25,13 @@ export function createAPIServer(
   let server: Server | null = null;
 
   app.use(
+    "/api/billing/webhook",
+    express.text({
+      type: "*/*",
+      limit: "10mb"
+    })
+  );
+  app.use(
     express.json({
       limit: "10mb"
     })

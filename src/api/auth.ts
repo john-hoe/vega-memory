@@ -250,6 +250,12 @@ export const createAuthMiddleware = (config: VegaConfig, repository?: Repository
       return;
     }
 
+    if (req.path === "/api/billing/webhook") {
+      clearRequestAuth(res);
+      next();
+      return;
+    }
+
     clearRequestAuth(res);
 
     const hasBearerToken = req.get("authorization")?.startsWith("Bearer ") ?? false;

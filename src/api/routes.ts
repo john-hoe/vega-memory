@@ -1,5 +1,6 @@
 import { Router, type Request, type RequestHandler, type Response } from "express";
 
+import { StripeService } from "../billing/stripe.js";
 import type { VegaConfig } from "../config.js";
 import { WebhookService } from "../integrations/webhooks.js";
 import { getRequestTenantId, getRequestUser } from "./auth.js";
@@ -588,6 +589,12 @@ export function createRouter(services: APIRouterServices): Router {
   const router = Router();
   const analyticsService = new AnalyticsService(services.repository);
   const auditService = new AuditService(services.repository);
+  const stripeService = new StripeService({
+    secretKey: services.config.stripeSecretKey,
+    webhookSecret: services.config.stripeWebhookSecret,
+    publishableKey: services.config.stripePublishableKey,
+    enabled: services.config.stripeEnabled ?? false
+  });
   const pageManager = new PageManager(services.repository);
   const userService = new UserService(services.repository);
   const commentService = new CommentService(services.repository);
@@ -596,7 +603,112 @@ export function createRouter(services: APIRouterServices): Router {
   const pagePermissionService = new PagePermissionService(services.repository);
   const webhookService = new WebhookService(services.config.webhooks);
 
+  router.post(
+    "/api/billing/webhook",
+    handleRoute(async (req, res) => {
+      const payload =
+        typeof req.body === "string"
+          ? req.body
+          : req.body === undefined
+            ? ""
+            : JSON.stringify(req.body);
+      const signature = req.get("stripe-signature") ?? "";
+      const result = await stripeService.handleWebhook(payload, signature);
+
+      res.status(200).json(result);
+    })
+  );
+
   router.use(requireTenantAccess());
+
+  router.get(
+    "/api/billing/plans",
+    handleRoute(async (_req, res) => {
+      res.status(200).json(await stripeService.listPlans());
+    })
+  );
+
+  router.post(
+    "/api/billing/subscribe",
+    handleRoute(async (req, res) => {
+      const body = requireBody(req.body);
+      const tenantId = requireTenantId(res, body.tenant_id);
+      const planId = requireString(body.plan_id ?? body.planId, "plan_id");
+      const plan = (await stripeService.listPlans()).find((candidate) => candidate.id === planId);
+
+      if (plan === undefined) {
+        throw new ApiError(400, `Unknown plan_id: ${planId}`);
+      }
+
+      const existingCustomerId = parseSingleValue(body.customer_id ?? body.customerId, "customer_id");
+      const requestUser = getRequestUser(res);
+      const customer =
+        existingCustomerId === undefined
+          ? await stripeService.createCustomer(
+              parseSingleValue(body.email, "email") ?? requestUser?.email ?? (() => {
+                throw new ApiError(400, "email is required when customer_id is not provided");
+              })(),
+              parseSingleValue(body.name, "name") ?? requestUser?.name ?? tenantId,
+              tenantId
+            )
+          : await stripeService.getCustomer(existingCustomerId).then((candidate) => {
+              if (candidate === null) {
+                throw new ApiError(404, `Stripe customer not found: ${existingCustomerId}`);
+              }
+
+              if (candidate.tenantId !== tenantId) {
+                throw new ApiError(403, "forbidden");
+              }
+
+              return candidate;
+            });
+      const subscription = await stripeService.createSubscription(customer.id, plan.id);
+
+      res.status(201).json({
+        customer,
+        subscription
+      });
+    })
+  );
+
+  router.delete(
+    "/api/billing/subscribe/:id",
+    handleRoute(async (req, res) => {
+      const subscriptionId = requireString(req.params.id, "id");
+      const subscription = await stripeService.getSubscription(subscriptionId);
+
+      if (subscription === null) {
+        throw new ApiError(404, `Stripe subscription not found: ${subscriptionId}`);
+      }
+
+      const customer = await stripeService.getCustomer(subscription.customerId);
+      const tenantId = requireTenantId(res, req.query.tenant_id);
+
+      if (customer === null) {
+        throw new ApiError(404, `Stripe customer not found: ${subscription.customerId}`);
+      }
+
+      if (customer.tenantId !== tenantId) {
+        throw new ApiError(403, "forbidden");
+      }
+
+      res.status(200).json(await stripeService.cancelSubscription(subscriptionId));
+    })
+  );
+
+  router.get(
+    "/api/billing/status",
+    handleRoute(async (req, res) => {
+      const tenantId = requireTenantId(res, req.query.tenant_id);
+      const subscription = await stripeService.getSubscriptionByTenantId(tenantId);
+
+      res.status(200).json({
+        tenant_id: tenantId,
+        configured: stripeService.isConfigured(),
+        subscription
+      });
+    })
+  );
 
   router.post(
     "/api/store",

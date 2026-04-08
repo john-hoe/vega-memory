@@ -326,7 +326,7 @@ export class CrossReferenceService {
         );
         added += 1;
       }
-    })();
+    });
 
     return { added, removed };
   }

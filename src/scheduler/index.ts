@@ -13,6 +13,7 @@ import { CompactService } from "../core/compact.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
+import { createAdapter } from "../db/adapter-factory.js";
 import { Repository } from "../db/repository.js";
 import { ContentDistiller } from "../ingestion/distiller.js";
 import { ContentFetcher } from "../ingestion/fetcher.js";
@@ -146,7 +147,7 @@ async function main(): Promise<void> {
     join(getDataDir(config.dbPath), "alerts")
   );
 
-  const repository = new Repository(config.dbPath, repositoryKey);
+  const repository = new Repository(createAdapter({ ...config, encryptionKey: repositoryKey }));
   const searchEngine = new SearchEngine(repository, config);
   const memoryService = new MemoryService(repository, config);
   const recallService = new RecallService(repository, searchEngine, config);

@@ -11,6 +11,7 @@ import { MemoryService } from "./core/memory.js";
 import { ObserverService } from "./core/observer.js";
 import { RecallService } from "./core/recall.js";
 import { SessionService } from "./core/session.js";
+import { createAdapter } from "./db/adapter-factory.js";
 import { Repository } from "./db/repository.js";
 import { createMCPServer } from "./mcp/server.js";
 import { SearchEngine } from "./search/engine.js";
@@ -96,7 +97,7 @@ async function main(): Promise<void> {
           };
         })()
       : (() => {
-          const repository = new Repository(config.dbPath, repositoryKey);
+          const repository = new Repository(createAdapter({ ...config, encryptionKey: repositoryKey }));
           const searchEngine = new SearchEngine(repository, config);
           const graphService = new KnowledgeGraphService(repository);
           const memoryService = new MemoryService(repository, config, graphService);

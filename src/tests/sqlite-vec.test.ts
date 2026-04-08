@@ -129,7 +129,7 @@ test("SqliteVecEngine.createIndex keeps the dominant embedding dimension", () =>
           insertedEmbeddings.push(embedding);
         }
       }),
-      transaction: (callback: () => void) => () => callback()
+      transaction: (callback: () => void) => callback()
     },
     getEmbeddingIndexSnapshot: () => ({
       count: vectors.length,

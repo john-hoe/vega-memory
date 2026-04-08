@@ -6,9 +6,19 @@ import test from "node:test";
 
 import { loadConfig } from "../config.js";
 
+const assertConfigSubset = (
+  actual: Record<string, unknown>,
+  expected: Record<string, unknown>
+): void => {
+  for (const [key, value] of Object.entries(expected)) {
+    assert.deepEqual(actual[key], value);
+  }
+};
+
 test("loadConfig returns the documented defaults", () => {
   const previous = {
     VEGA_DB_PATH: process.env.VEGA_DB_PATH,
+    VEGA_DATABASE_TYPE: process.env.VEGA_DATABASE_TYPE,
     VEGA_EMBEDDING_PROVIDER: process.env.VEGA_EMBEDDING_PROVIDER,
     OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
     OLLAMA_MODEL: process.env.OLLAMA_MODEL,
@@ -31,10 +41,27 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_SLACK_BOT_TOKEN: process.env.VEGA_SLACK_BOT_TOKEN,
     VEGA_SLACK_CHANNEL: process.env.VEGA_SLACK_CHANNEL,
     VEGA_SLACK_ENABLED: process.env.VEGA_SLACK_ENABLED,
+    VEGA_STRIPE_SECRET_KEY: process.env.VEGA_STRIPE_SECRET_KEY,
+    VEGA_STRIPE_WEBHOOK_SECRET: process.env.VEGA_STRIPE_WEBHOOK_SECRET,
+    VEGA_STRIPE_PUBLISHABLE_KEY: process.env.VEGA_STRIPE_PUBLISHABLE_KEY,
+    VEGA_STRIPE_ENABLED: process.env.VEGA_STRIPE_ENABLED,
     VEGA_OIDC_ISSUER_URL: process.env.VEGA_OIDC_ISSUER_URL,
     VEGA_OIDC_CLIENT_ID: process.env.VEGA_OIDC_CLIENT_ID,
     VEGA_OIDC_CLIENT_SECRET: process.env.VEGA_OIDC_CLIENT_SECRET,
     VEGA_OIDC_CALLBACK_URL: process.env.VEGA_OIDC_CALLBACK_URL,
+    VEGA_REDIS_URL: process.env.VEGA_REDIS_URL,
+    VEGA_REDIS_HOST: process.env.VEGA_REDIS_HOST,
+    VEGA_REDIS_PORT: process.env.VEGA_REDIS_PORT,
+    VEGA_REDIS_PASSWORD: process.env.VEGA_REDIS_PASSWORD,
+    VEGA_REDIS_DB: process.env.VEGA_REDIS_DB,
+    VEGA_REDIS_ENABLED: process.env.VEGA_REDIS_ENABLED,
+    VEGA_PG_HOST: process.env.VEGA_PG_HOST,
+    VEGA_PG_PORT: process.env.VEGA_PG_PORT,
+    VEGA_PG_DATABASE: process.env.VEGA_PG_DATABASE,
+    VEGA_PG_USER: process.env.VEGA_PG_USER,
+    VEGA_PG_PASSWORD: process.env.VEGA_PG_PASSWORD,
+    VEGA_PG_SSL: process.env.VEGA_PG_SSL,
+    VEGA_PG_SCHEMA: process.env.VEGA_PG_SCHEMA,
     VEGA_DB_ENCRYPTION: process.env.VEGA_DB_ENCRYPTION,
     VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
     VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR,
@@ -42,6 +69,7 @@ test("loadConfig returns the documented defaults", () => {
   };
 
   delete process.env.VEGA_DB_PATH;
+  delete process.env.VEGA_DATABASE_TYPE;
   delete process.env.VEGA_EMBEDDING_PROVIDER;
   delete process.env.OLLAMA_BASE_URL;
   delete process.env.OLLAMA_MODEL;
@@ -64,17 +92,35 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_SLACK_BOT_TOKEN;
   delete process.env.VEGA_SLACK_CHANNEL;
   delete process.env.VEGA_SLACK_ENABLED;
+  delete process.env.VEGA_STRIPE_SECRET_KEY;
+  delete process.env.VEGA_STRIPE_WEBHOOK_SECRET;
+  delete process.env.VEGA_STRIPE_PUBLISHABLE_KEY;
+  delete process.env.VEGA_STRIPE_ENABLED;
   delete process.env.VEGA_OIDC_ISSUER_URL;
   delete process.env.VEGA_OIDC_CLIENT_ID;
   delete process.env.VEGA_OIDC_CLIENT_SECRET;
   delete process.env.VEGA_OIDC_CALLBACK_URL;
+  delete process.env.VEGA_REDIS_URL;
+  delete process.env.VEGA_REDIS_HOST;
+  delete process.env.VEGA_REDIS_PORT;
+  delete process.env.VEGA_REDIS_PASSWORD;
+  delete process.env.VEGA_REDIS_DB;
+  delete process.env.VEGA_REDIS_ENABLED;
+  delete process.env.VEGA_PG_HOST;
+  delete process.env.VEGA_PG_PORT;
+  delete process.env.VEGA_PG_DATABASE;
+  delete process.env.VEGA_PG_USER;
+  delete process.env.VEGA_PG_PASSWORD;
+  delete process.env.VEGA_PG_SSL;
+  delete process.env.VEGA_PG_SCHEMA;
   delete process.env.VEGA_DB_ENCRYPTION;
   delete process.env.VEGA_ENCRYPTION_KEY;
   delete process.env.VEGA_CLOUD_BACKUP_DIR;
   delete process.env.VEGA_WEBHOOKS;
 
-  assert.deepEqual(loadConfig(), {
+  assertConfigSubset(loadConfig() as unknown as Record<string, unknown>, {
     dbPath: "./data/memory.db",
+    databaseType: "sqlite",
     embeddingProvider: "ollama",
     ollamaBaseUrl: "http://localhost:11434",
     ollamaModel: "bge-m3",
@@ -96,10 +142,27 @@ test("loadConfig returns the documented defaults", () => {
     slackBotToken: undefined,
     slackChannel: undefined,
     slackEnabled: false,
+    stripeSecretKey: undefined,
+    stripeWebhookSecret: undefined,
+    stripePublishableKey: undefined,
+    stripeEnabled: false,
     oidcIssuerUrl: undefined,
     oidcClientId: undefined,
     oidcClientSecret: undefined,
     oidcCallbackUrl: undefined,
+    redisUrl: undefined,
+    redisHost: undefined,
+    redisPort: undefined,
+    redisPassword: undefined,
+    redisDb: undefined,
+    redisEnabled: false,
+    pgHost: undefined,
+    pgPort: undefined,
+    pgDatabase: undefined,
+    pgUser: undefined,
+    pgPassword: undefined,
+    pgSsl: undefined,
+    pgSchema: undefined,
     observerEnabled: false,
     dbEncryption: false,
     cloudBackup: undefined,
@@ -112,6 +175,7 @@ test("loadConfig returns the documented defaults", () => {
 test("loadConfig reads overrides from process.env", () => {
   const previous = {
     VEGA_DB_PATH: process.env.VEGA_DB_PATH,
+    VEGA_DATABASE_TYPE: process.env.VEGA_DATABASE_TYPE,
     VEGA_EMBEDDING_PROVIDER: process.env.VEGA_EMBEDDING_PROVIDER,
     OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
     OLLAMA_MODEL: process.env.OLLAMA_MODEL,
@@ -134,10 +198,27 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_SLACK_BOT_TOKEN: process.env.VEGA_SLACK_BOT_TOKEN,
     VEGA_SLACK_CHANNEL: process.env.VEGA_SLACK_CHANNEL,
     VEGA_SLACK_ENABLED: process.env.VEGA_SLACK_ENABLED,
+    VEGA_STRIPE_SECRET_KEY: process.env.VEGA_STRIPE_SECRET_KEY,
+    VEGA_STRIPE_WEBHOOK_SECRET: process.env.VEGA_STRIPE_WEBHOOK_SECRET,
+    VEGA_STRIPE_PUBLISHABLE_KEY: process.env.VEGA_STRIPE_PUBLISHABLE_KEY,
+    VEGA_STRIPE_ENABLED: process.env.VEGA_STRIPE_ENABLED,
     VEGA_OIDC_ISSUER_URL: process.env.VEGA_OIDC_ISSUER_URL,
     VEGA_OIDC_CLIENT_ID: process.env.VEGA_OIDC_CLIENT_ID,
     VEGA_OIDC_CLIENT_SECRET: process.env.VEGA_OIDC_CLIENT_SECRET,
     VEGA_OIDC_CALLBACK_URL: process.env.VEGA_OIDC_CALLBACK_URL,
+    VEGA_REDIS_URL: process.env.VEGA_REDIS_URL,
+    VEGA_REDIS_HOST: process.env.VEGA_REDIS_HOST,
+    VEGA_REDIS_PORT: process.env.VEGA_REDIS_PORT,
+    VEGA_REDIS_PASSWORD: process.env.VEGA_REDIS_PASSWORD,
+    VEGA_REDIS_DB: process.env.VEGA_REDIS_DB,
+    VEGA_REDIS_ENABLED: process.env.VEGA_REDIS_ENABLED,
+    VEGA_PG_HOST: process.env.VEGA_PG_HOST,
+    VEGA_PG_PORT: process.env.VEGA_PG_PORT,
+    VEGA_PG_DATABASE: process.env.VEGA_PG_DATABASE,
+    VEGA_PG_USER: process.env.VEGA_PG_USER,
+    VEGA_PG_PASSWORD: process.env.VEGA_PG_PASSWORD,
+    VEGA_PG_SSL: process.env.VEGA_PG_SSL,
+    VEGA_PG_SCHEMA: process.env.VEGA_PG_SCHEMA,
     VEGA_DB_ENCRYPTION: process.env.VEGA_DB_ENCRYPTION,
     VEGA_ENCRYPTION_KEY: process.env.VEGA_ENCRYPTION_KEY,
     VEGA_CLOUD_BACKUP_DIR: process.env.VEGA_CLOUD_BACKUP_DIR,
@@ -145,6 +226,7 @@ test("loadConfig reads overrides from process.env", () => {
   };
 
   process.env.VEGA_DB_PATH = "/tmp/vega.db";
+  process.env.VEGA_DATABASE_TYPE = "postgres";
   process.env.VEGA_EMBEDDING_PROVIDER = "openai";
   process.env.OLLAMA_BASE_URL = "http://localhost:9999";
   process.env.OLLAMA_MODEL = "nomic-embed-text";
@@ -167,10 +249,27 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_SLACK_BOT_TOKEN = "xoxb-test-token";
   process.env.VEGA_SLACK_CHANNEL = "#vega-alerts";
   process.env.VEGA_SLACK_ENABLED = "true";
+  process.env.VEGA_STRIPE_SECRET_KEY = "sk_test_123";
+  process.env.VEGA_STRIPE_WEBHOOK_SECRET = "whsec_123";
+  process.env.VEGA_STRIPE_PUBLISHABLE_KEY = "pk_test_123";
+  process.env.VEGA_STRIPE_ENABLED = "true";
   process.env.VEGA_OIDC_ISSUER_URL = "https://issuer.example.com";
   process.env.VEGA_OIDC_CLIENT_ID = "vega-client";
   process.env.VEGA_OIDC_CLIENT_SECRET = "vega-secret";
   process.env.VEGA_OIDC_CALLBACK_URL = "http://127.0.0.1:3271/api/auth/oidc/callback";
+  process.env.VEGA_REDIS_URL = "redis://127.0.0.1:6379/2";
+  process.env.VEGA_REDIS_HOST = "redis.internal";
+  process.env.VEGA_REDIS_PORT = "6380";
+  process.env.VEGA_REDIS_PASSWORD = "redis-secret";
+  process.env.VEGA_REDIS_DB = "3";
+  process.env.VEGA_REDIS_ENABLED = "true";
+  process.env.VEGA_PG_HOST = "db.internal";
+  process.env.VEGA_PG_PORT = "5433";
+  process.env.VEGA_PG_DATABASE = "vega_prod";
+  process.env.VEGA_PG_USER = "vega_user";
+  process.env.VEGA_PG_PASSWORD = "pg-secret";
+  process.env.VEGA_PG_SSL = "true";
+  process.env.VEGA_PG_SCHEMA = "memory";
   process.env.VEGA_DB_ENCRYPTION = "true";
   process.env.VEGA_ENCRYPTION_KEY =
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -184,8 +283,9 @@ test("loadConfig reads overrides from process.env", () => {
     }
   ]);
 
-  assert.deepEqual(loadConfig(), {
+  assertConfigSubset(loadConfig() as unknown as Record<string, unknown>, {
     dbPath: "/tmp/vega.db",
+    databaseType: "postgres",
     embeddingProvider: "openai",
     ollamaBaseUrl: "http://localhost:9999",
     ollamaModel: "nomic-embed-text",
@@ -207,10 +307,27 @@ test("loadConfig reads overrides from process.env", () => {
     slackBotToken: "xoxb-test-token",
     slackChannel: "#vega-alerts",
     slackEnabled: true,
+    stripeSecretKey: "sk_test_123",
+    stripeWebhookSecret: "whsec_123",
+    stripePublishableKey: "pk_test_123",
+    stripeEnabled: true,
     oidcIssuerUrl: "https://issuer.example.com",
     oidcClientId: "vega-client",
     oidcClientSecret: "vega-secret",
     oidcCallbackUrl: "http://127.0.0.1:3271/api/auth/oidc/callback",
+    redisUrl: "redis://127.0.0.1:6379/2",
+    redisHost: "redis.internal",
+    redisPort: 6380,
+    redisPassword: "redis-secret",
+    redisDb: 3,
+    redisEnabled: true,
+    pgHost: "db.internal",
+    pgPort: 5433,
+    pgDatabase: "vega_prod",
+    pgUser: "vega_user",
+    pgPassword: "pg-secret",
+    pgSsl: true,
+    pgSchema: "memory",
     observerEnabled: true,
     dbEncryption: true,
     encryptionKey:

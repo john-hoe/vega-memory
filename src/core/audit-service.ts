@@ -143,14 +143,24 @@ export class AuditService {
   }
 
   purge(before: Date): number {
-    const result = this.repository.db
+    const threshold = before.toISOString();
+    const count =
+      this.repository.db
+        .prepare<[string], { total: number }>(
+          `SELECT COUNT(*) AS total
+           FROM audit_log
+           WHERE timestamp < ?`
+        )
+        .get(threshold)?.total ?? 0;
+
+    this.repository.db
       .prepare<[string]>(
         `DELETE FROM audit_log
          WHERE timestamp < ?`
       )
-      .run(before.toISOString());
+      .run(threshold);
 
-    return result.changes;
+    return count;
   }
 }
 

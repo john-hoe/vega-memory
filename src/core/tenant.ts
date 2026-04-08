@@ -134,7 +134,7 @@ export class TenantService {
       throw new Error(`Unsupported tenant plan: ${plan}`);
     }
 
-    const result = this.repository.db
+    this.repository.db
       .prepare<[TenantPlan, number, string, string]>(
         `UPDATE tenants
          SET plan = ?, memory_limit = ?, updated_at = ?
@@ -142,13 +142,13 @@ export class TenantService {
       )
       .run(plan, getPlanMemoryLimit(plan), now(), tenantId);
 
-    if (result.changes === 0) {
+    if (this.getTenant(tenantId) === null) {
       throw new Error(`Tenant not found: ${tenantId}`);
     }
   }
 
   deactivateTenant(tenantId: string): void {
-    const result = this.repository.db
+    this.repository.db
       .prepare<[string, string]>(
         `UPDATE tenants
          SET active = 0, updated_at = ?
@@ -156,7 +156,7 @@ export class TenantService {
       )
       .run(now(), tenantId);
 
-    if (result.changes === 0) {
+    if (this.getTenant(tenantId) === null) {
       throw new Error(`Tenant not found: ${tenantId}`);
     }
   }

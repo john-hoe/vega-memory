@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { Command } from "commander";
 
 import { loadConfig, requireDatabaseEncryptionKey } from "../config.js";
+import { createAdapter } from "../db/adapter-factory.js";
 import { registerAnalyticsCommand } from "./commands/analytics.js";
 import { registerAuditCommand } from "./commands/audit.js";
 import { registerBenchmarkCommand } from "./commands/benchmark.js";
@@ -106,7 +107,7 @@ async function main(): Promise<void> {
   );
   ensureDataDirectory(config.dbPath);
 
-  const repository = new Repository(config.dbPath, repositoryKey);
+  const repository = new Repository(createAdapter({ ...config, encryptionKey: repositoryKey }));
   const searchEngine = new SearchEngine(repository, config);
   const knowledgeGraphService = new KnowledgeGraphService(repository);
   const memoryService = new MemoryService(repository, config, knowledgeGraphService);

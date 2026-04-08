@@ -14,6 +14,7 @@ export interface CloudBackupConfig {
 export interface VegaConfig {
   dbPath: string;
   dbEncryption: boolean;
+  databaseType?: "sqlite" | "postgres";
   embeddingProvider?: "ollama" | "openai";
   ollamaBaseUrl: string;
   ollamaModel: string;
@@ -36,10 +37,27 @@ export interface VegaConfig {
   slackBotToken?: string;
   slackChannel?: string;
   slackEnabled?: boolean;
+  stripeSecretKey?: string;
+  stripeWebhookSecret?: string;
+  stripePublishableKey?: string;
+  stripeEnabled?: boolean;
   oidcIssuerUrl?: string;
   oidcClientId?: string;
   oidcClientSecret?: string;
   oidcCallbackUrl?: string;
+  redisUrl?: string;
+  redisHost?: string;
+  redisPort?: number;
+  redisPassword?: string;
+  redisDb?: number;
+  redisEnabled?: boolean;
+  pgHost?: string;
+  pgPort?: number;
+  pgDatabase?: string;
+  pgUser?: string;
+  pgPassword?: string;
+  pgSsl?: boolean;
+  pgSchema?: string;
   encryptionKey?: string;
   cloudBackup?: CloudBackupConfig;
   customRedactionPatterns?: RedactionPattern[];
@@ -56,6 +74,15 @@ const parseNumber = (value: string | undefined, fallback: number): number => {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const parseOptionalNumber = (value: string | undefined): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 };
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -78,6 +105,9 @@ export const expandHomePath = (value: string): string => {
 
 const parseMode = (value: string | undefined): VegaConfig["mode"] =>
   value === "client" ? "client" : "server";
+
+const parseDatabaseType = (value: string | undefined): VegaConfig["databaseType"] =>
+  value === "postgres" ? "postgres" : "sqlite";
 
 const parseOptionalString = (value: unknown): string | undefined => {
   if (typeof value !== "string") {
@@ -259,6 +289,7 @@ export const loadConfig = (): VegaConfig => {
   return {
     dbPath: expandHomePath(process.env.VEGA_DB_PATH ?? "./data/memory.db"),
     dbEncryption,
+    databaseType: parseDatabaseType(process.env.VEGA_DATABASE_TYPE),
     embeddingProvider:
       process.env.VEGA_EMBEDDING_PROVIDER === "openai" ? "openai" : "ollama",
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
@@ -288,10 +319,27 @@ export const loadConfig = (): VegaConfig => {
     slackBotToken: process.env.VEGA_SLACK_BOT_TOKEN || undefined,
     slackChannel: process.env.VEGA_SLACK_CHANNEL || undefined,
     slackEnabled: parseBoolean(process.env.VEGA_SLACK_ENABLED, false),
+    stripeSecretKey: process.env.VEGA_STRIPE_SECRET_KEY || undefined,
+    stripeWebhookSecret: process.env.VEGA_STRIPE_WEBHOOK_SECRET || undefined,
+    stripePublishableKey: process.env.VEGA_STRIPE_PUBLISHABLE_KEY || undefined,
+    stripeEnabled: parseBoolean(process.env.VEGA_STRIPE_ENABLED, false),
     oidcIssuerUrl: process.env.VEGA_OIDC_ISSUER_URL || undefined,
     oidcClientId: process.env.VEGA_OIDC_CLIENT_ID || undefined,
     oidcClientSecret: process.env.VEGA_OIDC_CLIENT_SECRET || undefined,
     oidcCallbackUrl: process.env.VEGA_OIDC_CALLBACK_URL || undefined,
+    redisUrl: process.env.VEGA_REDIS_URL || undefined,
+    redisHost: process.env.VEGA_REDIS_HOST || undefined,
+    redisPort: parseOptionalNumber(process.env.VEGA_REDIS_PORT),
+    redisPassword: process.env.VEGA_REDIS_PASSWORD || undefined,
+    redisDb: parseOptionalNumber(process.env.VEGA_REDIS_DB),
+    redisEnabled: parseBoolean(process.env.VEGA_REDIS_ENABLED, false),
+    pgHost: process.env.VEGA_PG_HOST || undefined,
+    pgPort: parseOptionalNumber(process.env.VEGA_PG_PORT),
+    pgDatabase: process.env.VEGA_PG_DATABASE || undefined,
+    pgUser: process.env.VEGA_PG_USER || undefined,
+    pgPassword: process.env.VEGA_PG_PASSWORD || undefined,
+    pgSsl: parseOptionalBoolean(process.env.VEGA_PG_SSL),
+    pgSchema: process.env.VEGA_PG_SCHEMA || undefined,
     ...(encryptionKey === undefined ? {} : { encryptionKey }),
     cloudBackup: parseCloudBackup(),
     customRedactionPatterns: fileConfig.customRedactionPatterns ?? [],

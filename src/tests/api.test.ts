@@ -20,6 +20,7 @@ import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import { TenantService } from "../core/tenant.js";
+import { UserService } from "../core/user.js";
 import { Repository } from "../db/repository.js";
 import { SearchEngine } from "../search/engine.js";
 
@@ -706,6 +707,104 @@ test("billing counts API request log rows for tenant traffic", async () => {
 
     assert.equal(usage.api_calls, 2);
   } finally {
+    await harness.cleanup();
+  }
+});
+
+test("billing routes expose plans, tenant subscription status, cancellation, and unauthenticated webhook handling", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenant = tenantService.createTenant("Billing Tenant", "pro");
+  const userService = new UserService(harness.repository);
+  const user = userService.createUser("billing@example.com", "Billing User", "member", tenant.id);
+  const sessionToken = "billing-dashboard-session";
+
+  registerDashboardSession(harness.config, sessionToken, user);
+
+  try {
+    const plansResponse = await harness.request("/api/billing/plans");
+    const plans = await readJson<Array<{ id: string }>>(plansResponse);
+    const subscribeResponse = await fetch(`${harness.baseUrl}/api/billing/subscribe`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: `${DASHBOARD_AUTH_COOKIE}=${sessionToken}`
+      },
+      body: JSON.stringify({
+        plan_id: "pro"
+      })
+    });
+    const subscribed = await readJson<{
+      customer: { id: string; tenantId: string };
+      subscription: { id: string; status: string };
+    }>(subscribeResponse);
+    const statusResponse = await fetch(`${harness.baseUrl}/api/billing/status`, {
+      headers: {
+        cookie: `${DASHBOARD_AUTH_COOKIE}=${sessionToken}`
+      }
+    });
+    const statusBody = await readJson<{
+      tenant_id: string;
+      configured: boolean;
+      subscription: { id: string; status: string } | null;
+    }>(statusResponse);
+    const cancelResponse = await fetch(
+      `${harness.baseUrl}/api/billing/subscribe/${subscribed.subscription.id}`,
+      {
+        method: "DELETE",
+        headers: {
+          cookie: `${DASHBOARD_AUTH_COOKIE}=${sessionToken}`
+        }
+      }
+    );
+    const canceled = await readJson<{ id: string; status: string }>(cancelResponse);
+    const webhookResponse = await fetch(`${harness.baseUrl}/api/billing/webhook`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "stripe-signature": "sig_stub"
+      },
+      body: JSON.stringify({
+        type: "customer.subscription.updated",
+        data: {
+          object: {
+            id: subscribed.subscription.id
+          }
+        }
+      })
+    });
+    const webhookBody = await readJson<{
+      event: string;
+      data: { object: { id: string } };
+    }>(webhookResponse);
+
+    assert.equal(plansResponse.status, 200);
+    assert.equal(plans.length, 3);
+    assert.deepEqual(
+      plans.map((plan) => plan.id),
+      ["free", "pro", "enterprise"]
+    );
+
+    assert.equal(subscribeResponse.status, 201);
+    assert.match(subscribed.customer.id, /^cus_stub_/);
+    assert.equal(subscribed.customer.tenantId, tenant.id);
+    assert.match(subscribed.subscription.id, /^sub_stub_/);
+    assert.equal(subscribed.subscription.status, "active");
+
+    assert.equal(statusResponse.status, 200);
+    assert.equal(statusBody.tenant_id, tenant.id);
+    assert.equal(statusBody.configured, false);
+    assert.equal(statusBody.subscription?.id, subscribed.subscription.id);
+
+    assert.equal(cancelResponse.status, 200);
+    assert.equal(canceled.id, subscribed.subscription.id);
+    assert.equal(canceled.status, "canceled");
+
+    assert.equal(webhookResponse.status, 200);
+    assert.equal(webhookBody.event, "customer.subscription.updated");
+    assert.equal(webhookBody.data.object.id, subscribed.subscription.id);
+  } finally {
+    revokeDashboardSession(harness.config, sessionToken);
     await harness.cleanup();
   }
 });

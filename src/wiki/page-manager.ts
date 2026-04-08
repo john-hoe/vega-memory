@@ -315,9 +315,12 @@ export class PageManager {
     const insertFts = this.repository.db.prepare<[number, string, string, string, string]>(
       "INSERT INTO wiki_pages_fts (rowid, title, content, summary, tags) VALUES (?, ?, ?, ?, ?)"
     );
+    const getPageRowId = this.repository.db.prepare<[string], { rowid: number }>(
+      "SELECT rowid FROM wiki_pages WHERE id = ?"
+    );
 
     this.repository.db.transaction(() => {
-      const result = insertPage.run(
+      insertPage.run(
         page.id,
         page.slug,
         page.title,
@@ -341,15 +344,20 @@ export class PageManager {
         page.reviewed_at,
         page.published_at
       );
+      const row = getPageRowId.get(page.id);
+
+      if (!row) {
+        throw new Error(`Failed to resolve rowid for wiki page ${page.id}`);
+      }
 
       insertFts.run(
-        Number(result.lastInsertRowid),
+        row.rowid,
         page.title,
         page.content,
         page.summary,
         serializeJsonArray(page.tags)
       );
-    })();
+    });
 
     return page;
   }
@@ -530,7 +538,7 @@ export class PageManager {
         nextPage.summary,
         serializeJsonArray(nextPage.tags)
       );
-    })();
+    });
 
     return nextPage;
   }
@@ -557,7 +565,7 @@ export class PageManager {
         serializeJsonArray(existing.tags)
       );
       deletePage.run(id);
-    })();
+    });
   }
 
   listPages(filters: WikiPageListFilters): WikiPage[] {
