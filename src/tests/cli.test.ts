@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
+import type { VegaConfig } from "../config.js";
+import { TopicService } from "../core/topic-service.js";
 import { Repository } from "../db/repository.js";
 import { PageManager } from "../wiki/page-manager.js";
 
@@ -18,6 +20,24 @@ const childBaseEnv = Object.fromEntries(
   )
 );
 const cliBootstrap = `process.argv.splice(1, 0, ${JSON.stringify(cliPath)}); await import(${JSON.stringify(cliModuleUrl)});`;
+const topicConfig: VegaConfig = {
+  dbPath: ":memory:",
+  ollamaBaseUrl: "http://localhost:11434",
+  ollamaModel: "bge-m3",
+  tokenBudget: 2000,
+  similarityThreshold: 0.85,
+  shardingEnabled: false,
+  backupRetentionDays: 7,
+  observerEnabled: false,
+  dbEncryption: false,
+  apiPort: 3271,
+  apiKey: undefined,
+  mode: "server",
+  serverUrl: undefined,
+  cacheDbPath: "./data/cache.db",
+  telegramBotToken: undefined,
+  telegramChatId: undefined
+};
 
 const runCli = (args: string[], env: NodeJS.ProcessEnv): string =>
   execFileSync(process.execPath, ["--input-type=module", "-e", cliBootstrap, "--", ...args], {
@@ -132,6 +152,104 @@ test("CLI store and list commands work together", () => {
     assert.match(storeOutput, /\bcreated\b/);
     assert.match(listOutput, /Remember SQLite for local search/);
   } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CLI topic override and history expose versioned taxonomy changes", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-topic-"));
+  const dbPath = join(tempDir, "memory.db");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999"
+  };
+  const repository = new Repository(dbPath);
+  const topicService = new TopicService(repository, topicConfig);
+
+  try {
+    repository.createMemory({
+      id: "topic-memory",
+      tenant_id: null,
+      type: "decision",
+      project: "vega",
+      title: "Topic memory",
+      content: "Seed taxonomy history for CLI coverage.",
+      summary: null,
+      embedding: null,
+      importance: 0.5,
+      source: "explicit",
+      tags: ["taxonomy"],
+      created_at: "2026-04-09T00:00:00.000Z",
+      updated_at: "2026-04-09T00:00:00.000Z",
+      accessed_at: "2026-04-09T00:00:00.000Z",
+      status: "active",
+      verified: "verified",
+      scope: "project",
+      accessed_projects: ["vega"]
+    });
+    await topicService.assignTopic("topic-memory", "database", "auto");
+    repository.close();
+
+    const overrideOutput = JSON.parse(
+      runCli(
+        [
+          "topic",
+          "override",
+          "--project",
+          "vega",
+          "--topic-key",
+          "database",
+          "--label",
+          "Database Core",
+          "--description",
+          "CLI override",
+          "--json"
+        ],
+        env
+      )
+    ) as {
+      topic: {
+        version: number;
+        label: string;
+      };
+      reassigned_memory_count: number;
+    };
+    const historyOutput = JSON.parse(
+      runCli(
+        [
+          "topic",
+          "history",
+          "--project",
+          "vega",
+          "--topic-key",
+          "database",
+          "--json"
+        ],
+        env
+      )
+    ) as Array<{ version: number; state: string; label: string }>;
+    const reopened = new Repository(dbPath);
+    const auditEntries = reopened.getAuditLog({ action: "topic_override" });
+
+    assert.equal(overrideOutput.topic.version, 2);
+    assert.equal(overrideOutput.topic.label, "Database Core");
+    assert.equal(overrideOutput.reassigned_memory_count, 1);
+    assert.deepEqual(
+      historyOutput.map((topic) => ({
+        version: topic.version,
+        state: topic.state,
+        label: topic.label
+      })),
+      [
+        { version: 2, state: "active", label: "Database Core" },
+        { version: 1, state: "superseded", label: "Database" }
+      ]
+    );
+    assert.equal(auditEntries.length, 1);
+    assert.equal(auditEntries[0]?.actor, "cli");
+    reopened.close();
+  } finally {
+    repository.close();
     rmSync(tempDir, { recursive: true, force: true });
   }
 });

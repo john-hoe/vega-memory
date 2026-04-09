@@ -37,6 +37,7 @@ import { registerStoreCommand } from "./commands/store.js";
 import { registerPluginCommands } from "./commands/plugins.js";
 import { registerTenantCommands } from "./commands/tenant.js";
 import { registerTemplateCommands } from "./commands/templates.js";
+import { registerTopicCommand } from "./commands/topic.js";
 import { registerTuneCommand } from "./commands/tune.js";
 import { registerWikiCommand } from "./commands/wiki.js";
 import { registerWhiteLabelCommand } from "./commands/whitelabel.js";
@@ -55,6 +56,7 @@ import { QualityService } from "../core/quality.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import { TenantService } from "../core/tenant.js";
+import { TopicService } from "../core/topic-service.js";
 import { WhiteLabelConfig } from "../core/whitelabel.js";
 import { Repository } from "../db/repository.js";
 import { PluginLoader } from "../plugins/loader.js";
@@ -138,6 +140,7 @@ async function main(): Promise<void> {
   const imageMemoryService = new ImageMemoryService(repository, memoryService, imageAnalyzer);
   const docIndexService = new DocIndexService(repository, memoryService);
   const qualityService = new QualityService(repository, config);
+  const topicService = new TopicService(repository, config);
   const pluginLoader = new PluginLoader();
   const templateMarketplace = new TemplateMarketplace(config);
   const relevanceTuner = new RelevanceTuner(repository);
@@ -194,6 +197,7 @@ async function main(): Promise<void> {
   registerArchiveCommands(program, archiveService);
   registerRSSCommands(program, rssService);
   registerTenantCommands(program, tenantService);
+  registerTopicCommand(program, topicService);
   registerWikiCommand(
     program,
     repository,

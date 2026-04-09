@@ -6,6 +6,7 @@ import test from "node:test";
 
 import type { VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
+import { TopicService } from "../core/topic-service.js";
 import type { Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { createMCPServer } from "../mcp/server.js";
@@ -221,6 +222,105 @@ test("wiki_list MCP tool returns pages", async () => {
   } finally {
     repository.close();
     await server.close();
+  }
+});
+
+test("topic MCP tools expose override, history, revert, and reassign flows", async () => {
+  const { repository, server } = createServerHarness();
+  const topicService = new TopicService(repository, baseConfig);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "topic-memory",
+        title: "Topic memory",
+        content: "Seed taxonomy state for MCP coverage."
+      })
+    );
+    await topicService.assignTopic("topic-memory", "database", "auto");
+
+    const overrideResult = await getRegisteredTools(server).topic_override.handler(
+      {
+        project: "vega",
+        topic_key: "database",
+        label: "Database Core",
+        description: "MCP override"
+      },
+      {}
+    );
+    const historyAfterOverride = await getRegisteredTools(server).topic_history.handler(
+      {
+        project: "vega",
+        topic_key: "database"
+      },
+      {}
+    );
+    const revertResult = await getRegisteredTools(server).topic_revert.handler(
+      {
+        project: "vega",
+        topic_key: "database",
+        target_version: 1
+      },
+      {}
+    );
+    const reassignResult = await getRegisteredTools(server).topic_reassign.handler(
+      {
+        memory_id: "topic-memory",
+        from_topic_key: "database",
+        to_topic_key: "auth.login"
+      },
+      {}
+    );
+
+    const overridePayload = parseToolPayload<{
+      topic: { version: number; label: string };
+      reassigned_memory_count: number;
+    }>(overrideResult);
+    const historyPayload = parseToolPayload<
+      Array<{ version: number; state: string; label: string }>
+    >(historyAfterOverride);
+    const revertPayload = parseToolPayload<{
+      topic: { version: number; label: string };
+      source_version: number;
+    }>(revertResult);
+    const reassignPayload = parseToolPayload<{
+      memory_id: string;
+      project: string;
+      to_topic_created: boolean;
+    }>(reassignResult);
+    const auditEntries = repository.getAuditLog().filter((entry) =>
+      ["topic_override", "topic_revert", "topic_reassign"].includes(entry.action)
+    );
+
+    assert.equal(overridePayload.topic.version, 2);
+    assert.equal(overridePayload.topic.label, "Database Core");
+    assert.equal(overridePayload.reassigned_memory_count, 1);
+    assert.deepEqual(
+      historyPayload.map((topic) => ({
+        version: topic.version,
+        state: topic.state,
+        label: topic.label
+      })),
+      [
+        { version: 2, state: "active", label: "Database Core" },
+        { version: 1, state: "superseded", label: "Database" }
+      ]
+    );
+    assert.equal(revertPayload.topic.version, 3);
+    assert.equal(revertPayload.topic.label, "Database");
+    assert.equal(revertPayload.source_version, 1);
+    assert.equal(reassignPayload.memory_id, "topic-memory");
+    assert.equal(reassignPayload.project, "vega");
+    assert.equal(reassignPayload.to_topic_created, true);
+    assert.deepEqual(repository.listMemoryIdsByTopic("vega", "database"), []);
+    assert.deepEqual(repository.listMemoryIdsByTopic("vega", "auth.login"), ["topic-memory"]);
+    assert.deepEqual(
+      auditEntries.map((entry) => entry.action),
+      ["topic_override", "topic_revert", "topic_reassign"]
+    );
+    assert.ok(auditEntries.every((entry) => entry.actor === "mcp"));
+  } finally {
+    repository.close();
   }
 });
 

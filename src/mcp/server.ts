@@ -10,6 +10,7 @@ import { isDeepRecallAvailable, type VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { getHealthReport } from "../core/health.js";
+import { TopicService } from "../core/topic-service.js";
 import { Repository } from "../db/repository.js";
 import { ContentDistiller } from "../ingestion/distiller.js";
 import { ContentFetcher } from "../ingestion/fetcher.js";
@@ -37,7 +38,8 @@ import type {
   SessionStartMode,
   SessionStartResult,
   StoreParams,
-  StoreResult
+  StoreResult,
+  Topic
 } from "../core/types.js";
 import { WIKI_PAGE_STATUSES, WIKI_PAGE_TYPES } from "../wiki/types.js";
 
@@ -125,6 +127,22 @@ const serializeWikiPageListEntry = (page: {
   page_type: page.page_type,
   status: page.status,
   updated_at: page.updated_at
+});
+
+const serializeTopic = (topic: Topic) => ({
+  id: topic.id,
+  tenant_id: topic.tenant_id ?? null,
+  project: topic.project,
+  topic_key: topic.topic_key,
+  version: topic.version,
+  label: topic.label,
+  kind: topic.kind,
+  description: topic.description,
+  source: topic.source,
+  state: topic.state,
+  supersedes_topic_id: topic.supersedes_topic_id,
+  created_at: topic.created_at,
+  updated_at: topic.updated_at
 });
 
 const resultCountForSessionStart = (result: SessionStartResult): number =>
@@ -314,6 +332,7 @@ export function createMCPServer({
     version: "0.1.0"
   });
   const diagnoseService = new DiagnoseService(repository, config);
+  const topicService = new TopicService(repository, config);
   const rawArchiveService = archiveService ?? new ArchiveService(repository, config);
   const observer = {
     enabled: config.observerEnabled,
@@ -529,6 +548,104 @@ export function createMCPServer({
             id: args.id,
             action: "deleted"
           },
+          resultCount: 1
+        };
+      })
+  );
+
+  server.tool(
+    "topic_override",
+    "Create a new explicit topic version and supersede the current head.",
+    {
+      project: z.string().trim().min(1),
+      topic_key: z.string().trim().min(1),
+      label: z.string().trim().min(1),
+      description: z.string().trim().min(1).optional()
+    },
+    async (args) =>
+      runTool(repository, "topic_override", args, observer, async () => {
+        const result = await topicService.overrideTopic(
+          args.project,
+          args.topic_key,
+          args.label,
+          args.description,
+          MCP_AUDIT_CONTEXT
+        );
+
+        return {
+          result: {
+            ...result,
+            topic: serializeTopic(result.topic)
+          },
+          resultCount: Math.max(result.reassigned_memory_count, 1)
+        };
+      })
+  );
+
+  server.tool(
+    "topic_revert",
+    "Create a new active topic head from a historical version.",
+    {
+      project: z.string().trim().min(1),
+      topic_key: z.string().trim().min(1),
+      target_version: z.number().int().positive()
+    },
+    async (args) =>
+      runTool(repository, "topic_revert", args, observer, async () => {
+        const result = await topicService.revertTopic(
+          args.project,
+          args.topic_key,
+          args.target_version,
+          MCP_AUDIT_CONTEXT
+        );
+
+        return {
+          result: {
+            ...result,
+            topic: serializeTopic(result.topic)
+          },
+          resultCount: Math.max(result.reassigned_memory_count, 1)
+        };
+      })
+  );
+
+  server.tool(
+    "topic_history",
+    "List all stored versions for a topic key.",
+    {
+      project: z.string().trim().min(1),
+      topic_key: z.string().trim().min(1)
+    },
+    async (args) =>
+      runTool(repository, "topic_history", args, observer, async () => {
+        const result = topicService.listTopicVersions(args.project, args.topic_key);
+
+        return {
+          result: result.map(serializeTopic),
+          resultCount: result.length
+        };
+      })
+  );
+
+  server.tool(
+    "topic_reassign",
+    "Reclassify one memory from one topic key to another.",
+    {
+      memory_id: z.string().trim().min(1),
+      from_topic_key: z.string().trim().min(1),
+      to_topic_key: z.string().trim().min(1)
+    },
+    async (args) =>
+      runTool(repository, "topic_reassign", args, observer, async () => {
+        const result = await topicService.reassignMemoryTopic(
+          args.memory_id,
+          args.from_topic_key,
+          args.to_topic_key,
+          MCP_AUDIT_CONTEXT
+        );
+
+        return {
+          result,
           resultCount: 1
         };
       })

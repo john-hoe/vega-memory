@@ -10,6 +10,7 @@ import type {
   GraphTraversal,
   Memory,
   MemoryListFilters,
+  MemoryTopic,
   MemoryVersion,
   PerformanceLog,
   RawArchive,
@@ -103,6 +104,16 @@ interface TopicRow {
 
 interface TopicMemoryIdRow {
   memory_id: string;
+}
+
+interface MemoryTopicRow {
+  memory_id: string;
+  topic_id: string;
+  source: MemoryTopic["source"];
+  confidence: number | null;
+  status: MemoryTopic["status"];
+  created_at: string;
+  updated_at: string;
 }
 
 interface MetadataRow {
@@ -316,6 +327,10 @@ function mapRawArchive(row: RawArchiveRow): RawArchive {
 }
 
 function mapTopic(row: TopicRow): Topic {
+  return row;
+}
+
+function mapMemoryTopic(row: MemoryTopicRow): MemoryTopic {
   return row;
 }
 
@@ -881,6 +896,276 @@ export class Repository {
       .all(...params);
 
     return rows.map(mapTopic);
+  }
+
+  getActiveTopic(project: string, topicKey: string, tenantId?: string | null): Topic | null {
+    const normalizedTopicKey = topicKey.trim().toLowerCase();
+
+    if (project.trim().length === 0 || normalizedTopicKey.length === 0) {
+      return null;
+    }
+
+    const clauses = ["project = ?", "topic_key = ?", "state = 'active'"];
+    const params: unknown[] = [project, normalizedTopicKey];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const row = this.db
+      .prepare<unknown[], TopicRow>(
+        `SELECT *
+         FROM topics
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY version DESC
+         LIMIT 1`
+      )
+      .get(...params);
+
+    return row ? mapTopic(row) : null;
+  }
+
+  getTopicVersion(
+    project: string,
+    topicKey: string,
+    version: number,
+    tenantId?: string | null
+  ): Topic | null {
+    const normalizedTopicKey = topicKey.trim().toLowerCase();
+
+    if (project.trim().length === 0 || normalizedTopicKey.length === 0 || version < 1) {
+      return null;
+    }
+
+    const clauses = ["project = ?", "topic_key = ?", "version = ?"];
+    const params: unknown[] = [project, normalizedTopicKey, version];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const row = this.db
+      .prepare<unknown[], TopicRow>(
+        `SELECT *
+         FROM topics
+         WHERE ${clauses.join(" AND ")}
+         LIMIT 1`
+      )
+      .get(...params);
+
+    return row ? mapTopic(row) : null;
+  }
+
+  listTopicVersions(project: string, topicKey: string, tenantId?: string | null): Topic[] {
+    const normalizedTopicKey = topicKey.trim().toLowerCase();
+
+    if (project.trim().length === 0 || normalizedTopicKey.length === 0) {
+      return [];
+    }
+
+    const clauses = ["project = ?", "topic_key = ?"];
+    const params: unknown[] = [project, normalizedTopicKey];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], TopicRow>(
+        `SELECT *
+         FROM topics
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY version DESC`
+      )
+      .all(...params);
+
+    return rows.map(mapTopic);
+  }
+
+  createTopic(topic: Topic): void {
+    this.db
+      .prepare<
+        [
+          string,
+          string | null,
+          string,
+          string,
+          number,
+          string,
+          Topic["kind"],
+          string | null,
+          Topic["source"],
+          Topic["state"],
+          string | null,
+          string,
+          string
+        ]
+      >(
+        `INSERT INTO topics (
+           id,
+           tenant_id,
+           project,
+           topic_key,
+           version,
+           label,
+           kind,
+           description,
+           source,
+           state,
+           supersedes_topic_id,
+           created_at,
+           updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        topic.id,
+        topic.tenant_id ?? null,
+        topic.project,
+        topic.topic_key,
+        topic.version,
+        topic.label,
+        topic.kind,
+        topic.description,
+        topic.source,
+        topic.state,
+        topic.supersedes_topic_id,
+        topic.created_at,
+        topic.updated_at
+      );
+  }
+
+  updateTopicState(topicId: string, state: Topic["state"], updatedAt: string): void {
+    this.db
+      .prepare<[Topic["state"], string, string]>(
+        `UPDATE topics
+         SET state = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(state, updatedAt, topicId);
+  }
+
+  listMemoryTopicsByTopicId(topicId: string, status?: MemoryTopic["status"]): MemoryTopic[] {
+    const clauses = ["topic_id = ?"];
+    const params: unknown[] = [topicId];
+
+    if (status !== undefined) {
+      clauses.push("status = ?");
+      params.push(status);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], MemoryTopicRow>(
+        `SELECT *
+         FROM memory_topics
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY created_at ASC, memory_id ASC`
+      )
+      .all(...params);
+
+    return rows.map(mapMemoryTopic);
+  }
+
+  getMemoryTopic(memoryId: string, topicId: string): MemoryTopic | null {
+    const row = this.db
+      .prepare<[string, string], MemoryTopicRow>(
+        `SELECT *
+         FROM memory_topics
+         WHERE memory_id = ? AND topic_id = ?
+         LIMIT 1`
+      )
+      .get(memoryId, topicId);
+
+    return row ? mapMemoryTopic(row) : null;
+  }
+
+  createMemoryTopic(memoryTopic: MemoryTopic): void {
+    this.db
+      .prepare<
+        [
+          string,
+          string,
+          MemoryTopic["source"],
+          number | null,
+          MemoryTopic["status"],
+          string,
+          string
+        ]
+      >(
+        `INSERT INTO memory_topics (
+           memory_id,
+           topic_id,
+           source,
+           confidence,
+           status,
+           created_at,
+           updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        memoryTopic.memory_id,
+        memoryTopic.topic_id,
+        memoryTopic.source,
+        memoryTopic.confidence,
+        memoryTopic.status,
+        memoryTopic.created_at,
+        memoryTopic.updated_at
+      );
+  }
+
+  updateMemoryTopic(
+    memoryId: string,
+    topicId: string,
+    updates: Pick<MemoryTopic, "updated_at"> &
+      Partial<Pick<MemoryTopic, "source" | "confidence" | "status" | "created_at">>
+  ): void {
+    const existing = this.getMemoryTopic(memoryId, topicId);
+
+    if (!existing) {
+      throw new Error(`Memory topic not found: ${memoryId}:${topicId}`);
+    }
+
+    const nextMemoryTopic: MemoryTopic = {
+      ...existing,
+      ...updates,
+      memory_id: existing.memory_id,
+      topic_id: existing.topic_id,
+      updated_at: updates.updated_at
+    };
+
+    this.db
+      .prepare<
+        [
+          MemoryTopic["source"],
+          number | null,
+          MemoryTopic["status"],
+          string,
+          string,
+          string,
+          string
+        ]
+      >(
+        `UPDATE memory_topics
+         SET source = ?,
+             confidence = ?,
+             status = ?,
+             created_at = ?,
+             updated_at = ?
+         WHERE memory_id = ? AND topic_id = ?`
+      )
+      .run(
+        nextMemoryTopic.source,
+        nextMemoryTopic.confidence,
+        nextMemoryTopic.status,
+        nextMemoryTopic.created_at,
+        nextMemoryTopic.updated_at,
+        memoryId,
+        topicId
+      );
   }
 
   listMemoryIdsByTopic(
