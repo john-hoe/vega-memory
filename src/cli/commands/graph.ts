@@ -20,6 +20,10 @@ const parseConfidence = (value: string): number => {
   return parsed;
 };
 
+const printJson = (value: unknown): void => {
+  console.log(JSON.stringify(value, null, 2));
+};
+
 export function registerGraphCommand(
   program: Command,
   knowledgeGraphService: KnowledgeGraphService
@@ -31,8 +35,54 @@ export function registerGraphCommand(
   graphCommand
     .command("stats")
     .description("Show knowledge graph stats")
-    .action(() => {
-      console.log(JSON.stringify(knowledgeGraphService.getStats(), null, 2));
+    .option("--project <project>", "limit stats to one project")
+    .action((options: { project?: string }) => {
+      printJson(knowledgeGraphService.graphStats(options.project));
+    });
+
+  graphCommand
+    .command("neighbors")
+    .description("Show neighboring graph nodes for an entity")
+    .argument("<entity>", "entity name")
+    .option("--depth <depth>", "graph traversal depth", parseDepth, 1)
+    .option(
+      "--min-confidence <confidence>",
+      "minimum relation confidence between 0 and 1",
+      parseConfidence,
+      0
+    )
+    .action((entity: string, options: { depth: number; minConfidence: number }) => {
+      const result = knowledgeGraphService.getNeighbors(
+        entity,
+        options.depth,
+        options.minConfidence
+      );
+
+      if (result.entity === null) {
+        console.log("Entity not found.");
+        return;
+      }
+
+      printJson(result);
+    });
+
+  graphCommand
+    .command("path")
+    .description("Find the shortest path between two entities")
+    .argument("<from>", "source entity")
+    .argument("<to>", "target entity")
+    .option("--max-depth <depth>", "maximum search depth", parseDepth, 6)
+    .action((from: string, to: string, options: { maxDepth: number }) => {
+      printJson(knowledgeGraphService.shortestPath(from, to, options.maxDepth));
+    });
+
+  graphCommand
+    .command("subgraph")
+    .description("Fetch the merged subgraph around one or more entities")
+    .argument("<entities...>", "seed entity names")
+    .option("--depth <depth>", "graph traversal depth", parseDepth, 1)
+    .action((entities: string[], options: { depth: number }) => {
+      printJson(knowledgeGraphService.subgraph(entities, options.depth));
     });
 
   graphCommand
@@ -57,22 +107,16 @@ export function registerGraphCommand(
         return;
       }
 
-      console.log(
-        JSON.stringify(
-          {
-            entity: result.entity,
-            relations: result.relations,
-            memories: result.memories.map((memory) => ({
-              id: memory.id,
-              title: memory.title,
-              type: memory.type,
-              project: memory.project,
-              tags: memory.tags
-            }))
-          },
-          null,
-          2
-        )
-      );
+      printJson({
+        entity: result.entity,
+        relations: result.relations,
+        memories: result.memories.map((memory) => ({
+          id: memory.id,
+          title: memory.title,
+          type: memory.type,
+          project: memory.project,
+          tags: memory.tags
+        }))
+      });
     });
 }

@@ -2,7 +2,11 @@ import type {
   EntityRelation,
   ExtractionMethod,
   ExtractedEntity,
+  GraphNeighborsResult,
+  GraphPathResult,
   GraphQueryResult,
+  GraphStats,
+  GraphSubgraphResult,
   RelationType,
   StructuredGraph
 } from "./types.js";
@@ -54,6 +58,9 @@ const createPairKey = (leftId: string, rightId: string): string =>
 
 const relatedEntityIdFor = (relation: EntityRelation, entityId: string): string =>
   relation.source_entity_id === entityId ? relation.target_entity_id : relation.source_entity_id;
+
+const uniqueMemoryIds = (relations: EntityRelation[]): string[] =>
+  [...new Set(relations.map((relation) => relation.memory_id))];
 
 interface CreateRelationOptions {
   confidence?: number;
@@ -250,8 +257,12 @@ export class KnowledgeGraphService {
     this.repository.pruneEntitiesWithoutRelations(previousEntityIds);
   }
 
-  getStats() {
-    return this.repository.getGraphStats();
+  getStats(): GraphStats {
+    return this.graphStats();
+  }
+
+  graphStats(project?: string): GraphStats {
+    return this.repository.getGraphStats(project);
   }
 
   inferRelations(memoryId?: string): number {
@@ -344,12 +355,131 @@ export class KnowledgeGraphService {
       Math.max(0, depth),
       clampConfidence(minConfidence)
     );
-    const memoryIds = [...new Set(graph.relations.map((relation) => relation.memory_id))];
+    const memoryIds = uniqueMemoryIds(graph.relations);
 
     return {
       entity,
       relations: graph.relations,
       memories: this.repository.getMemoriesByIds(memoryIds)
+    };
+  }
+
+  getNeighbors(entityName: string, depth = 1, minConfidence = 0): GraphNeighborsResult {
+    const entity = this.repository.findEntity(entityName);
+
+    if (!entity) {
+      return {
+        entity: null,
+        neighbors: [],
+        relations: [],
+        memories: []
+      };
+    }
+
+    const graph = this.repository.traverseGraph(
+      entity.id,
+      Math.max(0, depth),
+      clampConfidence(minConfidence)
+    );
+
+    return {
+      entity,
+      neighbors: graph.entities.filter((candidate) => candidate.id !== entity.id),
+      relations: graph.relations,
+      memories: this.repository.getMemoriesByIds(uniqueMemoryIds(graph.relations))
+    };
+  }
+
+  shortestPath(fromEntity: string, toEntity: string, maxDepth = 6): GraphPathResult {
+    const from = this.repository.findEntity(fromEntity);
+    const to = this.repository.findEntity(toEntity);
+
+    if (!from || !to) {
+      return {
+        from,
+        to,
+        entities: [],
+        relations: [],
+        memories: [],
+        found: false
+      };
+    }
+
+    const traversal = this.repository.findShortestPath(
+      from.id,
+      to.id,
+      Math.max(0, maxDepth)
+    );
+
+    if (!traversal) {
+      return {
+        from,
+        to,
+        entities: [],
+        relations: [],
+        memories: [],
+        found: false
+      };
+    }
+
+    const relations = this.repository.getRelationsByIds(traversal.relation_ids);
+
+    return {
+      from,
+      to,
+      entities: this.repository.listEntitiesByIds(traversal.entity_ids),
+      relations,
+      memories: this.repository.getMemoriesByIds(uniqueMemoryIds(relations)),
+      found: true
+    };
+  }
+
+  subgraph(entityNames: string[], depth = 1): GraphSubgraphResult {
+    const seedEntities = entityNames.flatMap((entityName) => {
+      const entity = this.repository.findEntity(entityName);
+      return entity ? [entity] : [];
+    });
+    const missingEntities = entityNames
+      .map((entityName) => normalizeName(entityName))
+      .filter(
+        (entityName) =>
+          entityName.length > 0 &&
+          !seedEntities.some((seedEntity) => seedEntity.name.toLowerCase() === entityName.toLowerCase())
+      );
+
+    if (seedEntities.length === 0) {
+      return {
+        seed_entities: [],
+        missing_entities: missingEntities,
+        entities: [],
+        relations: [],
+        memories: []
+      };
+    }
+
+    const entityById = new Map(seedEntities.map((entity) => [entity.id, entity]));
+    const relationById = new Map<string, EntityRelation>();
+
+    for (const seedEntity of seedEntities) {
+      const graph = this.repository.traverseGraph(seedEntity.id, Math.max(0, depth));
+
+      for (const entity of graph.entities) {
+        entityById.set(entity.id, entity);
+      }
+
+      for (const relation of graph.relations) {
+        relationById.set(relation.id, relation);
+      }
+    }
+
+    const relations = [...relationById.values()];
+
+    return {
+      seed_entities: seedEntities,
+      missing_entities: missingEntities,
+      entities: [...entityById.values()],
+      relations,
+      memories: this.repository.getMemoriesByIds(uniqueMemoryIds(relations))
     };
   }
 }

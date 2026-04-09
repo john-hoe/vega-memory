@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"git checkout .omc/state/hud-stdin-cache.json && git stash pop 2>&1\",\"description\":\"Discard hud cache conflict and restore stash\"}",
-  "error": "Exit code 1\nUpdated 1 path from the index\nAuto-merging .omc/state/hud-stdin-cache.json\nCONFLICT (content): Merge conflict in .omc/state/hud-stdin-cache.json\nAuto-merging src/core/types.ts\nOn branch main\nYour branch is up to date with 'origin/main'.\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tmodified:   src/core/types.ts\n\nUnmerged paths:\n  (use \"git restore --staged <file>...\" to unstage)\n  (use \"git add <file>...\" to mark resolution)\n\tboth modified:   .omc/sta...",
-  "timestamp": "2026-04-09T08:29:32.316Z",
-  "retry_count": 2
-}

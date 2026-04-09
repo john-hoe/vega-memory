@@ -16,6 +16,7 @@ import type {
   GraphStats,
   GraphContentCacheKind,
   GraphContentCacheRecord,
+  GraphPathTraversal,
   GraphTraversal,
   MetadataEntry,
   Memory,
@@ -187,6 +188,10 @@ interface GraphCountRow {
   total: number;
 }
 
+interface GraphAverageRow {
+  average_confidence: number | null;
+}
+
 interface CountRow {
   total: number;
 }
@@ -269,6 +274,12 @@ interface EntityRelationRow {
 
 interface RelationMemoryIdRow {
   memory_id: string;
+}
+
+interface GraphPathRow {
+  entity_ids: string;
+  relation_ids: string;
+  depth: number;
 }
 
 interface UserRow {
@@ -690,6 +701,8 @@ function normalizePositiveInteger(value: number, fallback: number): number {
 function normalizeNonNegativeInteger(value: number): number {
   return Number.isInteger(value) && value >= 0 ? value : 0;
 }
+
+const GRAPH_PATH_DELIMITER = "\u0000";
 
 export class Repository {
   readonly db: DatabaseAdapter & { loadExtension(path: string): void; name: string };
@@ -3000,25 +3013,150 @@ export class Repository {
     return row ? mapEntity(row) : null;
   }
 
-  private getEntitiesByIds(ids: string[]): Entity[] {
-    if (ids.length === 0) {
+  listEntitiesByIds(ids: string[]): Entity[] {
+    const uniqueIds = [...new Set(ids)];
+
+    if (uniqueIds.length === 0) {
       return [];
     }
 
-    const placeholders = ids.map(() => "?").join(", ");
+    const placeholders = uniqueIds.map(() => "?").join(", ");
     const rows = this.db
-      .prepare<unknown[], EntityRow>(
-        `SELECT * FROM entities WHERE id IN (${placeholders}) ORDER BY name ASC`
-      )
-      .all(...ids);
+      .prepare<unknown[], EntityRow>(`SELECT * FROM entities WHERE id IN (${placeholders})`)
+      .all(...uniqueIds);
+    const entitiesById = new Map(rows.map((row) => [row.id, mapEntity(row)]));
 
-    return rows.map(mapEntity);
+    return uniqueIds.flatMap((id) => {
+      const entity = entitiesById.get(id);
+      return entity ? [entity] : [];
+    });
+  }
+
+  getRelationsByIds(ids: string[]): EntityRelation[] {
+    const uniqueIds = [...new Set(ids)];
+
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare<unknown[], EntityRelationRow>(
+        `SELECT
+           relations.id,
+           relations.source_entity_id,
+           relations.target_entity_id,
+           relations.relation_type,
+           relations.memory_id,
+           relations.confidence,
+           relations.extraction_method,
+           relations.created_at,
+           source.name AS source_entity_name,
+           source.type AS source_entity_type,
+           target.name AS target_entity_name,
+           target.type AS target_entity_type
+         FROM relations
+         JOIN entities AS source ON source.id = relations.source_entity_id
+         JOIN entities AS target ON target.id = relations.target_entity_id
+         WHERE relations.id IN (${placeholders})`
+      )
+      .all(...uniqueIds);
+    const relationsById = new Map(rows.map((row) => [row.id, mapEntityRelation(row)]));
+
+    return uniqueIds.flatMap((id) => {
+      const relation = relationsById.get(id);
+      return relation ? [relation] : [];
+    });
+  }
+
+  findShortestPath(
+    sourceEntityId: string,
+    targetEntityId: string,
+    maxDepth: number
+  ): GraphPathTraversal | null {
+    const safeMaxDepth = normalizeNonNegativeInteger(maxDepth);
+
+    if (sourceEntityId === targetEntityId) {
+      return {
+        entity_ids: [sourceEntityId],
+        relation_ids: []
+      };
+    }
+
+    if (safeMaxDepth === 0) {
+      return null;
+    }
+
+    const row = this.db
+      .prepare<[string, string, string, string, string, number, string], GraphPathRow>(
+        `WITH RECURSIVE path_search(entity_id, entity_ids, relation_ids, depth, visited) AS (
+           SELECT ?, ?, '', 0, ?
+           UNION ALL
+           SELECT
+             CASE
+               WHEN relations.source_entity_id = path_search.entity_id THEN relations.target_entity_id
+               ELSE relations.source_entity_id
+             END AS entity_id,
+             path_search.entity_ids || ? ||
+               CASE
+                 WHEN relations.source_entity_id = path_search.entity_id THEN relations.target_entity_id
+                 ELSE relations.source_entity_id
+               END AS entity_ids,
+             CASE
+               WHEN path_search.relation_ids = '' THEN relations.id
+               ELSE path_search.relation_ids || ? || relations.id
+             END AS relation_ids,
+             path_search.depth + 1 AS depth,
+             path_search.visited ||
+               CASE
+                 WHEN relations.source_entity_id = path_search.entity_id THEN relations.target_entity_id
+                 ELSE relations.source_entity_id
+               END || '|' AS visited
+           FROM path_search
+           JOIN relations
+             ON relations.source_entity_id = path_search.entity_id
+             OR relations.target_entity_id = path_search.entity_id
+           WHERE path_search.depth < ?
+             AND instr(
+               path_search.visited,
+               '|' ||
+               CASE
+                 WHEN relations.source_entity_id = path_search.entity_id THEN relations.target_entity_id
+                 ELSE relations.source_entity_id
+               END || '|'
+             ) = 0
+         )
+         SELECT entity_ids, relation_ids, depth
+         FROM path_search
+         WHERE entity_id = ?
+         ORDER BY depth ASC, relation_ids ASC
+         LIMIT 1`
+      )
+      .get(
+        sourceEntityId,
+        sourceEntityId,
+        `|${sourceEntityId}|`,
+        GRAPH_PATH_DELIMITER,
+        GRAPH_PATH_DELIMITER,
+        safeMaxDepth,
+        targetEntityId
+      );
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      entity_ids: row.entity_ids.split(GRAPH_PATH_DELIMITER),
+      relation_ids:
+        row.relation_ids.length === 0 ? [] : row.relation_ids.split(GRAPH_PATH_DELIMITER)
+    };
   }
 
   traverseGraph(entityId: string, depth: number, minConfidence = 0): GraphTraversal {
     if (depth <= 0) {
       return {
-        entities: this.getEntitiesByIds([entityId]),
+        entities: this.listEntitiesByIds([entityId]),
         relations: []
       };
     }
@@ -3054,7 +3192,7 @@ export class Repository {
     }
 
     return {
-      entities: this.getEntitiesByIds([...visitedEntityIds]),
+      entities: this.listEntitiesByIds([...visitedEntityIds]),
       relations: [...relationById.values()]
     };
   }
@@ -3412,37 +3550,84 @@ export class Repository {
     );
   }
 
-  getGraphStats(): GraphStats {
+  private countGraphContentCacheForProject(kind: GraphContentCacheKind, project: string): number {
+    return this.listGraphContentCache(kind).reduce((count, record) => {
+      const matchesProject = this.getMemoriesByIds(record.memory_ids).some(
+        (memory) => memory.project === project
+      );
+
+      return matchesProject ? count + 1 : count;
+    }, 0);
+  }
+
+  getGraphStats(project?: string): GraphStats {
+    const normalizedProject = project?.trim();
+    const hasProjectFilter = normalizedProject !== undefined && normalizedProject.length > 0;
+    const relationCte = hasProjectFilter
+      ? `WITH filtered_relations AS (
+           SELECT relations.*
+           FROM relations
+           JOIN memories ON memories.id = relations.memory_id
+           WHERE memories.project = ?
+         )`
+      : "WITH filtered_relations AS (SELECT * FROM relations)";
+    const params = hasProjectFilter ? [normalizedProject] : [];
     const entityRows = this.db
-      .prepare<[], GraphCountRow>(
-        `SELECT type AS graph_key, COUNT(*) AS total
-         FROM entities
-         GROUP BY type
-         ORDER BY type ASC`
+      .prepare<unknown[], GraphCountRow>(
+        `${relationCte},
+         entity_ids AS (
+           SELECT source_entity_id AS entity_id FROM filtered_relations
+           UNION
+           SELECT target_entity_id AS entity_id FROM filtered_relations
+         )
+         SELECT entities.type AS graph_key, COUNT(*) AS total
+         FROM entity_ids
+         JOIN entities ON entities.id = entity_ids.entity_id
+         GROUP BY entities.type
+         ORDER BY entities.type ASC`
       )
-      .all();
+      .all(...params);
     const relationRows = this.db
-      .prepare<[], GraphCountRow>(
-        `SELECT relation_type AS graph_key, COUNT(*) AS total
-         FROM relations
+      .prepare<unknown[], GraphCountRow>(
+        `${relationCte}
+         SELECT relation_type AS graph_key, COUNT(*) AS total
+         FROM filtered_relations
          GROUP BY relation_type
          ORDER BY relation_type ASC`
       )
-      .all();
-    const totalEntities =
-      this.db.prepare<[], CountRow>("SELECT COUNT(*) AS total FROM entities").get()?.total ?? 0;
+      .all(...params);
     const totalRelations =
-      this.db.prepare<[], CountRow>("SELECT COUNT(*) AS total FROM relations").get()?.total ?? 0;
-    const trackedCodeFiles = this.countGraphContentCache("code");
-    const trackedDocFiles = this.countGraphContentCache("doc");
+      this.db
+        .prepare<unknown[], CountRow>(
+          `${relationCte}
+           SELECT COUNT(*) AS total FROM filtered_relations`
+        )
+        .get(...params)?.total ?? 0;
+    const averageConfidence =
+      this.db
+        .prepare<unknown[], GraphAverageRow>(
+          `${relationCte}
+           SELECT AVG(confidence) AS average_confidence
+           FROM filtered_relations`
+        )
+        .get(...params)?.average_confidence ?? null;
+    const totalEntities = entityRows.reduce((count, row) => count + row.total, 0);
+    const trackedCodeFiles = hasProjectFilter
+      ? this.countGraphContentCacheForProject("code", normalizedProject)
+      : this.countGraphContentCache("code");
+    const trackedDocFiles = hasProjectFilter
+      ? this.countGraphContentCacheForProject("doc", normalizedProject)
+      : this.countGraphContentCache("doc");
 
     return {
+      project: hasProjectFilter ? normalizedProject : undefined,
       total_entities: totalEntities,
       total_relations: totalRelations,
       entity_types: Object.fromEntries(entityRows.map((row) => [row.graph_key, row.total])),
       relation_types: Object.fromEntries(
         relationRows.map((row) => [row.graph_key, row.total])
       ),
+      average_confidence: averageConfidence,
       tracked_code_files: trackedCodeFiles,
       tracked_doc_files: trackedDocFiles
     };

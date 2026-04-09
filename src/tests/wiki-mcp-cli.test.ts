@@ -145,15 +145,46 @@ const createServerHarness = (
   const repository = new Repository(":memory:");
   const pageManager = new PageManager(repository);
   const crossReferenceService = new CrossReferenceService(pageManager);
+  const emptyGraphService = {
+    query: () => ({
+      entity: null,
+      relations: [],
+      memories: []
+    }),
+    getNeighbors: () => ({
+      entity: null,
+      neighbors: [],
+      relations: [],
+      memories: []
+    }),
+    shortestPath: () => ({
+      from: null,
+      to: null,
+      entities: [],
+      relations: [],
+      memories: [],
+      found: false
+    }),
+    graphStats: () => ({
+      total_entities: 0,
+      total_relations: 0,
+      entity_types: {},
+      relation_types: {},
+      average_confidence: null,
+      tracked_code_files: 0,
+      tracked_doc_files: 0
+    }),
+    subgraph: () => ({
+      seed_entities: [],
+      missing_entities: [],
+      entities: [],
+      relations: [],
+      memories: []
+    })
+  };
   const server = createMCPServer({
     repository,
-    graphService: {
-      query: () => ({
-        entity: null,
-        relations: [],
-        memories: []
-      })
-    },
+    graphService: emptyGraphService,
     memoryService: {
       store:
         services.memoryStore ??

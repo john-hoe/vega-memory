@@ -113,6 +113,43 @@ test("HTTP /api/recall and MCP memory_recall return the same canonical field set
   const recallService = new RecallService(repository, searchEngine, config);
   const sessionService = new SessionService(repository, memoryService, recallService, config);
   const compactService = new CompactService(repository, config);
+  const emptyGraphService = {
+    query: () => ({
+      entity: null,
+      relations: [],
+      memories: []
+    }),
+    getNeighbors: () => ({
+      entity: null,
+      neighbors: [],
+      relations: [],
+      memories: []
+    }),
+    shortestPath: () => ({
+      from: null,
+      to: null,
+      entities: [],
+      relations: [],
+      memories: [],
+      found: false
+    }),
+    graphStats: () => ({
+      total_entities: 0,
+      total_relations: 0,
+      entity_types: {},
+      relation_types: {},
+      average_confidence: null,
+      tracked_code_files: 0,
+      tracked_doc_files: 0
+    }),
+    subgraph: () => ({
+      seed_entities: [],
+      missing_entities: [],
+      entities: [],
+      relations: [],
+      memories: []
+    })
+  };
   const apiServer = createAPIServer(
     {
       repository,
@@ -125,13 +162,7 @@ test("HTTP /api/recall and MCP memory_recall return the same canonical field set
   );
   const mcpServer = createMCPServer({
     repository,
-    graphService: {
-      query: () => ({
-        entity: null,
-        relations: [],
-        memories: []
-      })
-    },
+    graphService: emptyGraphService,
     memoryService,
     recallService,
     sessionService,

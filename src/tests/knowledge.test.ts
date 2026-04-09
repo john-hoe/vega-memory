@@ -69,6 +69,53 @@ const createMemory = (
   };
 };
 
+const createGraphServiceStub = (
+  overrides: Partial<{
+    query: KnowledgeGraphService["query"];
+    getNeighbors: KnowledgeGraphService["getNeighbors"];
+    shortestPath: KnowledgeGraphService["shortestPath"];
+    graphStats: KnowledgeGraphService["graphStats"];
+    subgraph: KnowledgeGraphService["subgraph"];
+  }> = {}
+) => ({
+  query: () => ({
+    entity: null,
+    relations: [],
+    memories: []
+  }),
+  getNeighbors: () => ({
+    entity: null,
+    neighbors: [],
+    relations: [],
+    memories: []
+  }),
+  shortestPath: () => ({
+    from: null,
+    to: null,
+    entities: [],
+    relations: [],
+    memories: [],
+    found: false
+  }),
+  graphStats: () => ({
+    total_entities: 0,
+    total_relations: 0,
+    entity_types: {},
+    relation_types: {},
+    average_confidence: null,
+    tracked_code_files: 0,
+    tracked_doc_files: 0
+  }),
+  subgraph: () => ({
+    seed_entities: [],
+    missing_entities: [],
+    entities: [],
+    relations: [],
+    memories: []
+  }),
+  ...overrides
+});
+
 const installEmbeddingMock = (): (() => void) => {
   const originalFetch = globalThis.fetch;
   embeddingCache.clear();
@@ -258,6 +305,115 @@ test("replaceMemoryGraph infers indirect relations and query filters by confiden
       filteredResult.relations.every((relation) => relation.extraction_method === "EXTRACTED"),
       true
     );
+  } finally {
+    repository.close();
+  }
+});
+
+test("getNeighbors excludes the root entity and shortestPath returns ordered BFS results", () => {
+  const repository = new Repository(":memory:");
+  const service = new KnowledgeGraphService(repository);
+
+  try {
+    repository.createMemory(createMemory());
+    repository.createMemory(
+      createMemory({
+        id: "memory-2",
+        title: "SQLite relates to Ollama",
+        content: "SQLite relates to Ollama embeddings.",
+        tags: ["sqlite", "ollama"]
+      })
+    );
+
+    service.linkMemory("memory-1", [
+      { name: "Vega Memory", type: "concept" },
+      { name: "SQLite", type: "tool" }
+    ]);
+    service.linkMemory("memory-2", [
+      { name: "SQLite", type: "tool" },
+      { name: "Ollama", type: "tool" }
+    ]);
+
+    const neighbors = service.getNeighbors("SQLite", 1, 0.5);
+    const path = service.shortestPath("Vega Memory", "Ollama", 2);
+    const missingPath = service.shortestPath("Vega Memory", "Missing Node", 2);
+
+    assert.equal(neighbors.entity?.name, "SQLite");
+    assert.deepEqual(neighbors.neighbors.map((entity) => entity.name).sort(), [
+      "Ollama",
+      "Vega Memory"
+    ]);
+    assert.equal(neighbors.neighbors.some((entity) => entity.name === "SQLite"), false);
+    assert.equal(path.found, true);
+    assert.deepEqual(
+      path.entities.map((entity) => entity.name),
+      ["Vega Memory", "SQLite", "Ollama"]
+    );
+    assert.equal(path.relations.length, 2);
+    assert.deepEqual(
+      path.memories.map((memory) => memory.id).sort(),
+      ["memory-1", "memory-2"]
+    );
+    assert.equal(missingPath.found, false);
+    assert.equal(missingPath.to, null);
+  } finally {
+    repository.close();
+  }
+});
+
+test("subgraph merges multiple seeds and graphStats aggregates by project", () => {
+  const repository = new Repository(":memory:");
+  const service = new KnowledgeGraphService(repository);
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "memory-vega",
+        project: "vega",
+        tags: ["sqlite", "vega"]
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "memory-atlas",
+        project: "atlas",
+        title: "Atlas uses Redis",
+        content: "Atlas uses Redis for caching.",
+        tags: ["atlas", "redis"]
+      })
+    );
+
+    const vegaSource = repository.createEntity("Vega Memory", "project");
+    const vegaTarget = repository.createEntity("SQLite", "tool");
+    const atlasSource = repository.createEntity("Atlas", "project");
+    const atlasTarget = repository.createEntity("Redis", "tool");
+
+    service.createRelation(vegaSource.id, vegaTarget.id, "uses", "memory-vega", {
+      confidence: 0.8
+    });
+    service.createRelation(atlasSource.id, atlasTarget.id, "uses", "memory-atlas", {
+      confidence: 0.4
+    });
+
+    const subgraph = service.subgraph(["Vega Memory", "Missing Node"], 1);
+    const scopedStats = service.graphStats("vega");
+    const globalStats = service.graphStats();
+
+    assert.deepEqual(
+      subgraph.seed_entities.map((entity) => entity.name),
+      ["Vega Memory"]
+    );
+    assert.deepEqual(subgraph.missing_entities, ["Missing Node"]);
+    assert.deepEqual(
+      subgraph.entities.map((entity) => entity.name),
+      ["Vega Memory", "SQLite"]
+    );
+    assert.equal(scopedStats.project, "vega");
+    assert.equal(scopedStats.total_entities, 2);
+    assert.equal(scopedStats.total_relations, 1);
+    assert.equal(scopedStats.average_confidence, 0.8);
+    assert.equal(globalStats.total_relations, 2);
+    assert.equal(Math.abs((globalStats.average_confidence ?? 0) - 0.6) < 1e-9, true);
   } finally {
     repository.close();
   }
@@ -956,7 +1112,7 @@ test("memory_graph tool omits serialized embeddings", async () => {
   const repository = new Repository(":memory:");
   const server = createMCPServer({
     repository,
-    graphService: {
+    graphService: createGraphServiceStub({
       query: () => ({
         entity: {
           id: "entity-1",
@@ -976,7 +1132,7 @@ test("memory_graph tool omits serialized embeddings", async () => {
           }
         ]
       })
-    },
+    }),
     memoryService: {
       store: async () => ({ id: "noop", action: "created", title: "noop" }),
       update: async () => {},
@@ -1051,7 +1207,7 @@ test("memory_graph tool forwards min_confidence and serializes relation confiden
     | undefined;
   const server = createMCPServer({
     repository,
-    graphService: {
+    graphService: createGraphServiceStub({
       query: (entity, depth, minConfidence) => {
         queryArgs = { entity, depth, minConfidence };
 
@@ -1082,7 +1238,7 @@ test("memory_graph tool forwards min_confidence and serializes relation confiden
           memories: []
         };
       }
-    },
+    }),
     memoryService: {
       store: async () => ({ id: "noop", action: "created", title: "noop" }),
       update: async () => {},
@@ -1147,6 +1303,262 @@ test("memory_graph tool forwards min_confidence and serializes relation confiden
     });
     assert.equal(payload.relations[0]?.confidence, 0.91);
     assert.equal(payload.relations[0]?.extraction_method, "EXTRACTED");
+  } finally {
+    repository.close();
+    await server.close();
+  }
+});
+
+test("graph query tools forward arguments and serialize structured results", async () => {
+  const repository = new Repository(":memory:");
+  const received = {
+    neighbors: undefined as
+      | {
+          entity: string;
+          depth: number | undefined;
+          minConfidence: number | undefined;
+        }
+      | undefined,
+    path: undefined as
+      | {
+          from: string;
+          to: string;
+          maxDepth: number | undefined;
+        }
+      | undefined,
+    stats: undefined as string | undefined,
+    subgraph: undefined as
+      | {
+          entities: string[];
+          depth: number | undefined;
+        }
+      | undefined
+  };
+  const server = createMCPServer({
+    repository,
+    graphService: createGraphServiceStub({
+      getNeighbors: (entity, depth, minConfidence) => {
+        received.neighbors = { entity, depth, minConfidence };
+
+        return {
+          entity: {
+            id: "entity-1",
+            name: entity,
+            type: "project",
+            metadata: {},
+            created_at: "2026-04-05T00:00:00.000Z"
+          },
+          neighbors: [
+            {
+              id: "entity-2",
+              name: "SQLite",
+              type: "tool",
+              metadata: {},
+              created_at: "2026-04-05T00:00:00.000Z"
+            }
+          ],
+          relations: [],
+          memories: []
+        };
+      },
+      shortestPath: (from, to, maxDepth) => {
+        received.path = { from, to, maxDepth };
+
+        return {
+          from: {
+            id: "entity-1",
+            name: from,
+            type: "project",
+            metadata: {},
+            created_at: "2026-04-05T00:00:00.000Z"
+          },
+          to: {
+            id: "entity-3",
+            name: to,
+            type: "tool",
+            metadata: {},
+            created_at: "2026-04-05T00:00:00.000Z"
+          },
+          entities: [
+            {
+              id: "entity-1",
+              name: from,
+              type: "project",
+              metadata: {},
+              created_at: "2026-04-05T00:00:00.000Z"
+            },
+            {
+              id: "entity-2",
+              name: "SQLite",
+              type: "tool",
+              metadata: {},
+              created_at: "2026-04-05T00:00:00.000Z"
+            },
+            {
+              id: "entity-3",
+              name: to,
+              type: "tool",
+              metadata: {},
+              created_at: "2026-04-05T00:00:00.000Z"
+            }
+          ],
+          relations: [],
+          memories: [],
+          found: true
+        };
+      },
+      graphStats: (project) => {
+        received.stats = project;
+
+        return {
+          project,
+          total_entities: 3,
+          total_relations: 2,
+          entity_types: { project: 1, tool: 2 },
+          relation_types: { uses: 2 },
+          average_confidence: 0.75,
+          tracked_code_files: 0,
+          tracked_doc_files: 0
+        };
+      },
+      subgraph: (entities, depth) => {
+        received.subgraph = { entities, depth };
+
+        return {
+          seed_entities: [
+            {
+              id: "entity-1",
+              name: entities[0] ?? "unknown",
+              type: "project",
+              metadata: {},
+              created_at: "2026-04-05T00:00:00.000Z"
+            }
+          ],
+          missing_entities: ["Missing Node"],
+          entities: [
+            {
+              id: "entity-1",
+              name: entities[0] ?? "unknown",
+              type: "project",
+              metadata: {},
+              created_at: "2026-04-05T00:00:00.000Z"
+            }
+          ],
+          relations: [],
+          memories: []
+        };
+      }
+    }),
+    memoryService: {
+      store: async () => ({ id: "noop", action: "created", title: "noop" }),
+      update: async () => {},
+      delete: async () => {}
+    },
+    recallService: {
+      recall: async () => [],
+      listMemories: () => []
+    },
+    sessionService: {
+      sessionStart: async () => ({
+        project: "vega",
+        active_tasks: [],
+        preferences: [],
+        context: [],
+        relevant: [],
+        relevant_wiki_pages: [],
+        wiki_drafts_pending: 0,
+        recent_unverified: [],
+        conflicts: [],
+        proactive_warnings: [],
+        token_estimate: 0
+      }),
+      sessionEnd: async () => {}
+    },
+    compactService: {
+      compact: () => ({ merged: 0, archived: 0 })
+    },
+    config: baseConfig
+  });
+
+  try {
+    const registeredTools = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          {
+            handler: (args: Record<string, unknown>, extra: object) => Promise<{ content: Array<{ text: string }> }>;
+          }
+        >;
+      }
+    )._registeredTools;
+    const neighborsResult = await registeredTools.graph_neighbors.handler(
+      {
+        entity: "Vega Memory",
+        depth: 2,
+        min_confidence: 0.5
+      },
+      {}
+    );
+    const pathResult = await registeredTools.graph_path.handler(
+      {
+        from_entity: "Vega Memory",
+        to_entity: "Ollama",
+        max_depth: 4
+      },
+      {}
+    );
+    const statsResult = await registeredTools.graph_stats.handler(
+      {
+        project: "vega"
+      },
+      {}
+    );
+    const subgraphResult = await registeredTools.graph_subgraph.handler(
+      {
+        entities: ["Vega Memory", "Missing Node"],
+        depth: 1
+      },
+      {}
+    );
+    const neighborsPayload = JSON.parse(neighborsResult.content[0]?.text ?? "{}") as {
+      neighbors: Array<{ name: string }>;
+    };
+    const pathPayload = JSON.parse(pathResult.content[0]?.text ?? "{}") as {
+      found: boolean;
+      entities: Array<{ name: string }>;
+    };
+    const statsPayload = JSON.parse(statsResult.content[0]?.text ?? "{}") as {
+      project?: string;
+      average_confidence: number;
+    };
+    const subgraphPayload = JSON.parse(subgraphResult.content[0]?.text ?? "{}") as {
+      missing_entities: string[];
+    };
+
+    assert.deepEqual(received.neighbors, {
+      entity: "Vega Memory",
+      depth: 2,
+      minConfidence: 0.5
+    });
+    assert.deepEqual(received.path, {
+      from: "Vega Memory",
+      to: "Ollama",
+      maxDepth: 4
+    });
+    assert.equal(received.stats, "vega");
+    assert.deepEqual(received.subgraph, {
+      entities: ["Vega Memory", "Missing Node"],
+      depth: 1
+    });
+    assert.equal(neighborsPayload.neighbors[0]?.name, "SQLite");
+    assert.equal(pathPayload.found, true);
+    assert.deepEqual(
+      pathPayload.entities.map((entity) => entity.name),
+      ["Vega Memory", "SQLite", "Ollama"]
+    );
+    assert.equal(statsPayload.project, "vega");
+    assert.equal(statsPayload.average_confidence, 0.75);
+    assert.deepEqual(subgraphPayload.missing_entities, ["Missing Node"]);
   } finally {
     repository.close();
     await server.close();

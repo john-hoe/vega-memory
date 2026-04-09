@@ -257,6 +257,35 @@ export interface GraphQueryResult {
   memories: Memory[];
 }
 
+export interface GraphNeighborsResult {
+  entity: Entity | null;
+  neighbors: Entity[];
+  relations: EntityRelation[];
+  memories: Memory[];
+}
+
+export interface GraphPathTraversal {
+  entity_ids: string[];
+  relation_ids: string[];
+}
+
+export interface GraphPathResult {
+  from: Entity | null;
+  to: Entity | null;
+  entities: Entity[];
+  relations: EntityRelation[];
+  memories: Memory[];
+  found: boolean;
+}
+
+export interface GraphSubgraphResult {
+  seed_entities: Entity[];
+  missing_entities: string[];
+  entities: Entity[];
+  relations: EntityRelation[];
+  memories: Memory[];
+}
+
 export interface StructuredRelation {
   source: string;
   target: string;
@@ -271,10 +300,12 @@ export interface StructuredGraph {
 }
 
 export interface GraphStats {
+  project?: string;
   total_entities: number;
   total_relations: number;
   entity_types: Record<string, number>;
   relation_types: Record<string, number>;
+  average_confidence: number | null;
   tracked_code_files: number;
   tracked_doc_files: number;
 }

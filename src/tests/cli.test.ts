@@ -194,6 +194,131 @@ test("CLI graph shows relation confidence and applies min-confidence filtering",
   }
 });
 
+test("CLI graph neighbors, path, and subgraph expose the new graph query primitives", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-graph-primitives-"));
+  const dbPath = join(tempDir, "memory.db");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999"
+  };
+
+  try {
+    runCli(
+      [
+        "store",
+        "Vega Memory uses SQLite for local storage.",
+        "--type",
+        "project_context",
+        "--project",
+        "vega"
+      ],
+      env
+    );
+    runCli(
+      [
+        "store",
+        "SQLite relates to Ollama embeddings.",
+        "--type",
+        "project_context",
+        "--project",
+        "vega"
+      ],
+      env
+    );
+
+    const neighbors = JSON.parse(
+      runCli(["graph", "neighbors", "SQLite", "--min-confidence", "0.5"], env)
+    ) as {
+      entity: { name: string };
+      neighbors: Array<{ name: string }>;
+    };
+    const path = JSON.parse(
+      runCli(["graph", "path", "Vega Memory", "Ollama", "--max-depth", "2"], env)
+    ) as {
+      found: boolean;
+      entities: Array<{ name: string }>;
+    };
+    const subgraph = JSON.parse(
+      runCli(["graph", "subgraph", "SQLite", "Missing Node", "--depth", "1"], env)
+    ) as {
+      seed_entities: Array<{ name: string }>;
+      missing_entities: string[];
+      entities: Array<{ name: string }>;
+    };
+    const neighborNames = new Set(
+      neighbors.neighbors.map((entity) => entity.name.toLowerCase())
+    );
+    const subgraphEntityNames = new Set(
+      subgraph.entities.map((entity) => entity.name.toLowerCase())
+    );
+
+    assert.equal(neighbors.entity.name.toLowerCase(), "sqlite");
+    assert.equal(neighborNames.has("vega memory"), true);
+    assert.equal(neighborNames.has("ollama"), true);
+    assert.equal(path.found, true);
+    assert.deepEqual(
+      path.entities.map((entity) => entity.name.toLowerCase()),
+      ["vega memory", "sqlite", "ollama"]
+    );
+    assert.deepEqual(
+      subgraph.seed_entities.map((entity) => entity.name.toLowerCase()),
+      ["sqlite"]
+    );
+    assert.deepEqual(subgraph.missing_entities, ["Missing Node"]);
+    assert.equal(subgraphEntityNames.has("sqlite"), true);
+    assert.equal(subgraphEntityNames.has("vega memory"), true);
+    assert.equal(subgraphEntityNames.has("ollama"), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CLI graph stats accepts project scoping and reports average confidence", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-graph-project-stats-"));
+  const dbPath = join(tempDir, "memory.db");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999"
+  };
+
+  try {
+    runCli(
+      [
+        "store",
+        "Vega Memory uses SQLite for local storage.",
+        "--type",
+        "project_context",
+        "--project",
+        "vega"
+      ],
+      env
+    );
+    runCli(
+      [
+        "store",
+        "Atlas uses Redis for caching.",
+        "--type",
+        "project_context",
+        "--project",
+        "atlas"
+      ],
+      env
+    );
+
+    const stats = JSON.parse(runCli(["graph", "stats", "--project", "vega"], env)) as {
+      project?: string;
+      total_relations: number;
+      average_confidence: number | null;
+    };
+
+    assert.equal(stats.project, "vega");
+    assert.equal(stats.total_relations > 0, true);
+    assert.equal(stats.average_confidence, 0.6);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CLI index --graph and graph stats expose structural graph counts", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-graph-stats-"));
   const dbPath = join(tempDir, "memory.db");

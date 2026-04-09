@@ -32,7 +32,11 @@ import type {
   DeepRecallResponse,
   FactClaim,
   FactClaimStatus,
+  GraphNeighborsResult,
+  GraphPathResult,
   GraphQueryResult,
+  GraphStats,
+  GraphSubgraphResult,
   HealthInfo,
   Memory,
   MemoryListFilters,
@@ -143,10 +147,59 @@ const serializeFactClaim = (claim: FactClaim) => ({
   updated_at: claim.updated_at
 });
 
+const serializeEntity = (entity: {
+  id: string;
+  name: string;
+  type: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}) => ({
+  id: entity.id,
+  name: entity.name,
+  type: entity.type,
+  metadata: entity.metadata ?? {},
+  created_at: entity.created_at
+});
+
 const serializeGraphQueryResult = (result: GraphQueryResult) => ({
   entity: result.entity,
   relations: result.relations,
   memories: result.memories.map(serializeMemory)
+});
+
+const serializeGraphNeighborsResult = (result: GraphNeighborsResult) => ({
+  entity: result.entity ? serializeEntity(result.entity) : null,
+  neighbors: result.neighbors.map(serializeEntity),
+  relations: result.relations,
+  memories: result.memories.map(serializeMemory)
+});
+
+const serializeGraphPathResult = (result: GraphPathResult) => ({
+  from: result.from ? serializeEntity(result.from) : null,
+  to: result.to ? serializeEntity(result.to) : null,
+  entities: result.entities.map(serializeEntity),
+  relations: result.relations,
+  memories: result.memories.map(serializeMemory),
+  found: result.found
+});
+
+const serializeGraphSubgraphResult = (result: GraphSubgraphResult) => ({
+  seed_entities: result.seed_entities.map(serializeEntity),
+  missing_entities: result.missing_entities,
+  entities: result.entities.map(serializeEntity),
+  relations: result.relations,
+  memories: result.memories.map(serializeMemory)
+});
+
+const serializeGraphStats = (result: GraphStats) => ({
+  ...(result.project ? { project: result.project } : {}),
+  total_entities: result.total_entities,
+  total_relations: result.total_relations,
+  entity_types: result.entity_types,
+  relation_types: result.relation_types,
+  average_confidence: result.average_confidence,
+  tracked_code_files: result.tracked_code_files,
+  tracked_doc_files: result.tracked_doc_files
 });
 
 const serializeWikiPageListEntry = (page: {
@@ -322,6 +375,18 @@ export interface CreateMCPServerOptions {
       depth?: number,
       minConfidence?: number
     ): GraphQueryResult | Promise<GraphQueryResult>;
+    getNeighbors(
+      entityName: string,
+      depth?: number,
+      minConfidence?: number
+    ): GraphNeighborsResult | Promise<GraphNeighborsResult>;
+    shortestPath(
+      fromEntity: string,
+      toEntity: string,
+      maxDepth?: number
+    ): GraphPathResult | Promise<GraphPathResult>;
+    graphStats(project?: string): GraphStats | Promise<GraphStats>;
+    subgraph(entityNames: string[], depth?: number): GraphSubgraphResult | Promise<GraphSubgraphResult>;
   };
   memoryService: {
     store(params: StoreParams): Promise<StoreResult>;
@@ -457,6 +522,83 @@ export function createMCPServer({
         return {
           result: serializeGraphQueryResult(result),
           resultCount: result.relations.length + result.memories.length
+        };
+      })
+  );
+
+  server.tool(
+    "graph_neighbors",
+    "Fetch neighboring graph nodes, relations, and memories for one entity.",
+    {
+      entity: z.string().trim().min(1),
+      depth: z.number().int().min(0).default(1),
+      min_confidence: z.number().min(0).max(1).default(0)
+    },
+    async (args) =>
+      runTool(repository, "graph_neighbors", args, observer, async () => {
+        const result = await Promise.resolve(
+          graphService.getNeighbors(args.entity, args.depth, args.min_confidence)
+        );
+
+        return {
+          result: serializeGraphNeighborsResult(result),
+          resultCount: result.neighbors.length + result.relations.length + result.memories.length
+        };
+      })
+  );
+
+  server.tool(
+    "graph_path",
+    "Find the shortest path between two graph entities.",
+    {
+      from_entity: z.string().trim().min(1),
+      to_entity: z.string().trim().min(1),
+      max_depth: z.number().int().min(0).default(6)
+    },
+    async (args) =>
+      runTool(repository, "graph_path", args, observer, async () => {
+        const result = await Promise.resolve(
+          graphService.shortestPath(args.from_entity, args.to_entity, args.max_depth)
+        );
+
+        return {
+          result: serializeGraphPathResult(result),
+          resultCount: result.entities.length + result.relations.length + result.memories.length
+        };
+      })
+  );
+
+  server.tool(
+    "graph_stats",
+    "Return aggregated statistics for the graph, optionally scoped to one project.",
+    {
+      project: z.string().trim().min(1).optional()
+    },
+    async (args) =>
+      runTool(repository, "graph_stats", args, observer, async () => {
+        const result = await Promise.resolve(graphService.graphStats(args.project));
+
+        return {
+          result: serializeGraphStats(result),
+          resultCount: Math.max(result.total_entities, result.total_relations, 1)
+        };
+      })
+  );
+
+  server.tool(
+    "graph_subgraph",
+    "Fetch the merged subgraph around one or more seed entities.",
+    {
+      entities: z.array(z.string().trim().min(1)).min(1),
+      depth: z.number().int().min(0).default(1)
+    },
+    async (args) =>
+      runTool(repository, "graph_subgraph", args, observer, async () => {
+        const result = await Promise.resolve(graphService.subgraph(args.entities, args.depth));
+
+        return {
+          result: serializeGraphSubgraphResult(result),
+          resultCount: result.entities.length + result.relations.length + result.memories.length
         };
       })
   );
