@@ -39,6 +39,13 @@ export type CloudBackupConfig =
   | GDriveCloudBackupConfig
   | ICloudCloudBackupConfig;
 
+export interface RegressionGuardConfig {
+  maxSessionStartToken: number;
+  maxRecallLatencyMs: number;
+  minRecallAvgSimilarity: number;
+  maxTopKInflationRatio: number;
+}
+
 export interface VegaConfig {
   dbPath: string;
   dbEncryption: boolean;
@@ -109,6 +116,7 @@ export interface VegaConfig {
   pgSchema?: string;
   encryptionKey?: string;
   cloudBackup?: CloudBackupConfig;
+  regressionGuard?: RegressionGuardConfig;
   customRedactionPatterns?: RedactionPattern[];
   webhooks?: WebhookConfig[];
 }
@@ -320,6 +328,29 @@ const parseStringArray = (value: string | undefined): string[] | undefined => {
   return parsed.length > 0 ? parsed : undefined;
 };
 
+const parseRegressionGuardConfig = (): RegressionGuardConfig => ({
+  maxSessionStartToken: clamp(
+    parseNumber(process.env.VEGA_REGRESSION_MAX_SESSION_START_TOKEN, 2500),
+    0,
+    100_000
+  ),
+  maxRecallLatencyMs: clamp(
+    parseNumber(process.env.VEGA_REGRESSION_MAX_RECALL_LATENCY_MS, 500),
+    0,
+    60_000
+  ),
+  minRecallAvgSimilarity: clamp(
+    parseNumber(process.env.VEGA_REGRESSION_MIN_RECALL_AVG_SIMILARITY, 0.4),
+    0,
+    1
+  ),
+  maxTopKInflationRatio: clamp(
+    parseNumber(process.env.VEGA_REGRESSION_MAX_TOP_K_INFLATION_RATIO, 0.3),
+    0,
+    1
+  )
+});
+
 const getConfigFilePath = (): string => join(homedir(), ".vega", "config.json");
 
 const loadFileConfig = (): Partial<
@@ -501,6 +532,7 @@ export const loadConfig = (): VegaConfig => {
     pgSchema: process.env.VEGA_PG_SCHEMA || undefined,
     ...(encryptionKey === undefined ? {} : { encryptionKey }),
     cloudBackup: parseCloudBackup(),
+    regressionGuard: parseRegressionGuardConfig(),
     customRedactionPatterns: fileConfig.customRedactionPatterns ?? [],
     ...(webhooks === undefined ? {} : { webhooks })
   };

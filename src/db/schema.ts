@@ -120,7 +120,13 @@ export function initializeDatabase(db: Database.Database): void {
       result_count INTEGER NOT NULL,
       avg_similarity REAL,
       result_types TEXT NOT NULL DEFAULT '[]',
-      bm25_result_count INTEGER NOT NULL DEFAULT 0
+      bm25_result_count INTEGER NOT NULL DEFAULT 0,
+      mode TEXT,
+      token_estimate REAL,
+      token_budget REAL,
+      token_budget_utilization REAL,
+      top_k_inflation_ratio REAL,
+      embedding_latency_ms REAL
     );
 
     CREATE TABLE IF NOT EXISTS metadata (
@@ -534,6 +540,12 @@ export function initializeDatabase(db: Database.Database): void {
   ensureColumn(db, "performance_log", "tenant_id", "TEXT");
   ensureColumn(db, "performance_log", "result_types", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, "performance_log", "bm25_result_count", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "performance_log", "mode", "TEXT");
+  ensureColumn(db, "performance_log", "token_estimate", "REAL");
+  ensureColumn(db, "performance_log", "token_budget", "REAL");
+  ensureColumn(db, "performance_log", "token_budget_utilization", "REAL");
+  ensureColumn(db, "performance_log", "top_k_inflation_ratio", "REAL");
+  ensureColumn(db, "performance_log", "embedding_latency_ms", "REAL");
   ensureColumn(db, "usage_log", "metric", "TEXT");
   ensureColumn(db, "usage_log", "amount", "REAL");
   ensureColumn(db, "usage_log", "recorded_at", "TEXT");

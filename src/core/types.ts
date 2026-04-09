@@ -223,6 +223,12 @@ export interface PerformanceLog {
   avg_similarity?: number | null;
   result_types?: MemoryType[];
   bm25_result_count?: number;
+  mode?: SessionStartMode | null;
+  token_estimate?: number | null;
+  token_budget?: number | null;
+  token_budget_utilization?: number | null;
+  top_k_inflation_ratio?: number | null;
+  embedding_latency_ms?: number | null;
 }
 
 export interface SessionStartWikiPage {
@@ -254,6 +260,62 @@ export interface SessionStartResult {
   token_estimate: number;
 }
 
+export interface RegressionGuardThresholds {
+  max_session_start_token: number;
+  max_recall_latency_ms: number;
+  min_recall_avg_similarity: number;
+  max_top_k_inflation_ratio: number;
+}
+
+export interface RegressionGuardViolation {
+  metric:
+    | "max_session_start_token"
+    | "max_recall_latency_ms"
+    | "min_recall_avg_similarity"
+    | "max_top_k_inflation_ratio";
+  operation: "session_start" | "recall" | "recall_stream";
+  actual: number;
+  threshold: number;
+  message: string;
+}
+
+export interface RegressionMetricSummary {
+  count: number;
+  latest: number | null;
+  average: number | null;
+  min: number | null;
+  max: number | null;
+  p50: number | null;
+  p95: number | null;
+  p99: number | null;
+}
+
+export interface RegressionGuardReport {
+  status: "ok" | "warning";
+  thresholds: RegressionGuardThresholds;
+  violations: RegressionGuardViolation[];
+  token: {
+    session_start_token_estimate: RegressionMetricSummary;
+    session_start_token_by_mode: Record<SessionStartMode, RegressionMetricSummary>;
+    recall_result_token_estimate: RegressionMetricSummary;
+    token_budget_utilization: {
+      session_start: RegressionMetricSummary;
+      recall: RegressionMetricSummary;
+    };
+  };
+  latency: {
+    session_start_latency_ms: RegressionMetricSummary;
+    recall_latency_ms: RegressionMetricSummary;
+    embedding_latency_ms: RegressionMetricSummary;
+  };
+  recall_quality: {
+    recall_result_count: RegressionMetricSummary;
+    recall_avg_similarity: RegressionMetricSummary;
+    recall_top_k_inflation: RegressionMetricSummary;
+    evidence_pull_rate: number;
+  };
+}
+
 export interface HealthReport {
   status: "healthy" | "degraded" | "unhealthy";
   ollama: boolean;
@@ -264,6 +326,7 @@ export interface HealthReport {
   last_backup: string | null;
   issues: string[];
   fix_suggestions: string[];
+  regression_guard: RegressionGuardReport;
 }
 
 export interface DiagnoseReport {

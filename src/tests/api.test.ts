@@ -121,6 +121,10 @@ test("GET /api/health returns the expanded health payload", async () => {
       last_backup: string | null;
       issues: string[];
       fix_suggestions: string[];
+      regression_guard: {
+        status: string;
+        violations: unknown[];
+      };
     }>(response);
 
     assert.equal(response.status, 200);
@@ -132,6 +136,8 @@ test("GET /api/health returns the expanded health payload", async () => {
     assert.equal(typeof body.db_size_mb, "number");
     assert.equal(Array.isArray(body.issues), true);
     assert.equal(Array.isArray(body.fix_suggestions), true);
+    assert.equal(typeof body.regression_guard.status, "string");
+    assert.equal(Array.isArray(body.regression_guard.violations), true);
   } finally {
     await harness.cleanup();
   }

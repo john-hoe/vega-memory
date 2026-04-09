@@ -98,6 +98,12 @@ interface PerformanceLogRow {
   avg_similarity: number | null;
   result_types: string | null;
   bm25_result_count: number | null;
+  mode: "light" | "standard" | null;
+  token_estimate: number | null;
+  token_budget: number | null;
+  token_budget_utilization: number | null;
+  top_k_inflation_ratio: number | null;
+  embedding_latency_ms: number | null;
 }
 
 interface EntityRow {
@@ -236,7 +242,13 @@ function mapPerformanceLog(row: PerformanceLogRow): PerformanceLog {
     result_count: row.result_count,
     avg_similarity: row.avg_similarity,
     result_types: parseJsonArray(row.result_types ?? "[]") as PerformanceLog["result_types"],
-    bm25_result_count: row.bm25_result_count ?? 0
+    bm25_result_count: row.bm25_result_count ?? 0,
+    mode: row.mode,
+    token_estimate: row.token_estimate,
+    token_budget: row.token_budget,
+    token_budget_utilization: row.token_budget_utilization,
+    top_k_inflation_ratio: row.top_k_inflation_ratio,
+    embedding_latency_ms: row.embedding_latency_ms
   };
 }
 
@@ -1472,7 +1484,25 @@ export class Repository {
 
   logPerformance(entry: PerformanceLog): void {
     this.db
-      .prepare<[string, string | null, string, number, number, number, number | null, string, number]>(
+      .prepare<
+        [
+          string,
+          string | null,
+          string,
+          number,
+          number,
+          number,
+          number | null,
+          string,
+          number,
+          "light" | "standard" | null,
+          number | null,
+          number | null,
+          number | null,
+          number | null,
+          number | null
+        ]
+      >(
         `INSERT INTO performance_log (
            timestamp,
            tenant_id,
@@ -1482,9 +1512,15 @@ export class Repository {
            result_count,
            avg_similarity,
            result_types,
-           bm25_result_count
+           bm25_result_count,
+           mode,
+           token_estimate,
+           token_budget,
+           token_budget_utilization,
+           top_k_inflation_ratio,
+           embedding_latency_ms
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         entry.timestamp,
@@ -1495,7 +1531,13 @@ export class Repository {
         entry.result_count,
         entry.avg_similarity ?? null,
         serializeJsonArray((entry.result_types ?? []) as string[]),
-        entry.bm25_result_count ?? 0
+        entry.bm25_result_count ?? 0,
+        entry.mode ?? null,
+        entry.token_estimate ?? null,
+        entry.token_budget ?? null,
+        entry.token_budget_utilization ?? null,
+        entry.top_k_inflation_ratio ?? null,
+        entry.embedding_latency_ms ?? null
       );
   }
 

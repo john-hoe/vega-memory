@@ -639,3 +639,53 @@ test("loadConfig reads ~/.vega/config.json values and lets env override them", (
     rmSync(tempHome, { recursive: true, force: true });
   }
 });
+
+test("loadConfig includes regression guard defaults", () => {
+  const previous = {
+    VEGA_REGRESSION_MAX_SESSION_START_TOKEN: process.env.VEGA_REGRESSION_MAX_SESSION_START_TOKEN,
+    VEGA_REGRESSION_MAX_RECALL_LATENCY_MS: process.env.VEGA_REGRESSION_MAX_RECALL_LATENCY_MS,
+    VEGA_REGRESSION_MIN_RECALL_AVG_SIMILARITY: process.env.VEGA_REGRESSION_MIN_RECALL_AVG_SIMILARITY,
+    VEGA_REGRESSION_MAX_TOP_K_INFLATION_RATIO: process.env.VEGA_REGRESSION_MAX_TOP_K_INFLATION_RATIO
+  };
+
+  try {
+    delete process.env.VEGA_REGRESSION_MAX_SESSION_START_TOKEN;
+    delete process.env.VEGA_REGRESSION_MAX_RECALL_LATENCY_MS;
+    delete process.env.VEGA_REGRESSION_MIN_RECALL_AVG_SIMILARITY;
+    delete process.env.VEGA_REGRESSION_MAX_TOP_K_INFLATION_RATIO;
+
+    assert.deepEqual(loadConfig().regressionGuard, {
+      maxSessionStartToken: 2500,
+      maxRecallLatencyMs: 500,
+      minRecallAvgSimilarity: 0.4,
+      maxTopKInflationRatio: 0.3
+    });
+  } finally {
+    Object.assign(process.env, previous);
+  }
+});
+
+test("loadConfig reads regression guard overrides from process.env", () => {
+  const previous = {
+    VEGA_REGRESSION_MAX_SESSION_START_TOKEN: process.env.VEGA_REGRESSION_MAX_SESSION_START_TOKEN,
+    VEGA_REGRESSION_MAX_RECALL_LATENCY_MS: process.env.VEGA_REGRESSION_MAX_RECALL_LATENCY_MS,
+    VEGA_REGRESSION_MIN_RECALL_AVG_SIMILARITY: process.env.VEGA_REGRESSION_MIN_RECALL_AVG_SIMILARITY,
+    VEGA_REGRESSION_MAX_TOP_K_INFLATION_RATIO: process.env.VEGA_REGRESSION_MAX_TOP_K_INFLATION_RATIO
+  };
+
+  try {
+    process.env.VEGA_REGRESSION_MAX_SESSION_START_TOKEN = "3200";
+    process.env.VEGA_REGRESSION_MAX_RECALL_LATENCY_MS = "750";
+    process.env.VEGA_REGRESSION_MIN_RECALL_AVG_SIMILARITY = "0.55";
+    process.env.VEGA_REGRESSION_MAX_TOP_K_INFLATION_RATIO = "0.2";
+
+    assert.deepEqual(loadConfig().regressionGuard, {
+      maxSessionStartToken: 3200,
+      maxRecallLatencyMs: 750,
+      minRecallAvgSimilarity: 0.55,
+      maxTopKInflationRatio: 0.2
+    });
+  } finally {
+    Object.assign(process.env, previous);
+  }
+});

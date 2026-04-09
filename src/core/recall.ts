@@ -4,6 +4,7 @@ import { Repository } from "../db/repository.js";
 import { generateEmbedding } from "../embedding/ollama.js";
 import { SearchEngine } from "../search/engine.js";
 import { StreamingSearch } from "../search/streaming.js";
+import { RegressionGuard } from "./regression-guard.js";
 
 const now = (): string => new Date().toISOString();
 const ACCESS_UPDATE_DEBOUNCE_MS = 60_000;
@@ -21,8 +22,18 @@ interface SearchEngineExecution {
   bm25ResultCount: number;
 }
 
+const logRegressionWarnings = (
+  regressionGuard: RegressionGuard,
+  warnings: ReturnType<RegressionGuard["recordRecall"]>
+): void => {
+  for (const warning of warnings) {
+    logRecallInfo(regressionGuard.formatWarning(warning));
+  }
+};
+
 export class RecallService {
   private readonly performanceLogTimes = new Map<string, number>();
+  private readonly regressionGuard: RegressionGuard;
   private readonly recallCache = new Map<
     string,
     {
@@ -35,15 +46,19 @@ export class RecallService {
   constructor(
     private readonly repository: Repository,
     private readonly searchEngine: SearchEngine,
-    private readonly config: VegaConfig
-  ) {}
+    private readonly config: VegaConfig,
+    regressionGuard?: RegressionGuard
+  ) {
+    this.regressionGuard = regressionGuard ?? new RegressionGuard(repository, config);
+  }
 
   private logRecallPerformance(
     operation: "recall" | "recall_stream",
     startedAt: number,
     options: SearchOptions,
     results: SearchResult[],
-    bm25ResultCount: number
+    bm25ResultCount: number,
+    embeddingLatencyMs: number | null
   ): void {
     const logKey = `${operation}\u0000${options.project ?? ""}\u0000${options.tenant_id ?? ""}`;
     const lastLoggedAt = this.performanceLogTimes.get(logKey) ?? 0;
@@ -57,18 +72,28 @@ export class RecallService {
       results.length === 0
         ? null
         : results.reduce((sum, result) => sum + result.similarity, 0) / results.length;
+    const warnings = this.regressionGuard.recordRecall(
+      results.length,
+      avgSimilarity,
+      Date.now() - startedAt,
+      {
+        operation,
+        tenantId: options.tenant_id ?? null,
+        memoryCount: this.repository.countActiveMemories(
+          options.project,
+          options.type,
+          true,
+          options.tenant_id
+        ),
+        resultTypes: results.map((result) => result.memory.type),
+        bm25ResultCount,
+        tokenEstimate: this.regressionGuard.calculateRecallResultTokenEstimate(results),
+        topKInflationRatio: this.regressionGuard.calculateTopKInflationRatio(results),
+        embeddingLatencyMs
+      }
+    );
 
-    this.repository.logPerformance({
-      timestamp: now(),
-      tenant_id: options.tenant_id ?? null,
-      operation,
-      latency_ms: Date.now() - startedAt,
-      memory_count: this.repository.countActiveMemories(options.project, options.type, true, options.tenant_id),
-      result_count: results.length,
-      avg_similarity: avgSimilarity,
-      result_types: results.map((result) => result.memory.type),
-      bm25_result_count: bm25ResultCount
-    });
+    logRegressionWarnings(this.regressionGuard, warnings);
   }
 
   private updateAccessedMemory(result: SearchResult, project: string | undefined, accessedAt: string): void {
@@ -128,6 +153,7 @@ export class RecallService {
 
   async recall(query: string, options: SearchOptions): Promise<SearchResult[]> {
     const startedAt = Date.now();
+    let embeddingLatencyMs: number | null = null;
     const cacheKey = JSON.stringify({
       query,
       project: options.project ?? null,
@@ -153,7 +179,9 @@ export class RecallService {
     if ("results" in execution) {
       resolvedExecution = execution;
     } else {
+      const embeddingStartedAt = Date.now();
       const embedding = await execution.embeddingPromise;
+      embeddingLatencyMs = Date.now() - embeddingStartedAt;
       resolvedExecution = this.executeSearch(query, embedding, options);
       this.recallCache.set(cacheKey, {
         cachedAt: Date.now(),
@@ -168,14 +196,23 @@ export class RecallService {
       this.updateAccessedMemory(result, options.project, accessedAt);
     }
 
-    this.logRecallPerformance("recall", startedAt, options, results, resolvedExecution.bm25ResultCount);
+    this.logRecallPerformance(
+      "recall",
+      startedAt,
+      options,
+      results,
+      resolvedExecution.bm25ResultCount,
+      embeddingLatencyMs
+    );
 
     return results;
   }
 
   async *recallStream(query: string, options: SearchOptions): AsyncGenerator<SearchResult> {
     const startedAt = Date.now();
+    const embeddingStartedAt = Date.now();
     const embedding = await generateEmbedding(query, this.config);
+    const embeddingLatencyMs = Date.now() - embeddingStartedAt;
     const results: SearchResult[] = [];
     const streamingSearch = new StreamingSearch(this.repository, this.config);
 
@@ -191,7 +228,8 @@ export class RecallService {
         startedAt,
         options,
         results,
-        streamingSearch.getLastMetrics().bm25ResultCount
+        streamingSearch.getLastMetrics().bm25ResultCount,
+        embeddingLatencyMs
       );
     }
   }

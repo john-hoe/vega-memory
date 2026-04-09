@@ -531,7 +531,7 @@ export function createMCPServer({
 
   server.tool(
     "memory_health",
-    "Return basic Vega Memory health information.",
+    "Return Vega Memory health information, including regression guard status.",
     {},
     async () =>
       runTool(repository, "memory_health", {}, observer, async () => {

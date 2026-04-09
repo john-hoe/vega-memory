@@ -10,7 +10,9 @@ import { PageManager } from "../wiki/page-manager.js";
 import { ExtractionService } from "./extraction.js";
 import { MemoryService } from "./memory.js";
 import { RecallService } from "./recall.js";
+import { RegressionGuard } from "./regression-guard.js";
 import { exportSnapshot } from "./snapshot.js";
+import { estimateMemoryTokens, estimateWikiPageTokens } from "./token-estimate.js";
 import type {
   AuditContext,
   ExtractionCandidate,
@@ -54,14 +56,6 @@ interface SessionWikiSearchRow {
 interface CountRow {
   total: number;
 }
-
-const estimateTextTokens = (value: string): number => value.length / 4;
-
-const estimateMemoryTokens = (memory: Memory): number =>
-  estimateTextTokens(memory.summary ?? memory.content);
-
-const estimateWikiPageTokens = (page: SessionStartWikiPage): number =>
-  estimateTextTokens(`${page.title}\n${page.summary}`);
 
 const estimateTokens = (memories: Memory[]): number =>
   memories.reduce((total, memory) => total + estimateMemoryTokens(memory), 0);
@@ -171,9 +165,22 @@ const takeRelevantResultsWithinBudget = (
   return kept;
 };
 
+const countSessionResultItems = (result: SessionStartResult): number =>
+  result.active_tasks.length +
+  result.preferences.length +
+  result.context.length +
+  result.relevant.length +
+  result.relevant_wiki_pages.length +
+  result.recent_unverified.length +
+  result.conflicts.length;
+
+const appendWarnings = (warnings: string[], nextWarnings: string[]): string[] =>
+  [...new Set([...warnings, ...nextWarnings])];
+
 export class SessionService {
   private readonly sessionStartTimes = new Map<string, string>();
   private readonly extractionService: ExtractionService;
+  private readonly regressionGuard: RegressionGuard;
   private readonly inferredProjects = new Map<string, string>();
   private readonly snapshotExportTimes = new Map<string, number>();
   private readonly sessionStartCache = new Map<
@@ -196,9 +203,11 @@ export class SessionService {
     private readonly memoryService: MemoryService,
     private readonly recallService: RecallService,
     private readonly config: VegaConfig,
-    private readonly pageManager?: PageManager | null
+    private readonly pageManager?: PageManager | null,
+    regressionGuard?: RegressionGuard
   ) {
     this.extractionService = new ExtractionService(config);
+    this.regressionGuard = regressionGuard ?? new RegressionGuard(repository, config);
   }
 
   async sessionStart(
@@ -207,6 +216,7 @@ export class SessionService {
     tenantId?: string | null,
     mode: SessionStartMode = "standard"
   ): Promise<SessionStartResult> {
+    const startedAt = Date.now();
     const project = this.inferProject(workingDirectory);
     this.sessionStartTimes.set(project, now());
     const normalizedTaskHint = taskHint?.trim() ?? "";
@@ -215,7 +225,24 @@ export class SessionService {
     const cached = this.sessionStartCache.get(cacheKey);
 
     if (cached && Date.now() - cached.cachedAt < SESSION_START_CACHE_TTL_MS) {
-      return structuredClone(cached.result) as SessionStartResult;
+      const result = structuredClone(cached.result) as SessionStartResult;
+      const violations = this.regressionGuard.recordSessionStart(
+        mode,
+        result.token_estimate,
+        Date.now() - startedAt,
+        {
+          tenantId,
+          memoryCount: this.repository.countActiveMemories(project, undefined, true, tenantId),
+          resultCount: countSessionResultItems(result)
+        }
+      );
+
+      result.proactive_warnings = appendWarnings(
+        result.proactive_warnings,
+        violations.map((violation) => this.regressionGuard.formatWarning(violation))
+      );
+
+      return result;
     }
 
     const preferences = this.repository
@@ -401,6 +428,21 @@ export class SessionService {
       proactive_warnings,
       token_estimate
     };
+    const violations = this.regressionGuard.recordSessionStart(
+      mode,
+      token_estimate,
+      Date.now() - startedAt,
+      {
+        tenantId,
+        memoryCount: this.repository.countActiveMemories(project, undefined, true, tenantId),
+        resultCount: countSessionResultItems(result)
+      }
+    );
+
+    result.proactive_warnings = appendWarnings(
+      result.proactive_warnings,
+      violations.map((violation) => this.regressionGuard.formatWarning(violation))
+    );
 
     this.sessionStartCache.set(cacheKey, {
       cachedAt: Date.now(),

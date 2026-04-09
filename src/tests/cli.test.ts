@@ -41,6 +41,34 @@ test("CLI help lists core commands", () => {
   assert.match(output, /\bhealth\b/);
 });
 
+test("CLI health --regression --json includes regression guard data", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-health-"));
+  const dbPath = join(tempDir, "memory.db");
+
+  try {
+    const output = JSON.parse(
+      runCli(["health", "--regression", "--json"], {
+        VEGA_DB_PATH: dbPath,
+        OLLAMA_BASE_URL: "http://localhost:99999"
+      })
+    ) as {
+      status: string;
+      regression_guard: {
+        status: string;
+        thresholds: {
+          max_session_start_token: number;
+        };
+      };
+    };
+
+    assert.equal(typeof output.status, "string");
+    assert.equal(typeof output.regression_guard.status, "string");
+    assert.equal(output.regression_guard.thresholds.max_session_start_token, 2500);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CLI store and list commands work together", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-store-"));
   const dbPath = join(tempDir, "memory.db");

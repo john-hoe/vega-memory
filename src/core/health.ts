@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { VegaConfig } from "../config.js";
 import { Repository } from "../db/repository.js";
 import { isOllamaAvailable } from "../embedding/ollama.js";
+import { RegressionGuard } from "./regression-guard.js";
 import type { HealthReport } from "./types.js";
 
 interface IntegrityCheckRow {
@@ -114,6 +115,7 @@ export async function getHealthReport(
   repository: Repository,
   config: VegaConfig
 ): Promise<HealthReport> {
+  const regressionGuard = new RegressionGuard(repository, config);
   const integrityRows = repository.db
     .prepare<[], IntegrityCheckRow>("PRAGMA integrity_check")
     .all();
@@ -137,6 +139,7 @@ export async function getHealthReport(
       .get()?.average_latency ?? 0;
   const db_size_mb = Number((getDatabaseSizeBytes(config.dbPath) / 1_048_576).toFixed(2));
   const latestBackup = getLatestBackup(config);
+  const regressionReport = regressionGuard.getReport();
   const diskIssues = getDiskIssues(config);
   const issues: string[] = [];
   const fixSuggestions: string[] = [];
@@ -170,6 +173,32 @@ export async function getHealthReport(
       "Run `vega benchmark --suite recall` and verify sqlite-vec indexing if recall latency stays elevated."
     );
   }
+  for (const violation of regressionReport.violations) {
+    issues.push(regressionGuard.formatWarning(violation));
+
+    switch (violation.metric) {
+      case "max_session_start_token":
+        fixSuggestions.push(
+          "Trim session_start preload inputs or tighten mode-specific budgets before raising the token cap."
+        );
+        break;
+      case "max_recall_latency_ms":
+        fixSuggestions.push(
+          "Benchmark the recall path and inspect sqlite-vec plus Ollama latency before accepting slower recalls."
+        );
+        break;
+      case "min_recall_avg_similarity":
+        fixSuggestions.push(
+          "Inspect recall ranking quality and embedding health before lowering similarity expectations."
+        );
+        break;
+      case "max_top_k_inflation_ratio":
+        fixSuggestions.push(
+          "Tighten recall filtering or reduce top-k breadth if low-score tail results keep showing up."
+        );
+        break;
+    }
+  }
 
   let status: HealthReport["status"] = "healthy";
 
@@ -188,6 +217,7 @@ export async function getHealthReport(
     db_size_mb,
     last_backup: latestBackup?.timestamp ?? null,
     issues,
-    fix_suggestions: [...new Set(fixSuggestions)]
+    fix_suggestions: [...new Set(fixSuggestions)],
+    regression_guard: regressionReport
   };
 }
