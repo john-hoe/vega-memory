@@ -367,6 +367,14 @@ export function initializeDatabase(db: Database.Database): void {
       confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
       valid_from TEXT NOT NULL,
       valid_to TEXT,
+      temporal_precision TEXT NOT NULL DEFAULT 'unknown' CHECK(temporal_precision IN (
+        'exact',
+        'day',
+        'week',
+        'month',
+        'quarter',
+        'unknown'
+      )),
       invalidation_reason TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -551,6 +559,12 @@ export function initializeDatabase(db: Database.Database): void {
   ensureColumn(db, "usage_log", "recorded_at", "TEXT");
   ensureColumn(db, "wiki_pages", "space_id", "TEXT");
   ensureColumn(db, "wiki_pages", "tenant_id", "TEXT");
+  ensureColumn(
+    db,
+    "fact_claims",
+    "temporal_precision",
+    "TEXT NOT NULL DEFAULT 'unknown' CHECK(temporal_precision IN ('exact', 'day', 'week', 'month', 'quarter', 'unknown'))"
+  );
   ensureNullableWikiSpaceTenant(db);
   db.exec(`
     UPDATE wiki_pages

@@ -27,6 +27,23 @@ export type FactClaimStatus = "active" | "expired" | "suspected_expired" | "conf
 
 export type FactClaimSource = "hot_memory" | "raw_archive" | "manual" | "mixed";
 
+export type TemporalPrecision =
+  | "exact"
+  | "day"
+  | "week"
+  | "month"
+  | "quarter"
+  | "unknown";
+
+export type FactClaimTransition =
+  | { from: "active"; to: "expired"; actor: "system" | "user" }
+  | { from: "active"; to: "suspected_expired"; actor: "system" | "user" }
+  | { from: "active"; to: "conflict"; actor: "system" | "user" }
+  | { from: "suspected_expired"; to: "active"; actor: "user" }
+  | { from: "suspected_expired"; to: "expired"; actor: "user" }
+  | { from: "conflict"; to: "active"; actor: "user" }
+  | { from: "conflict"; to: "expired"; actor: "user" };
+
 export type RawArchiveType =
   | "transcript"
   | "discussion"
@@ -77,9 +94,17 @@ export interface FactClaim {
   confidence: number;
   valid_from: string;
   valid_to: string | null;
+  temporal_precision: TemporalPrecision;
   invalidation_reason: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface AsOfQueryOptions {
+  as_of: string;
+  project?: string;
+  include_suspected_expired?: boolean;
+  include_conflicts?: boolean;
 }
 
 export interface RawArchive {
