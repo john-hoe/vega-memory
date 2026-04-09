@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 
-import type { VegaConfig } from "../config.js";
+import { isRawArchiveEnabled, type VegaConfig } from "../config.js";
 import type {
   AuditContext,
   Memory,
@@ -171,6 +171,10 @@ export class MemoryService {
     sourceMemoryId: string,
     title?: string
   ): void {
+    if (!isRawArchiveEnabled(this.config)) {
+      return;
+    }
+
     this.archiveService.store(content, "document", project, {
       tenant_id: tenantId,
       source_memory_id: sourceMemoryId,

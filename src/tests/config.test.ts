@@ -81,6 +81,10 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_CLOUD_BACKUP_TYPE: process.env.VEGA_CLOUD_BACKUP_TYPE,
     VEGA_S3_BUCKET: process.env.VEGA_S3_BUCKET,
     VEGA_S3_REGION: process.env.VEGA_S3_REGION,
+    VEGA_FEATURE_FACT_CLAIMS: process.env.VEGA_FEATURE_FACT_CLAIMS,
+    VEGA_FEATURE_RAW_ARCHIVE: process.env.VEGA_FEATURE_RAW_ARCHIVE,
+    VEGA_FEATURE_TOPIC_RECALL: process.env.VEGA_FEATURE_TOPIC_RECALL,
+    VEGA_FEATURE_DEEP_RECALL: process.env.VEGA_FEATURE_DEEP_RECALL,
     VEGA_WEBHOOKS: process.env.VEGA_WEBHOOKS
   };
 
@@ -156,6 +160,10 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_CLOUD_BACKUP_TYPE;
   delete process.env.VEGA_S3_BUCKET;
   delete process.env.VEGA_S3_REGION;
+  delete process.env.VEGA_FEATURE_FACT_CLAIMS;
+  delete process.env.VEGA_FEATURE_RAW_ARCHIVE;
+  delete process.env.VEGA_FEATURE_TOPIC_RECALL;
+  delete process.env.VEGA_FEATURE_DEEP_RECALL;
   delete process.env.VEGA_WEBHOOKS;
 
   assertConfigSubset(loadConfig() as unknown as Record<string, unknown>, {
@@ -227,6 +235,12 @@ test("loadConfig returns the documented defaults", () => {
     csrfEnabled: false,
     corsOrigins: undefined,
     cloudBackup: undefined,
+    features: {
+      factClaims: false,
+      rawArchive: true,
+      topicRecall: false,
+      deepRecall: true
+    },
     customRedactionPatterns: []
   });
 
@@ -299,6 +313,10 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_CLOUD_BACKUP_TYPE: process.env.VEGA_CLOUD_BACKUP_TYPE,
     VEGA_S3_BUCKET: process.env.VEGA_S3_BUCKET,
     VEGA_S3_REGION: process.env.VEGA_S3_REGION,
+    VEGA_FEATURE_FACT_CLAIMS: process.env.VEGA_FEATURE_FACT_CLAIMS,
+    VEGA_FEATURE_RAW_ARCHIVE: process.env.VEGA_FEATURE_RAW_ARCHIVE,
+    VEGA_FEATURE_TOPIC_RECALL: process.env.VEGA_FEATURE_TOPIC_RECALL,
+    VEGA_FEATURE_DEEP_RECALL: process.env.VEGA_FEATURE_DEEP_RECALL,
     VEGA_WEBHOOKS: process.env.VEGA_WEBHOOKS
   };
 
@@ -375,6 +393,10 @@ test("loadConfig reads overrides from process.env", () => {
   delete process.env.VEGA_CLOUD_BACKUP_TYPE;
   delete process.env.VEGA_S3_BUCKET;
   delete process.env.VEGA_S3_REGION;
+  process.env.VEGA_FEATURE_FACT_CLAIMS = "true";
+  process.env.VEGA_FEATURE_RAW_ARCHIVE = "false";
+  process.env.VEGA_FEATURE_TOPIC_RECALL = "yes";
+  process.env.VEGA_FEATURE_DEEP_RECALL = "off";
   process.env.VEGA_WEBHOOKS = JSON.stringify([
     {
       url: "https://example.com/hooks/memory",
@@ -458,6 +480,12 @@ test("loadConfig reads overrides from process.env", () => {
       enabled: true,
       provider: "local-sync",
       destDir: "/tmp/vega-cloud"
+    },
+    features: {
+      factClaims: true,
+      rawArchive: false,
+      topicRecall: true,
+      deepRecall: false
     },
     customRedactionPatterns: [],
     webhooks: [

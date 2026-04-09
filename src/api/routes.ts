@@ -2,7 +2,7 @@ import { Router, type Request, type RequestHandler, type Response } from "expres
 
 import { StripeService } from "../billing/stripe.js";
 import { GdprService } from "../compliance/gdpr.js";
-import type { VegaConfig } from "../config.js";
+import { isDeepRecallAvailable, type VegaConfig } from "../config.js";
 import { WebhookService } from "../integrations/webhooks.js";
 import { getRequestTenantId, getRequestUser } from "./auth.js";
 import { requireRole, requireTenantAccess } from "./permissions.js";
@@ -938,6 +938,13 @@ export function createRouter(services: APIRouterServices): Router {
   router.post(
     "/api/deep-recall",
     handleRoute((req, res) => {
+      if (!isDeepRecallAvailable(services.config)) {
+        res.status(501).json({
+          error: "deep_recall feature is disabled"
+        });
+        return;
+      }
+
       const startedAt = Date.now();
       const body = requireBody(req.body);
       const tenantId = getRequestTenantId(res);

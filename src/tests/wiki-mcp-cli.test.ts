@@ -99,7 +99,7 @@ const installOllamaMock = (chatContent = "## Synthesized Content\n\nAuth wiki su
   };
 };
 
-const createServerHarness = () => {
+const createServerHarness = (overrides: Partial<VegaConfig> = {}) => {
   const repository = new Repository(":memory:");
   const pageManager = new PageManager(repository);
   const crossReferenceService = new CrossReferenceService(pageManager);
@@ -140,7 +140,10 @@ const createServerHarness = () => {
     compactService: {
       compact: () => ({ merged: 0, archived: 0 })
     },
-    config: baseConfig
+    config: {
+      ...baseConfig,
+      ...overrides
+    }
   });
 
   return {
@@ -388,6 +391,30 @@ test("deep_recall MCP tool returns cold archive results", async () => {
     assert.equal(payload.injected_into_session, false);
   } finally {
     repository.close();
+    await server.close();
+  }
+});
+
+test("deep_recall MCP tool returns an error when the feature is disabled", async () => {
+  const { server } = createServerHarness({
+    features: {
+      deepRecall: false
+    }
+  });
+
+  try {
+    const result = await getRegisteredTools(server).deep_recall.handler(
+      {
+        query: "restore commands",
+        project: "vega"
+      },
+      {}
+    );
+    const payload = parseToolPayload<{ error: string }>(result);
+
+    assert.equal(result.isError, true);
+    assert.equal(payload.error, "deep_recall feature is disabled");
+  } finally {
     await server.close();
   }
 });

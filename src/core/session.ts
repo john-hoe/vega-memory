@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { v4 as uuidv4 } from "uuid";
 
-import type { VegaConfig } from "../config.js";
+import { isFactClaimsEnabled, isTopicRecallEnabled, type VegaConfig } from "../config.js";
 import { Repository } from "../db/repository.js";
 import { isOllamaAvailable } from "../embedding/ollama.js";
 import { PageManager } from "../wiki/page-manager.js";
@@ -22,6 +22,7 @@ import type {
   ExtractionCandidate,
   Memory,
   MemoryType,
+  SearchOptions,
   SearchResult,
   SessionStartMode,
   SessionStartResult,
@@ -458,6 +459,18 @@ export class SessionService {
     return this.extractionService.extractMemories(summary, project);
   }
 
+  private buildSessionRecallOptions(tenantId?: string | null): SearchOptions {
+    const shouldQuerySidecars =
+      isTopicRecallEnabled(this.config) || isFactClaimsEnabled(this.config);
+
+    return {
+      limit: 5,
+      minSimilarity: 0.3,
+      tenant_id: tenantId ?? undefined,
+      ...(shouldQuerySidecars ? {} : { topic: undefined })
+    };
+  }
+
   private async buildStandardSessionStartResult(
     project: string,
     normalizedTaskHint: string,
@@ -503,11 +516,10 @@ export class SessionService {
       .filter(isSessionVisible);
     const relevantResults =
       taskHintKeywords.length > 0
-        ? (await this.recallService.recall(normalizedTaskHint, {
-            limit: 5,
-            minSimilarity: 0.3,
-            tenant_id: tenantId ?? undefined
-          })).map((result) => ({
+        ? (await this.recallService.recall(
+            normalizedTaskHint,
+            this.buildSessionRecallOptions(tenantId)
+          )).map((result) => ({
             ...result,
             finalScore:
               result.memory.project === project ? result.finalScore : result.finalScore * 0.5

@@ -278,6 +278,51 @@ test("sessionStart loads active task_states for project", async () => {
   }
 });
 
+test("sessionStart stays on hot-memory path when VM2 sidecars are disabled", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-start-hot-only-"));
+  const project = basename(tempDir);
+  const config: VegaConfig = {
+    ...baseConfig,
+    features: {
+      factClaims: false,
+      rawArchive: false,
+      topicRecall: false,
+      deepRecall: false
+    }
+  };
+  const { repository, sessionService } = createSessionService(config);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "task-hot-only",
+        type: "task_state",
+        project,
+        title: "Active hot task"
+      })
+    );
+    getDatabase(repository).exec(`
+      DROP TABLE IF EXISTS memory_topics;
+      DROP TABLE IF EXISTS topics;
+      DROP TABLE IF EXISTS fact_claims;
+      DROP TABLE IF EXISTS raw_archives_fts;
+      DROP TABLE IF EXISTS raw_archives;
+    `);
+
+    const result = await sessionService.sessionStart(tempDir);
+
+    assert.deepEqual(
+      result.active_tasks.map((memory) => memory.id),
+      ["task-hot-only"]
+    );
+    assert.deepEqual(result.preferences, []);
+    assert.deepEqual(result.context, []);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("sessionEnd creates session record", async () => {
   const restoreFetch = installEmbeddingMock([0.2, 0.8]);
   const { repository, sessionService } = createSessionService();

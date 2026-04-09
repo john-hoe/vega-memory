@@ -46,6 +46,13 @@ export interface RegressionGuardConfig {
   maxTopKInflationRatio: number;
 }
 
+export interface VegaFeatureFlags {
+  factClaims: boolean;
+  rawArchive: boolean;
+  topicRecall: boolean;
+  deepRecall: boolean;
+}
+
 export interface VegaConfig {
   dbPath: string;
   dbEncryption: boolean;
@@ -117,12 +124,45 @@ export interface VegaConfig {
   encryptionKey?: string;
   cloudBackup?: CloudBackupConfig;
   regressionGuard?: RegressionGuardConfig;
+  features?: Partial<VegaFeatureFlags>;
   customRedactionPatterns?: RedactionPattern[];
   webhooks?: WebhookConfig[];
 }
 
 export const DB_ENCRYPTION_KEY_MISSING_MESSAGE =
   "VEGA_DB_ENCRYPTION is enabled but no encryption key is configured. Run vega init-encryption first.";
+
+export const DEFAULT_FEATURE_FLAGS: VegaFeatureFlags = {
+  factClaims: false,
+  rawArchive: true,
+  topicRecall: false,
+  deepRecall: true
+};
+
+export const resolveFeatureFlags = (
+  config?: Pick<VegaConfig, "features">
+): VegaFeatureFlags => ({
+  ...DEFAULT_FEATURE_FLAGS,
+  ...(config?.features ?? {})
+});
+
+export const isFactClaimsEnabled = (config?: Pick<VegaConfig, "features">): boolean =>
+  resolveFeatureFlags(config).factClaims;
+
+export const isRawArchiveEnabled = (config?: Pick<VegaConfig, "features">): boolean =>
+  resolveFeatureFlags(config).rawArchive;
+
+export const isTopicRecallEnabled = (config?: Pick<VegaConfig, "features">): boolean =>
+  resolveFeatureFlags(config).topicRecall;
+
+export const isDeepRecallEnabled = (config?: Pick<VegaConfig, "features">): boolean =>
+  resolveFeatureFlags(config).deepRecall;
+
+export const isDeepRecallAvailable = (config?: Pick<VegaConfig, "features">): boolean => {
+  const features = resolveFeatureFlags(config);
+
+  return features.rawArchive && features.deepRecall;
+};
 
 const parseNumber = (value: string | undefined, fallback: number): number => {
   if (value === undefined) {
@@ -351,6 +391,16 @@ const parseRegressionGuardConfig = (): RegressionGuardConfig => ({
   )
 });
 
+const parseFeatureFlags = (): VegaFeatureFlags => ({
+  factClaims: parseBoolean(process.env.VEGA_FEATURE_FACT_CLAIMS, DEFAULT_FEATURE_FLAGS.factClaims),
+  rawArchive: parseBoolean(process.env.VEGA_FEATURE_RAW_ARCHIVE, DEFAULT_FEATURE_FLAGS.rawArchive),
+  topicRecall: parseBoolean(
+    process.env.VEGA_FEATURE_TOPIC_RECALL,
+    DEFAULT_FEATURE_FLAGS.topicRecall
+  ),
+  deepRecall: parseBoolean(process.env.VEGA_FEATURE_DEEP_RECALL, DEFAULT_FEATURE_FLAGS.deepRecall)
+});
+
 const getConfigFilePath = (): string => join(homedir(), ".vega", "config.json");
 
 const loadFileConfig = (): Partial<
@@ -533,6 +583,7 @@ export const loadConfig = (): VegaConfig => {
     ...(encryptionKey === undefined ? {} : { encryptionKey }),
     cloudBackup: parseCloudBackup(),
     regressionGuard: parseRegressionGuardConfig(),
+    features: parseFeatureFlags(),
     customRedactionPatterns: fileConfig.customRedactionPatterns ?? [],
     ...(webhooks === undefined ? {} : { webhooks })
   };

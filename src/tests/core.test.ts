@@ -436,8 +436,14 @@ test("recall returns results and updates access metadata", async () => {
 test("recall scopes hybrid search by topic before ranking results", async () => {
   const restoreFetch = installEmbeddingMock([1, 0]);
   const repository = new Repository(":memory:");
-  const searchEngine = new SearchEngine(repository, baseConfig);
-  const service = new RecallService(repository, searchEngine, baseConfig);
+  const config: VegaConfig = {
+    ...baseConfig,
+    features: {
+      topicRecall: true
+    }
+  };
+  const searchEngine = new SearchEngine(repository, config);
+  const service = new RecallService(repository, searchEngine, config);
 
   try {
     repository.createMemory(
@@ -481,8 +487,14 @@ test("recall scopes hybrid search by topic before ranking results", async () => 
 test("recall falls back to standard search when topic narrowing has no matches", async () => {
   const restoreFetch = installEmbeddingMock([1, 0]);
   const repository = new Repository(":memory:");
-  const searchEngine = new SearchEngine(repository, baseConfig);
-  const service = new RecallService(repository, searchEngine, baseConfig);
+  const config: VegaConfig = {
+    ...baseConfig,
+    features: {
+      topicRecall: true
+    }
+  };
+  const searchEngine = new SearchEngine(repository, config);
+  const service = new RecallService(repository, searchEngine, config);
 
   try {
     repository.createMemory(
@@ -515,8 +527,14 @@ test("recall falls back to standard search when topic narrowing has no matches",
 test("recall returns no results when topic fallback is disabled", async () => {
   const restoreFetch = installEmbeddingMock([1, 0]);
   const repository = new Repository(":memory:");
-  const searchEngine = new SearchEngine(repository, baseConfig);
-  const service = new RecallService(repository, searchEngine, baseConfig);
+  const config: VegaConfig = {
+    ...baseConfig,
+    features: {
+      topicRecall: true
+    }
+  };
+  const searchEngine = new SearchEngine(repository, config);
+  const service = new RecallService(repository, searchEngine, config);
 
   try {
     repository.createMemory(
@@ -539,6 +557,49 @@ test("recall returns no results when topic fallback is disabled", async () => {
     });
 
     assert.equal(results.length, 0);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("recall ignores topic narrowing when topic recall feature is disabled", async () => {
+  const restoreFetch = installEmbeddingMock([1, 0]);
+  const repository = new Repository(":memory:");
+  const config: VegaConfig = {
+    ...baseConfig,
+    features: {
+      topicRecall: false
+    }
+  };
+  const searchEngine = new SearchEngine(repository, config);
+  const service = new RecallService(repository, searchEngine, config);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "fallback-memory",
+        title: "Auth policy",
+        content: "policy for login enforcement",
+        embedding: createEmbeddingBuffer([1, 0]),
+        tags: ["policy", "auth", "login"]
+      })
+    );
+    repository.db.exec(`
+      DROP TABLE IF EXISTS memory_topics;
+      DROP TABLE IF EXISTS topics;
+    `);
+
+    const results = await service.recall("policy", {
+      ...defaultSearchOptions,
+      topic: "database"
+    });
+
+    assert.deepEqual(
+      results.map((result) => result.memory.id),
+      ["fallback-memory"]
+    );
+    assert.equal(results[0]?.fallback, undefined);
   } finally {
     restoreFetch();
     repository.close();

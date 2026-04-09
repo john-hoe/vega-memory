@@ -21,7 +21,7 @@ interface TestHarness {
   request(path: string, init?: RequestInit): Promise<Response>;
 }
 
-const createHarness = async (): Promise<TestHarness> => {
+const createHarness = async (overrides: Partial<VegaConfig> = {}): Promise<TestHarness> => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-archive-api-"));
   const config: VegaConfig = {
     dbPath: join(tempDir, "memory.db"),
@@ -39,7 +39,8 @@ const createHarness = async (): Promise<TestHarness> => {
     telegramBotToken: undefined,
     telegramChatId: undefined,
     observerEnabled: false,
-    dbEncryption: false
+    dbEncryption: false,
+    ...overrides
   };
   const repository = new Repository(config.dbPath);
   const searchEngine = new SearchEngine(repository, config);
@@ -230,6 +231,56 @@ test("POST /api/deep-recall returns original unredacted archive evidence", async
       captured_from: "memory_service",
       memory_type: "pitfall"
     });
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("MemoryService skips raw archive capture when raw archive feature is disabled", async () => {
+  const harness = await createHarness({
+    features: {
+      rawArchive: false
+    }
+  });
+
+  try {
+    const response = await harness.request("/api/store", {
+      method: "POST",
+      body: JSON.stringify({
+        content: "Cold archive writes should stay disabled during rollback.",
+        type: "insight",
+        project: "vega"
+      })
+    });
+    const body = await readJson<{ id: string; action: string }>(response);
+
+    assert.equal(response.status, 200);
+    assert.equal(body.action, "created");
+    assert.equal(harness.repository.listRawArchives("vega").length, 0);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("POST /api/deep-recall returns 501 when the feature is disabled", async () => {
+  const harness = await createHarness({
+    features: {
+      deepRecall: false
+    }
+  });
+
+  try {
+    const response = await harness.request("/api/deep-recall", {
+      method: "POST",
+      body: JSON.stringify({
+        query: "backup evidence",
+        project: "vega"
+      })
+    });
+    const body = await readJson<{ error: string }>(response);
+
+    assert.equal(response.status, 501);
+    assert.equal(body.error, "deep_recall feature is disabled");
   } finally {
     await harness.cleanup();
   }

@@ -1,4 +1,4 @@
-import type { VegaConfig } from "../config.js";
+import { isTopicRecallEnabled, type VegaConfig } from "../config.js";
 import type { Memory, MemoryListFilters, SearchOptions, SearchResult } from "./types.js";
 import { Repository } from "../db/repository.js";
 import { generateEmbedding } from "../embedding/ollama.js";
@@ -88,6 +88,17 @@ export class RecallService {
     regressionGuard?: RegressionGuard
   ) {
     this.regressionGuard = regressionGuard ?? new RegressionGuard(repository, config);
+  }
+
+  private normalizeSearchOptions(options: SearchOptions): SearchOptions {
+    if (isTopicRecallEnabled(this.config) || options.topic === undefined) {
+      return options;
+    }
+
+    return {
+      ...options,
+      topic: undefined
+    };
   }
 
   private logRecallPerformance(
@@ -255,14 +266,15 @@ export class RecallService {
   async recall(query: string, options: SearchOptions): Promise<SearchResult[]> {
     const startedAt = Date.now();
     let embeddingLatencyMs: number | null = null;
-    const normalizedTopic = resolveTopicRecallOptions(options.topic);
+    const effectiveOptions = this.normalizeSearchOptions(options);
+    const normalizedTopic = resolveTopicRecallOptions(effectiveOptions.topic);
     const cacheKey = JSON.stringify({
       query,
-      project: options.project ?? null,
-      type: options.type ?? null,
-      limit: options.limit,
-      minSimilarity: options.minSimilarity ?? null,
-      tenant_id: options.tenant_id ?? null,
+      project: effectiveOptions.project ?? null,
+      type: effectiveOptions.type ?? null,
+      limit: effectiveOptions.limit,
+      minSimilarity: effectiveOptions.minSimilarity ?? null,
+      tenant_id: effectiveOptions.tenant_id ?? null,
       topic: normalizedTopic
     });
     const cached = this.recallCache.get(cacheKey);
@@ -286,7 +298,7 @@ export class RecallService {
       const embeddingStartedAt = Date.now();
       const embedding = await execution.embeddingPromise;
       embeddingLatencyMs = Date.now() - embeddingStartedAt;
-      resolvedExecution = this.executeTopicAwareSearch(query, embedding, options);
+      resolvedExecution = this.executeTopicAwareSearch(query, embedding, effectiveOptions);
       this.recallCache.set(cacheKey, {
         cachedAt: Date.now(),
         results: structuredClone(resolvedExecution.results) as SearchResult[],
@@ -318,17 +330,22 @@ export class RecallService {
     const embeddingStartedAt = Date.now();
     const embedding = await generateEmbedding(query, this.config);
     const embeddingLatencyMs = Date.now() - embeddingStartedAt;
-    const topicOptions = resolveTopicRecallOptions(options.topic);
+    const effectiveOptions = this.normalizeSearchOptions(options);
+    const topicOptions = resolveTopicRecallOptions(effectiveOptions.topic);
 
     if (topicOptions) {
       const scopedOptions: SearchOptions = {
-        ...options,
+        ...effectiveOptions,
         topic: topicOptions
       };
       const candidateIds =
-        options.project === undefined
+        effectiveOptions.project === undefined
           ? []
-          : this.repository.listMemoryIdsByTopic(options.project, topicOptions, options.tenant_id);
+          : this.repository.listMemoryIdsByTopic(
+              effectiveOptions.project,
+              topicOptions,
+              effectiveOptions.tenant_id
+            );
 
       if (candidateIds.length > 0) {
         const scopedSearch = new StreamingSearch(this.repository, this.config);
@@ -363,7 +380,7 @@ export class RecallService {
       }
 
       const fallbackOptions: SearchOptions = {
-        ...options,
+        ...effectiveOptions,
         topic: undefined
       };
       const fallbackSearch = new StreamingSearch(this.repository, this.config);
@@ -397,8 +414,8 @@ export class RecallService {
     const streamingSearch = new StreamingSearch(this.repository, this.config);
 
     try {
-      for await (const result of streamingSearch.searchStream(query, embedding, options)) {
-        this.updateAccessedMemory(result, options.project, now());
+      for await (const result of streamingSearch.searchStream(query, embedding, effectiveOptions)) {
+        this.updateAccessedMemory(result, effectiveOptions.project, now());
         results.push(result);
         yield result;
       }
@@ -406,7 +423,7 @@ export class RecallService {
       this.logRecallPerformance(
         "recall_stream",
         startedAt,
-        options,
+        effectiveOptions,
         results,
         streamingSearch.getLastMetrics().bm25ResultCount,
         embeddingLatencyMs

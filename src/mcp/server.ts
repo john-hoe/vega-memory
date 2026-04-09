@@ -6,7 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import type { VegaConfig } from "../config.js";
+import { isDeepRecallAvailable, type VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { getHealthReport } from "../core/health.js";
@@ -435,15 +435,25 @@ export function createMCPServer({
       include_metadata: z.boolean().default(false),
       inject_into_session: z.boolean().default(false)
     },
-    async (args) =>
-      runTool(repository, "deep_recall", args, observer, async () => {
+    async (args) => {
+      if (!isDeepRecallAvailable(config)) {
+        return toTextResult(
+          {
+            error: "deep_recall feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(repository, "deep_recall", args, observer, async () => {
         const result = await Promise.resolve(rawArchiveService.deepRecall(args));
 
         return {
           result,
           resultCount: result.results.length
         };
-      })
+      });
+    }
   );
 
   server.tool(
