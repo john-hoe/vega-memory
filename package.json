@@ -11,7 +11,7 @@
     "docker:build": "docker build -t vega-memory .",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
-    "test": "node --test dist/tests/**/*.test.js"
+    "test": "node --test dist/tests/*.test.js dist/tests/**/*.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1026.0",

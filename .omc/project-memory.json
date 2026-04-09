@@ -204,6 +204,12 @@
       "type": "directory"
     },
     {
+      "path": "package.json",
+      "accessCount": 2,
+      "lastAccessed": 1775750522038,
+      "type": "file"
+    },
+    {
       "path": "docs/specs/vm2-001-recall-protocol.md",
       "accessCount": 1,
       "lastAccessed": 1775716318248,
