@@ -30,3 +30,32 @@ All AI agents (Cursor, Claude Code, Codex, OpenClaw) MUST proactively store memo
 - Preserve specifics: error messages, file paths, commands, version numbers
 - Do NOT store: emotional complaints, failed debug attempts, one-time queries, raw data, common knowledge
 - Do NOT wait for user to say "store this" — this is automatic
+
+## VM2 Recall Protocol Integration
+
+Treat Vega Memory as a two-stage adapter protocol:
+
+1. `session_start(mode)` loads the bounded preload bundle.
+2. `recall(query)` fetches task-specific hot memories.
+3. `deep_recall(request)` is reserved for archived/original evidence.
+4. `session_end(...)` closes the current work unit or handoff.
+
+### Codex Mode Selection
+- `L0`: Quick follow-up turns with strong local code context where only preferences/identity reminders are needed.
+- `L1`: Default daily coding mode for implementation, bugfixes, and short edit/test loops.
+- `L2`: Planning, architecture, repo-wide cleanup, ambiguous work, or new repo areas.
+- `L3`: Audit, provenance, evidence collection, or original-text verification turns.
+- `light` is the `L1` alias. `standard` is the `L2` alias.
+
+### Codex Workflow
+- Start each work unit with `vega session-start --dir "$(pwd)" --mode <L0|L1|L2|L3> --json`.
+- Use `vega recall ...` when a task-specific fact is missing instead of widening preload by default.
+- Use `deep_recall` only for cold evidence or archived/original text, or use `L3` when the preload itself must include evidence.
+- Call `vega session-end --project <project> --summary "<summary>"` when the user-visible task is complete or when a durable handoff summary exists.
+
+### Hermes Orchestration Reservation
+- `L0`: Routing, dispatch, status checks, and fast orchestration turns.
+- `L1`: Single-lane execution turns where Hermes already knows the local working set.
+- `L2`: Multi-step synthesis, planning, architecture, or cross-lane coordination turns.
+- `L3`: Audit packets, provenance review, or cold-evidence expansion.
+- Trigger `session_end` as soon as Hermes emits a delegation handoff packet or durable turn summary that another agent will consume. Do not wait for the entire multi-agent workflow to finish if the current orchestrator turn has ended.
