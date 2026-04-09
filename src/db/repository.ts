@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 
+import { SEMANTIC_RELATION_TYPES, STRUCTURAL_RELATION_TYPES } from "../core/types.js";
 import type {
   ArchiveStats,
   AsOfQueryOptions,
@@ -11,7 +12,9 @@ import type {
   EntityRelation,
   FactClaim,
   FactClaimStatus,
+  GraphStats,
   GraphTraversal,
+  MetadataEntry,
   Memory,
   MemoryListFilters,
   MemoryTopic,
@@ -164,6 +167,11 @@ interface MetadataRow {
   updated_at: string;
 }
 
+interface GraphCountRow {
+  graph_key: string;
+  total: number;
+}
+
 interface CountRow {
   total: number;
 }
@@ -225,6 +233,7 @@ interface EntityRow {
   id: string;
   name: string;
   type: Entity["type"];
+  metadata: string;
   created_at: string;
 }
 
@@ -388,7 +397,10 @@ function mapMemoryTopic(row: MemoryTopicRow): MemoryTopic {
 }
 
 function mapEntity(row: EntityRow): Entity {
-  return row;
+  return {
+    ...row,
+    metadata: parseJsonObject(row.metadata)
+  };
 }
 
 function mapEntityRelation(row: EntityRelationRow): EntityRelation {
@@ -2601,22 +2613,34 @@ export class Repository {
       .run(userId);
   }
 
-  createEntity(name: string, type: Entity["type"]): Entity {
+  createEntity(
+    name: string,
+    type: Entity["type"],
+    metadata?: Record<string, unknown>
+  ): Entity {
     const normalizedName = name.trim();
     if (normalizedName.length === 0) {
       throw new Error("Entity name cannot be empty");
     }
 
     const existing = this.findEntity(normalizedName);
+    const resolvedMetadata = metadata ?? {};
+    const serializedMetadata = serializeJsonObject(resolvedMetadata);
     if (existing) {
-      if (existing.type !== type) {
+      if (
+        existing.type !== type ||
+        serializeJsonObject(existing.metadata ?? {}) !== serializedMetadata
+      ) {
         this.db
-          .prepare<[Entity["type"], string]>("UPDATE entities SET type = ? WHERE id = ?")
-          .run(type, existing.id);
+          .prepare<[Entity["type"], string, string]>(
+            "UPDATE entities SET type = ?, metadata = ? WHERE id = ?"
+          )
+          .run(type, serializedMetadata, existing.id);
 
         return {
           ...existing,
-          type
+          type,
+          metadata: resolvedMetadata
         };
       }
 
@@ -2627,14 +2651,21 @@ export class Repository {
       id: uuidv4(),
       name: normalizedName,
       type,
+      metadata: resolvedMetadata,
       created_at: timestamp()
     };
 
     this.db
-      .prepare<[string, string, Entity["type"], string]>(
-        "INSERT INTO entities (id, name, type, created_at) VALUES (?, ?, ?, ?)"
+      .prepare<[string, string, Entity["type"], string, string]>(
+        "INSERT INTO entities (id, name, type, metadata, created_at) VALUES (?, ?, ?, ?, ?)"
       )
-      .run(entity.id, entity.name, entity.type, entity.created_at);
+      .run(
+        entity.id,
+        entity.name,
+        entity.type,
+        serializeJsonObject(entity.metadata ?? {}),
+        entity.created_at
+      );
 
     return entity;
   }
@@ -2656,6 +2687,80 @@ export class Repository {
 
   deleteRelationsForMemory(memoryId: string): void {
     this.db.prepare<[string]>("DELETE FROM relations WHERE memory_id = ?").run(memoryId);
+  }
+
+  deleteSemanticRelationsForMemory(memoryId: string): void {
+    const relationPlaceholders = SEMANTIC_RELATION_TYPES.map(() => "?").join(", ");
+
+    this.db
+      .prepare<unknown[]>(
+        `DELETE FROM relations
+         WHERE memory_id = ?
+           AND relation_type IN (${relationPlaceholders})`
+      )
+      .run(memoryId, ...SEMANTIC_RELATION_TYPES);
+  }
+
+  deleteStructuralRelationsForMemory(memoryId: string): void {
+    const relationPlaceholders = STRUCTURAL_RELATION_TYPES.map(() => "?").join(", ");
+
+    this.db
+      .prepare<unknown[]>(
+        `DELETE FROM relations
+         WHERE memory_id = ?
+           AND relation_type IN (${relationPlaceholders})`
+      )
+      .run(memoryId, ...STRUCTURAL_RELATION_TYPES);
+  }
+
+  getRelationEntityIdsForMemory(memoryId: string): string[] {
+    const rows = this.db
+      .prepare<[string, string], { entity_id: string }>(
+        `SELECT source_entity_id AS entity_id
+         FROM relations
+         WHERE memory_id = ?
+         UNION
+         SELECT target_entity_id AS entity_id
+         FROM relations
+         WHERE memory_id = ?`
+      )
+      .all(memoryId, memoryId);
+
+    return rows.map((row) => row.entity_id);
+  }
+
+  pruneEntitiesWithoutRelations(entityIds: string[]): number {
+    const uniqueEntityIds = [...new Set(entityIds)];
+
+    if (uniqueEntityIds.length === 0) {
+      return 0;
+    }
+
+    const placeholders = uniqueEntityIds.map(() => "?").join(", ");
+    const orphanRows = this.db
+      .prepare<unknown[], { id: string }>(
+        `SELECT entities.id
+         FROM entities
+         LEFT JOIN relations AS outgoing ON outgoing.source_entity_id = entities.id
+         LEFT JOIN relations AS incoming ON incoming.target_entity_id = entities.id
+         WHERE entities.id IN (${placeholders})
+           AND outgoing.id IS NULL
+           AND incoming.id IS NULL`
+      )
+      .all(...uniqueEntityIds);
+
+    if (orphanRows.length === 0) {
+      return 0;
+    }
+
+    const orphanIds = orphanRows.map((row) => row.id);
+    const orphanPlaceholders = orphanIds.map(() => "?").join(", ");
+
+    this.db
+      .prepare<unknown[]>(`DELETE FROM entities WHERE id IN (${orphanPlaceholders})`)
+      .run(...orphanIds);
+
+    return orphanIds.length;
   }
 
   getEntityRelations(entityId: string): EntityRelation[] {
@@ -2943,6 +3048,25 @@ export class Repository {
     return row?.value ?? null;
   }
 
+  listMetadata(prefix?: string): MetadataEntry[] {
+    const rows =
+      prefix === undefined
+        ? this.db
+            .prepare<[], MetadataRow>("SELECT * FROM metadata ORDER BY key ASC")
+            .all()
+        : this.db
+            .prepare<[string], MetadataRow>(
+              "SELECT * FROM metadata WHERE key LIKE ? ORDER BY key ASC"
+            )
+            .all(`${prefix}%`);
+
+    return rows.map((row) => ({
+      key: row.key,
+      value: row.value,
+      updated_at: row.updated_at
+    }));
+  }
+
   setMetadata(key: string, value: string): void {
     this.db
       .prepare<[string, string, string]>(
@@ -2955,6 +3079,46 @@ export class Repository {
 
   deleteMetadata(key: string): void {
     this.db.prepare<[string]>("DELETE FROM metadata WHERE key = ?").run(key);
+  }
+
+  getGraphStats(): GraphStats {
+    const entityRows = this.db
+      .prepare<[], GraphCountRow>(
+        `SELECT type AS graph_key, COUNT(*) AS total
+         FROM entities
+         GROUP BY type
+         ORDER BY type ASC`
+      )
+      .all();
+    const relationRows = this.db
+      .prepare<[], GraphCountRow>(
+        `SELECT relation_type AS graph_key, COUNT(*) AS total
+         FROM relations
+         GROUP BY relation_type
+         ORDER BY relation_type ASC`
+      )
+      .all();
+    const totalEntities =
+      this.db.prepare<[], CountRow>("SELECT COUNT(*) AS total FROM entities").get()?.total ?? 0;
+    const totalRelations =
+      this.db.prepare<[], CountRow>("SELECT COUNT(*) AS total FROM relations").get()?.total ?? 0;
+    const trackedCodeFiles = this.db
+      .prepare<[string], CountRow>("SELECT COUNT(*) AS total FROM metadata WHERE key LIKE ?")
+      .get("sidecar:code-graph:%")?.total ?? 0;
+    const trackedDocFiles = this.db
+      .prepare<[string], CountRow>("SELECT COUNT(*) AS total FROM metadata WHERE key LIKE ?")
+      .get("sidecar:doc-graph:%")?.total ?? 0;
+
+    return {
+      total_entities: totalEntities,
+      total_relations: totalRelations,
+      entity_types: Object.fromEntries(entityRows.map((row) => [row.graph_key, row.total])),
+      relation_types: Object.fromEntries(
+        relationRows.map((row) => [row.graph_key, row.total])
+      ),
+      tracked_code_files: trackedCodeFiles,
+      tracked_doc_files: trackedDocFiles
+    };
   }
 
   close(): void {

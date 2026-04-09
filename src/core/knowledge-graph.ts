@@ -1,4 +1,9 @@
-import type { ExtractedEntity, GraphQueryResult, RelationType } from "./types.js";
+import type {
+  ExtractedEntity,
+  GraphQueryResult,
+  RelationType,
+  StructuredGraph
+} from "./types.js";
 import { Repository } from "../db/repository.js";
 
 const CAPITALIZED_PHRASE_PATTERN =
@@ -123,8 +128,10 @@ export class KnowledgeGraphService {
       throw new Error(`Memory not found: ${memoryId}`);
     }
 
-    this.repository.deleteRelationsForMemory(memoryId);
+    const previousEntityIds = this.repository.getRelationEntityIdsForMemory(memoryId);
+    this.repository.deleteSemanticRelationsForMemory(memoryId);
     if (entities.length === 0) {
+      this.repository.pruneEntitiesWithoutRelations(previousEntityIds);
       return;
     }
 
@@ -153,6 +160,48 @@ export class KnowledgeGraphService {
         );
       }
     }
+
+    this.repository.pruneEntitiesWithoutRelations(previousEntityIds);
+  }
+
+  replaceMemoryGraph(memoryId: string, graph: StructuredGraph): void {
+    const memory = this.repository.getMemory(memoryId);
+
+    if (!memory) {
+      throw new Error(`Memory not found: ${memoryId}`);
+    }
+
+    const previousEntityIds = this.repository.getRelationEntityIdsForMemory(memoryId);
+    this.repository.deleteStructuralRelationsForMemory(memoryId);
+
+    if (graph.entities.length === 0 || graph.relations.length === 0) {
+      this.repository.pruneEntitiesWithoutRelations(previousEntityIds);
+      return;
+    }
+
+    const entityByName = new Map(
+      graph.entities.map((entity) => [
+        entity.name,
+        this.repository.createEntity(entity.name, entity.type, entity.metadata ?? {})
+      ])
+    );
+
+    for (const relation of graph.relations) {
+      const source = entityByName.get(relation.source);
+      const target = entityByName.get(relation.target);
+
+      if (!source || !target) {
+        continue;
+      }
+
+      this.repository.createRelation(source.id, target.id, relation.relation_type, memoryId);
+    }
+
+    this.repository.pruneEntitiesWithoutRelations(previousEntityIds);
+  }
+
+  getStats() {
+    return this.repository.getGraphStats();
   }
 
   query(entityName: string, depth = 1): GraphQueryResult {

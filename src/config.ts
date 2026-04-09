@@ -51,6 +51,7 @@ export interface VegaFeatureFlags {
   rawArchive: boolean;
   topicRecall: boolean;
   deepRecall: boolean;
+  codeGraph: boolean;
 }
 
 export interface VegaConfig {
@@ -138,7 +139,8 @@ export const DEFAULT_FEATURE_FLAGS: VegaFeatureFlags = {
   factClaims: false,
   rawArchive: true,
   topicRecall: false,
-  deepRecall: true
+  deepRecall: true,
+  codeGraph: false
 };
 
 export const resolveFeatureFlags = (
@@ -169,6 +171,9 @@ export const isDeepRecallAvailable = (config?: Pick<VegaConfig, "features">): bo
 
   return features.rawArchive && features.deepRecall;
 };
+
+export const isCodeGraphEnabled = (config?: Pick<VegaConfig, "features">): boolean =>
+  resolveFeatureFlags(config).codeGraph;
 
 const parseNumber = (value: string | undefined, fallback: number): number => {
   if (value === undefined) {
@@ -404,7 +409,8 @@ const parseFeatureFlags = (): VegaFeatureFlags => ({
     process.env.VEGA_FEATURE_TOPIC_RECALL,
     DEFAULT_FEATURE_FLAGS.topicRecall
   ),
-  deepRecall: parseBoolean(process.env.VEGA_FEATURE_DEEP_RECALL, DEFAULT_FEATURE_FLAGS.deepRecall)
+  deepRecall: parseBoolean(process.env.VEGA_FEATURE_DEEP_RECALL, DEFAULT_FEATURE_FLAGS.deepRecall),
+  codeGraph: parseBoolean(process.env.VEGA_FEATURE_CODE_GRAPH, DEFAULT_FEATURE_FLAGS.codeGraph)
 });
 
 const getConfigFilePath = (): string => join(homedir(), ".vega", "config.json");

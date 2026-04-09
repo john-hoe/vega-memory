@@ -295,6 +295,105 @@ test("CodeIndexService.indexDirectory stores embeddings and skips vendor directo
   }
 });
 
+test("CodeIndexService.indexDirectory leaves structural graph disabled by default", async () => {
+  const restoreFetch = installEmbeddingMock();
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-code-index-no-graph-"));
+  const repository = new Repository(":memory:");
+  const memoryService = new MemoryService(repository, baseConfig);
+  const graphService = new KnowledgeGraphService(repository);
+  const service = new CodeIndexService(repository, memoryService);
+
+  mkdirSync(join(tempDir, "src"), { recursive: true });
+  writeFileSync(
+    join(tempDir, "src", "index.ts"),
+    ["import { join } from \"node:path\";", "export function run(): void {}", ""].join("\n"),
+    "utf8"
+  );
+
+  try {
+    await service.indexDirectory(tempDir, ["ts"]);
+
+    const stats = graphService.getStats();
+
+    assert.equal(stats.relation_types.imports ?? 0, 0);
+    assert.equal(stats.relation_types.declares ?? 0, 0);
+    assert.equal(stats.relation_types.exports ?? 0, 0);
+    assert.equal(stats.tracked_code_files, 0);
+  } finally {
+    restoreFetch();
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodeIndexService.indexDirectory builds structural code graph, skips unchanged files, and clears deleted files", async () => {
+  const restoreFetch = installEmbeddingMock();
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-code-index-graph-"));
+  const repository = new Repository(":memory:");
+  const memoryService = new MemoryService(repository, baseConfig);
+  const graphService = new KnowledgeGraphService(repository);
+  const service = new CodeIndexService(repository, memoryService, {
+    features: {
+      codeGraph: true
+    }
+  });
+  const filePath = join(tempDir, "src", "index.ts");
+
+  mkdirSync(join(tempDir, "src"), { recursive: true });
+  writeFileSync(
+    filePath,
+    [
+      "import { join } from \"node:path\";",
+      "export class App {}",
+      "export async function run(name: string): Promise<void> {}"
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    await service.indexDirectory(tempDir, ["ts"], { graph: true });
+
+    const firstMemory = repository.listMemories({
+      project: basename(tempDir),
+      type: "project_context",
+      limit: 10
+    })[0];
+    const firstStats = graphService.getStats();
+
+    assert.ok(firstMemory);
+    assert.equal(firstStats.tracked_code_files, 1);
+    assert.equal((firstStats.entity_types.module ?? 0) >= 1, true);
+    assert.equal((firstStats.relation_types.imports ?? 0) >= 1, true);
+    assert.equal((firstStats.relation_types.declares ?? 0) >= 1, true);
+    assert.equal((firstStats.relation_types.exports ?? 0) >= 1, true);
+
+    await service.indexDirectory(tempDir, ["ts"], { graph: true });
+
+    const unchangedMemory = repository.listMemories({
+      project: basename(tempDir),
+      type: "project_context",
+      limit: 10
+    })[0];
+
+    assert.equal(unchangedMemory?.updated_at, firstMemory.updated_at);
+
+    rmSync(filePath, { force: true });
+
+    await service.indexDirectory(tempDir, ["ts"], { graph: true });
+
+    const stats = graphService.getStats();
+
+    assert.equal(stats.tracked_code_files, 0);
+    assert.equal(stats.relation_types.imports ?? 0, 0);
+    assert.equal(stats.relation_types.declares ?? 0, 0);
+    assert.equal(stats.relation_types.exports ?? 0, 0);
+  } finally {
+    restoreFetch();
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("GitHistoryService.extractFromGitLog creates memories from commits", async () => {
   const restoreFetch = installEmbeddingMock();
   const tempDir = mkdtempSync(join(tmpdir(), "vega-git-history-"));
@@ -531,6 +630,53 @@ test("DocIndexService.indexDirectory keeps same-basename files distinct", async 
   }
 });
 
+test("DocIndexService.indexMarkdown builds document graph sidecar when enabled", async () => {
+  const restoreFetch = installEmbeddingMock();
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-doc-index-graph-"));
+  const filePath = join(tempDir, "guide.md");
+  const repository = new Repository(":memory:");
+  const memoryService = new MemoryService(repository, baseConfig);
+  const graphService = new KnowledgeGraphService(repository);
+  const service = new DocIndexService(repository, memoryService, {
+    features: {
+      codeGraph: true
+    }
+  });
+
+  writeFileSync(
+    filePath,
+    [
+      "## Setup",
+      "",
+      "Core Term: explained for the graph sidecar.",
+      "",
+      "### Nested",
+      "",
+      "See [[API Guide]] for more detail.",
+      ""
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    const count = await service.indexMarkdown(filePath, "docs", { graph: true });
+    const stats = graphService.getStats();
+
+    assert.equal(count, 1);
+    assert.equal(stats.tracked_doc_files, 1);
+    assert.equal((stats.entity_types.document ?? 0) >= 1, true);
+    assert.equal((stats.entity_types.heading ?? 0) >= 1, true);
+    assert.equal((stats.entity_types.term ?? 0) >= 1, true);
+    assert.equal(stats.relation_types.contains ?? 0, 2);
+    assert.equal(stats.relation_types.references ?? 0, 1);
+    assert.equal(stats.relation_types.defines ?? 0, 1);
+  } finally {
+    restoreFetch();
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("memory_graph tool omits serialized embeddings", async () => {
   const repository = new Repository(":memory:");
   const server = createMCPServer({
@@ -541,6 +687,7 @@ test("memory_graph tool omits serialized embeddings", async () => {
           id: "entity-1",
           name: "Vega Memory",
           type: "project",
+          metadata: {},
           created_at: "2026-04-05T00:00:00.000Z"
         },
         relations: [],

@@ -190,6 +190,7 @@ export function initializeDatabase(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       name TEXT UNIQUE,
       type TEXT NOT NULL,
+      metadata TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL
     );
 
@@ -553,6 +554,7 @@ export function initializeDatabase(db: Database.Database): void {
 
   ensureColumn(db, "memories", "tenant_id", "TEXT");
   ensureColumn(db, "memories", "summary", "TEXT");
+  ensureColumn(db, "entities", "metadata", "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn(db, "audit_log", "tenant_id", "TEXT");
   ensureColumn(db, "performance_log", "avg_similarity", "REAL");
   ensureColumn(db, "performance_log", "tenant_id", "TEXT");

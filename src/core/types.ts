@@ -6,14 +6,48 @@ export type MemoryType =
   | "pitfall"
   | "insight";
 
-export type EntityType = "person" | "project" | "tool" | "concept" | "file";
+export type EntityType =
+  | "person"
+  | "project"
+  | "tool"
+  | "concept"
+  | "file"
+  | "module"
+  | "function"
+  | "class"
+  | "document"
+  | "heading"
+  | "term";
 
 export type RelationType =
   | "uses"
   | "depends_on"
   | "related_to"
   | "part_of"
-  | "caused_by";
+  | "caused_by"
+  | "imports"
+  | "declares"
+  | "contains"
+  | "exports"
+  | "defines"
+  | "references";
+
+export const SEMANTIC_RELATION_TYPES = [
+  "uses",
+  "depends_on",
+  "related_to",
+  "part_of",
+  "caused_by"
+] as const satisfies RelationType[];
+
+export const STRUCTURAL_RELATION_TYPES = [
+  "imports",
+  "declares",
+  "contains",
+  "exports",
+  "defines",
+  "references"
+] as const satisfies RelationType[];
 
 export type MemorySource = "auto" | "explicit";
 
@@ -185,12 +219,14 @@ export interface Entity {
   id: string;
   name: string;
   type: EntityType;
+  metadata?: Record<string, unknown>;
   created_at: string;
 }
 
 export interface ExtractedEntity {
   name: string;
   type: EntityType;
+  metadata?: Record<string, unknown>;
 }
 
 export interface EntityRelation {
@@ -215,6 +251,32 @@ export interface GraphQueryResult {
   entity: Entity | null;
   relations: EntityRelation[];
   memories: Memory[];
+}
+
+export interface StructuredRelation {
+  source: string;
+  target: string;
+  relation_type: RelationType;
+}
+
+export interface StructuredGraph {
+  entities: ExtractedEntity[];
+  relations: StructuredRelation[];
+}
+
+export interface GraphStats {
+  total_entities: number;
+  total_relations: number;
+  entity_types: Record<string, number>;
+  relation_types: Record<string, number>;
+  tracked_code_files: number;
+  tracked_doc_files: number;
+}
+
+export interface MetadataEntry {
+  key: string;
+  value: string;
+  updated_at: string;
 }
 
 export interface CodeSymbol {

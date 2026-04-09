@@ -291,6 +291,7 @@ export class TenantSchemaManager {
           "  id TEXT PRIMARY KEY,",
           "  name TEXT UNIQUE,",
           "  type TEXT NOT NULL,",
+          "  metadata TEXT NOT NULL DEFAULT '{}',",
           "  created_at TEXT NOT NULL"
         ].join("\n")
       ),

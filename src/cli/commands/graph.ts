@@ -15,12 +15,26 @@ export function registerGraphCommand(
   program: Command,
   knowledgeGraphService: KnowledgeGraphService
 ): void {
-  program
+  const graphCommand = program
     .command("graph")
-    .description("Query the memory knowledge graph")
-    .argument("<entity>", "entity name")
+    .description("Query the memory knowledge graph or show graph stats");
+
+  graphCommand
+    .command("stats")
+    .description("Show knowledge graph stats")
+    .action(() => {
+      console.log(JSON.stringify(knowledgeGraphService.getStats(), null, 2));
+    });
+
+  graphCommand
+    .argument("[entity]", "entity name")
     .option("--depth <depth>", "graph traversal depth", parseDepth, 1)
-    .action((entity: string, options: { depth: number }) => {
+    .action((entity: string | undefined, options: { depth: number }) => {
+      if (!entity) {
+        console.log("Provide an entity name or run `vega graph stats`.");
+        return;
+      }
+
       const result = knowledgeGraphService.query(entity, options.depth);
 
       if (result.entity === null) {

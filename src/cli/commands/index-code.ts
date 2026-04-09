@@ -10,15 +10,19 @@ const parseExtensions = (value: string): string[] =>
 
 export function registerCodeIndexCommand(
   program: Command,
-  codeIndexService: CodeIndexService
+  codeIndexService: CodeIndexService,
+  defaultGraphEnabled = false
 ): void {
   program
     .command("index")
     .description("Index source code symbols")
     .argument("<directory>", "directory to index")
     .option("--ext <extensions>", "comma-separated extensions", parseExtensions, ["ts", "js", "py"])
-    .action(async (directory: string, options: { ext: string[] }) => {
-      const indexedFiles = await codeIndexService.indexDirectory(directory, options.ext);
+    .option("--graph", "build the sidecar code/doc graph during indexing", false)
+    .action(async (directory: string, options: { ext: string[]; graph: boolean }) => {
+      const indexedFiles = await codeIndexService.indexDirectory(directory, options.ext, {
+        graph: options.graph || defaultGraphEnabled
+      });
 
       console.log(`indexed ${indexedFiles} files`);
     });

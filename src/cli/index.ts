@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 
 import { Command } from "commander";
 
-import { loadConfig, requireDatabaseEncryptionKey } from "../config.js";
+import { isCodeGraphEnabled, loadConfig, requireDatabaseEncryptionKey } from "../config.js";
 import { createAdapter } from "../db/adapter-factory.js";
 import { registerAnalyticsCommand } from "./commands/analytics.js";
 import { registerArchiveCommands } from "./commands/archive.js";
@@ -128,7 +128,7 @@ async function main(): Promise<void> {
   );
   const compactService = new CompactService(repository, config);
   const compressionService = new CompressionService(repository, config);
-  const codeIndexService = new CodeIndexService(repository, memoryService);
+  const codeIndexService = new CodeIndexService(repository, memoryService, config);
   const docGenerator = new DocGenerator(repository);
   const gitHistoryService = new GitHistoryService(repository, memoryService);
   const imageAnalyzer = new ImageAnalyzer({
@@ -138,7 +138,7 @@ async function main(): Promise<void> {
     ollamaBaseUrl: config.ollamaBaseUrl
   });
   const imageMemoryService = new ImageMemoryService(repository, memoryService, imageAnalyzer);
-  const docIndexService = new DocIndexService(repository, memoryService);
+  const docIndexService = new DocIndexService(repository, memoryService, config);
   const qualityService = new QualityService(repository, config);
   const topicService = new TopicService(repository, config);
   const pluginLoader = new PluginLoader();
@@ -176,10 +176,10 @@ async function main(): Promise<void> {
   registerCompressionCommand(program, compressionService, repository);
   registerDocGeneratorCommand(program, docGenerator);
   registerGraphCommand(program, knowledgeGraphService);
-  registerCodeIndexCommand(program, codeIndexService);
+  registerCodeIndexCommand(program, codeIndexService, isCodeGraphEnabled(config));
   registerGitImportCommand(program, gitHistoryService);
   registerScreenshotCommand(program, imageMemoryService);
-  registerDocIndexCommand(program, docIndexService);
+  registerDocIndexCommand(program, docIndexService, isCodeGraphEnabled(config));
   registerSessionCommands(program, sessionService);
   registerHealthCommand(program, repository, config);
   registerIngestCommand(program, ingestionService);

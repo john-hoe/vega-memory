@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -151,6 +151,83 @@ test("CLI store and list commands work together", () => {
 
     assert.match(storeOutput, /\bcreated\b/);
     assert.match(listOutput, /Remember SQLite for local search/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CLI index --graph and graph stats expose structural graph counts", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-graph-stats-"));
+  const dbPath = join(tempDir, "memory.db");
+  const sourceDir = join(tempDir, "repo");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999",
+    VEGA_FEATURE_CODE_GRAPH: "true"
+  };
+
+  mkdirSync(join(sourceDir, "src"), { recursive: true });
+  writeFileSync(
+    join(sourceDir, "src", "index.ts"),
+    [
+      "import { join } from \"node:path\";",
+      "export class App {}",
+      "export function run(): void {}"
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    const indexOutput = runCli(["index", sourceDir, "--graph"], env);
+    const stats = JSON.parse(runCli(["graph", "stats"], env)) as {
+      tracked_code_files: number;
+      relation_types: Record<string, number>;
+    };
+
+    assert.match(indexOutput, /indexed 1 files/);
+    assert.equal(stats.tracked_code_files, 1);
+    assert.equal((stats.relation_types.imports ?? 0) > 0, true);
+    assert.equal((stats.relation_types.declares ?? 0) > 0, true);
+    assert.equal((stats.relation_types.exports ?? 0) > 0, true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CLI index --graph builds the sidecar graph and graph stats report it", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-graph-"));
+  const dbPath = join(tempDir, "memory.db");
+  const sourceDir = join(tempDir, "repo");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999"
+  };
+
+  mkdirSync(join(sourceDir, "src"), { recursive: true });
+  writeFileSync(
+    join(sourceDir, "src", "index.ts"),
+    [
+      "import { join } from \"node:path\";",
+      "export class App {}",
+      "export function run(): void {}"
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    runCli(["index", sourceDir, "--graph", "--ext", "ts"], env);
+
+    const stats = JSON.parse(runCli(["graph", "stats"], env)) as {
+      tracked_code_files: number;
+      entity_types: Record<string, number>;
+      relation_types: Record<string, number>;
+    };
+
+    assert.equal(stats.tracked_code_files, 1);
+    assert.equal((stats.entity_types.module ?? 0) >= 1, true);
+    assert.equal((stats.relation_types.imports ?? 0) >= 1, true);
+    assert.equal((stats.relation_types.declares ?? 0) >= 1, true);
+    assert.equal((stats.relation_types.exports ?? 0) >= 1, true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
