@@ -156,6 +156,44 @@ test("CLI store and list commands work together", () => {
   }
 });
 
+test("CLI graph shows relation confidence and applies min-confidence filtering", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-graph-confidence-"));
+  const dbPath = join(tempDir, "memory.db");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999"
+  };
+
+  try {
+    runCli(
+      [
+        "store",
+        "Vega Memory uses SQLite for local storage.",
+        "--type",
+        "project_context",
+        "--project",
+        "vega"
+      ],
+      env
+    );
+
+    const visibleOutput = runCli(["graph", "SQLite", "--min-confidence", "0.5"], env);
+    const filteredOutput = JSON.parse(
+      runCli(["graph", "SQLite", "--min-confidence", "0.7"], env)
+    ) as {
+      relations: unknown[];
+      memories: unknown[];
+    };
+
+    assert.match(visibleOutput, /"confidence": 0\.6/);
+    assert.match(visibleOutput, /"extraction_method": "AMBIGUOUS"/);
+    assert.equal(filteredOutput.relations.length, 0);
+    assert.equal(filteredOutput.memories.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CLI index --graph and graph stats expose structural graph counts", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-graph-stats-"));
   const dbPath = join(tempDir, "memory.db");

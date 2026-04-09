@@ -200,6 +200,8 @@ export function initializeDatabase(db: Database.Database): void {
       target_entity_id TEXT NOT NULL,
       relation_type TEXT NOT NULL,
       memory_id TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 1 CHECK(confidence >= 0 AND confidence <= 1),
+      extraction_method TEXT NOT NULL DEFAULT 'EXTRACTED' CHECK(extraction_method IN ('EXTRACTED', 'INFERRED', 'AMBIGUOUS')),
       created_at TEXT NOT NULL,
       UNIQUE(source_entity_id, target_entity_id, relation_type, memory_id),
       FOREIGN KEY (source_entity_id) REFERENCES entities(id) ON DELETE CASCADE,
@@ -555,6 +557,18 @@ export function initializeDatabase(db: Database.Database): void {
   ensureColumn(db, "memories", "tenant_id", "TEXT");
   ensureColumn(db, "memories", "summary", "TEXT");
   ensureColumn(db, "entities", "metadata", "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn(
+    db,
+    "relations",
+    "confidence",
+    "REAL NOT NULL DEFAULT 1 CHECK(confidence >= 0 AND confidence <= 1)"
+  );
+  ensureColumn(
+    db,
+    "relations",
+    "extraction_method",
+    "TEXT NOT NULL DEFAULT 'EXTRACTED' CHECK(extraction_method IN ('EXTRACTED', 'INFERRED', 'AMBIGUOUS'))"
+  );
   ensureColumn(db, "audit_log", "tenant_id", "TEXT");
   ensureColumn(db, "performance_log", "avg_similarity", "REAL");
   ensureColumn(db, "performance_log", "tenant_id", "TEXT");

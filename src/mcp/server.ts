@@ -314,7 +314,11 @@ const runTool = async <T>(
 export interface CreateMCPServerOptions {
   repository: Repository;
   graphService: {
-    query(entityName: string, depth?: number): GraphQueryResult | Promise<GraphQueryResult>;
+    query(
+      entityName: string,
+      depth?: number,
+      minConfidence?: number
+    ): GraphQueryResult | Promise<GraphQueryResult>;
   };
   memoryService: {
     store(params: StoreParams): Promise<StoreResult>;
@@ -438,11 +442,14 @@ export function createMCPServer({
     "Query entity relations and connected memories from Vega Memory.",
     {
       entity: z.string().trim().min(1),
-      depth: z.number().int().min(0).default(1)
+      depth: z.number().int().min(0).default(1),
+      min_confidence: z.number().min(0).max(1).default(0)
     },
     async (args) =>
       runTool(repository, "memory_graph", args, observer, async () => {
-        const result = await Promise.resolve(graphService.query(args.entity, args.depth));
+        const result = await Promise.resolve(
+          graphService.query(args.entity, args.depth, args.min_confidence)
+        );
 
         return {
           result: serializeGraphQueryResult(result),

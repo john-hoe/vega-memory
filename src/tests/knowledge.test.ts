@@ -137,6 +137,32 @@ test("linkMemory creates entity and relation records", () => {
     assert.equal(relations.length, 1);
     assert.equal(relations[0].memory_id, "memory-1");
     assert.equal(relations[0].relation_type, "uses");
+    assert.equal(relations[0].confidence, 0.6);
+    assert.equal(relations[0].extraction_method, "AMBIGUOUS");
+  } finally {
+    repository.close();
+  }
+});
+
+test("createRelation persists explicit confidence metadata", () => {
+  const repository = new Repository(":memory:");
+  const service = new KnowledgeGraphService(repository);
+
+  try {
+    repository.createMemory(createMemory());
+    const source = repository.createEntity("Source Node", "concept");
+    const target = repository.createEntity("Target Node", "concept");
+
+    service.createRelation(source.id, target.id, "related_to", "memory-1", {
+      confidence: 0.42,
+      extraction_method: "EXTRACTED"
+    });
+
+    const relations = repository.getEntityRelations(source.id);
+
+    assert.equal(relations.length, 1);
+    assert.equal(relations[0].confidence, 0.42);
+    assert.equal(relations[0].extraction_method, "EXTRACTED");
   } finally {
     repository.close();
   }
@@ -172,6 +198,65 @@ test("traverseGraph returns connected memories at depth 1", () => {
     assert.deepEqual(
       result.memories.map((memory) => memory.id).sort(),
       ["memory-1", "memory-2"]
+    );
+  } finally {
+    repository.close();
+  }
+});
+
+test("replaceMemoryGraph infers indirect relations and query filters by confidence", () => {
+  const repository = new Repository(":memory:");
+  const service = new KnowledgeGraphService(repository);
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "memory-graph",
+        title: "Guide graph",
+        content: "Guide graph memory"
+      })
+    );
+
+    service.replaceMemoryGraph("memory-graph", {
+      entities: [
+        { name: "doc:guide.md", type: "document" },
+        { name: "heading:guide.md#1:Setup", type: "heading" },
+        { name: "term:sqlite", type: "term" }
+      ],
+      relations: [
+        {
+          source: "doc:guide.md",
+          target: "heading:guide.md#1:Setup",
+          relation_type: "contains"
+        },
+        {
+          source: "heading:guide.md#1:Setup",
+          target: "term:sqlite",
+          relation_type: "defines"
+        }
+      ]
+    });
+
+    const fullResult = service.query("doc:guide.md", 2);
+    const inferredRelation = fullResult.relations.find(
+      (relation) => relation.extraction_method === "INFERRED"
+    );
+
+    assert.ok(inferredRelation);
+    assert.equal(inferredRelation.relation_type, "related_to");
+    assert.equal(inferredRelation.confidence, 0.85);
+    assert.deepEqual(
+      [inferredRelation.source_entity_name, inferredRelation.target_entity_name].sort(),
+      ["doc:guide.md", "term:sqlite"]
+    );
+
+    const filteredResult = service.query("doc:guide.md", 2, 0.9);
+
+    assert.equal(filteredResult.relations.length, 2);
+    assert.equal(filteredResult.relations.every((relation) => relation.confidence >= 0.9), true);
+    assert.equal(
+      filteredResult.relations.every((relation) => relation.extraction_method === "EXTRACTED"),
+      true
     );
   } finally {
     repository.close();
@@ -738,7 +823,12 @@ test("memory_graph tool omits serialized embeddings", async () => {
       server as unknown as {
         _registeredTools: Record<
           string,
-          { handler: (args: { entity: string; depth: number }, extra: object) => Promise<{ content: Array<{ text: string }> }> }
+          {
+            handler: (
+              args: { entity: string; depth: number; min_confidence?: number },
+              extra: object
+            ) => Promise<{ content: Array<{ text: string }> }>;
+          }
         >;
       }
     )._registeredTools;
@@ -754,6 +844,119 @@ test("memory_graph tool omits serialized embeddings", async () => {
     };
 
     assert.equal("embedding" in payload.memories[0], false);
+  } finally {
+    repository.close();
+    await server.close();
+  }
+});
+
+test("memory_graph tool forwards min_confidence and serializes relation confidence", async () => {
+  const repository = new Repository(":memory:");
+  let queryArgs:
+    | {
+        entity: string;
+        depth: number | undefined;
+        minConfidence: number | undefined;
+      }
+    | undefined;
+  const server = createMCPServer({
+    repository,
+    graphService: {
+      query: (entity, depth, minConfidence) => {
+        queryArgs = { entity, depth, minConfidence };
+
+        return {
+          entity: {
+            id: "entity-1",
+            name: "Vega Memory",
+            type: "project",
+            metadata: {},
+            created_at: "2026-04-05T00:00:00.000Z"
+          },
+          relations: [
+            {
+              id: "relation-1",
+              source_entity_id: "entity-1",
+              target_entity_id: "entity-2",
+              relation_type: "uses",
+              memory_id: "memory-1",
+              confidence: 0.91,
+              extraction_method: "EXTRACTED",
+              created_at: "2026-04-05T00:00:00.000Z",
+              source_entity_name: "Vega Memory",
+              source_entity_type: "project",
+              target_entity_name: "SQLite",
+              target_entity_type: "tool"
+            }
+          ],
+          memories: []
+        };
+      }
+    },
+    memoryService: {
+      store: async () => ({ id: "noop", action: "created", title: "noop" }),
+      update: async () => {},
+      delete: async () => {}
+    },
+    recallService: {
+      recall: async () => [],
+      listMemories: () => []
+    },
+    sessionService: {
+      sessionStart: async () => ({
+        project: "vega",
+        active_tasks: [],
+        preferences: [],
+        context: [],
+        relevant: [],
+        relevant_wiki_pages: [],
+        wiki_drafts_pending: 0,
+        recent_unverified: [],
+        conflicts: [],
+        proactive_warnings: [],
+        token_estimate: 0
+      }),
+      sessionEnd: async () => {}
+    },
+    compactService: {
+      compact: () => ({ merged: 0, archived: 0 })
+    },
+    config: baseConfig
+  });
+
+  try {
+    const registeredTools = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          {
+            handler: (
+              args: { entity: string; depth: number; min_confidence?: number },
+              extra: object
+            ) => Promise<{ content: Array<{ text: string }> }>;
+          }
+        >;
+      }
+    )._registeredTools;
+    const result = await registeredTools.memory_graph.handler(
+      {
+        entity: "Vega Memory",
+        depth: 2,
+        min_confidence: 0.75
+      },
+      {}
+    );
+    const payload = JSON.parse(result.content[0]?.text ?? "{}") as {
+      relations: Array<{ confidence: number; extraction_method: string }>;
+    };
+
+    assert.deepEqual(queryArgs, {
+      entity: "Vega Memory",
+      depth: 2,
+      minConfidence: 0.75
+    });
+    assert.equal(payload.relations[0]?.confidence, 0.91);
+    assert.equal(payload.relations[0]?.extraction_method, "EXTRACTED");
   } finally {
     repository.close();
     await server.close();

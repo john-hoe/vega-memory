@@ -172,6 +172,7 @@ export class GraphSidecarService {
     const entityIds = this.repository.getRelationEntityIdsForMemory(memoryId);
 
     this.repository.deleteStructuralRelationsForMemory(memoryId);
+    this.repository.deleteInferredRelationsForMemory(memoryId);
     this.repository.pruneEntitiesWithoutRelations(entityIds);
   }
 }

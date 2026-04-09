@@ -10,6 +10,7 @@ import type {
   CrossProjectTopicMemory,
   Entity,
   EntityRelation,
+  ExtractionMethod,
   FactClaim,
   FactClaimStatus,
   GraphStats,
@@ -243,11 +244,17 @@ interface EntityRelationRow {
   target_entity_id: string;
   relation_type: RelationType;
   memory_id: string;
+  confidence: number;
+  extraction_method: ExtractionMethod;
   created_at: string;
   source_entity_name: string;
   source_entity_type: Entity["type"];
   target_entity_name: string;
   target_entity_type: Entity["type"];
+}
+
+interface RelationMemoryIdRow {
+  memory_id: string;
 }
 
 interface UserRow {
@@ -2674,15 +2681,33 @@ export class Repository {
     sourceId: string,
     targetId: string,
     relationType: RelationType,
-    memoryId: string
+    memoryId: string,
+    confidence = 1,
+    extractionMethod: ExtractionMethod = "EXTRACTED"
   ): void {
     this.db
-      .prepare<[string, string, string, RelationType, string, string]>(
+      .prepare<[string, string, string, RelationType, string, number, ExtractionMethod, string]>(
         `INSERT OR IGNORE INTO relations (
-          id, source_entity_id, target_entity_id, relation_type, memory_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)`
+          id,
+          source_entity_id,
+          target_entity_id,
+          relation_type,
+          memory_id,
+          confidence,
+          extraction_method,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(uuidv4(), sourceId, targetId, relationType, memoryId, timestamp());
+      .run(
+        uuidv4(),
+        sourceId,
+        targetId,
+        relationType,
+        memoryId,
+        confidence,
+        extractionMethod,
+        timestamp()
+      );
   }
 
   deleteRelationsForMemory(memoryId: string): void {
@@ -2711,6 +2736,16 @@ export class Repository {
            AND relation_type IN (${relationPlaceholders})`
       )
       .run(memoryId, ...STRUCTURAL_RELATION_TYPES);
+  }
+
+  deleteInferredRelationsForMemory(memoryId: string): void {
+    this.db
+      .prepare<[string, ExtractionMethod]>(
+        `DELETE FROM relations
+         WHERE memory_id = ?
+           AND extraction_method = ?`
+      )
+      .run(memoryId, "INFERRED");
   }
 
   getRelationEntityIdsForMemory(memoryId: string): string[] {
@@ -2763,15 +2798,29 @@ export class Repository {
     return orphanIds.length;
   }
 
-  getEntityRelations(entityId: string): EntityRelation[] {
+  listMemoryIdsWithRelations(): string[] {
     const rows = this.db
-      .prepare<[string, string], EntityRelationRow>(
+      .prepare<[], RelationMemoryIdRow>(
+        `SELECT DISTINCT memory_id
+         FROM relations
+         ORDER BY memory_id ASC`
+      )
+      .all();
+
+    return rows.map((row) => row.memory_id);
+  }
+
+  listRelationsForMemory(memoryId: string, minConfidence = 0): EntityRelation[] {
+    const rows = this.db
+      .prepare<[string, number], EntityRelationRow>(
         `SELECT
            relations.id,
            relations.source_entity_id,
            relations.target_entity_id,
            relations.relation_type,
            relations.memory_id,
+           relations.confidence,
+           relations.extraction_method,
            relations.created_at,
            source.name AS source_entity_name,
            source.type AS source_entity_type,
@@ -2780,10 +2829,39 @@ export class Repository {
          FROM relations
          JOIN entities AS source ON source.id = relations.source_entity_id
          JOIN entities AS target ON target.id = relations.target_entity_id
-         WHERE relations.source_entity_id = ? OR relations.target_entity_id = ?
+         WHERE relations.memory_id = ?
+           AND relations.confidence >= ?
          ORDER BY relations.created_at ASC`
       )
-      .all(entityId, entityId);
+      .all(memoryId, minConfidence);
+
+    return rows.map(mapEntityRelation);
+  }
+
+  getEntityRelations(entityId: string, minConfidence = 0): EntityRelation[] {
+    const rows = this.db
+      .prepare<[string, string, number], EntityRelationRow>(
+        `SELECT
+           relations.id,
+           relations.source_entity_id,
+           relations.target_entity_id,
+           relations.relation_type,
+           relations.memory_id,
+           relations.confidence,
+           relations.extraction_method,
+           relations.created_at,
+           source.name AS source_entity_name,
+           source.type AS source_entity_type,
+           target.name AS target_entity_name,
+           target.type AS target_entity_type
+         FROM relations
+         JOIN entities AS source ON source.id = relations.source_entity_id
+         JOIN entities AS target ON target.id = relations.target_entity_id
+         WHERE (relations.source_entity_id = ? OR relations.target_entity_id = ?)
+           AND relations.confidence >= ?
+         ORDER BY relations.created_at ASC`
+      )
+      .all(entityId, entityId, minConfidence);
 
     return rows.map(mapEntityRelation);
   }
@@ -2816,7 +2894,7 @@ export class Repository {
     return rows.map(mapEntity);
   }
 
-  traverseGraph(entityId: string, depth: number): GraphTraversal {
+  traverseGraph(entityId: string, depth: number, minConfidence = 0): GraphTraversal {
     if (depth <= 0) {
       return {
         entities: this.getEntitiesByIds([entityId]),
@@ -2832,7 +2910,7 @@ export class Repository {
       const nextFrontier: string[] = [];
 
       for (const currentEntityId of frontier) {
-        for (const relation of this.getEntityRelations(currentEntityId)) {
+        for (const relation of this.getEntityRelations(currentEntityId, minConfidence)) {
           relationById.set(relation.id, relation);
 
           const relatedEntityId =

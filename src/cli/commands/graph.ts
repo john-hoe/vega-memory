@@ -11,6 +11,15 @@ const parseDepth = (value: string): number => {
   return parsed;
 };
 
+const parseConfidence = (value: string): number => {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new InvalidArgumentError("min-confidence must be a number between 0 and 1");
+  }
+
+  return parsed;
+};
+
 export function registerGraphCommand(
   program: Command,
   knowledgeGraphService: KnowledgeGraphService
@@ -29,13 +38,19 @@ export function registerGraphCommand(
   graphCommand
     .argument("[entity]", "entity name")
     .option("--depth <depth>", "graph traversal depth", parseDepth, 1)
-    .action((entity: string | undefined, options: { depth: number }) => {
+    .option(
+      "--min-confidence <confidence>",
+      "minimum relation confidence between 0 and 1",
+      parseConfidence,
+      0
+    )
+    .action((entity: string | undefined, options: { depth: number; minConfidence: number }) => {
       if (!entity) {
         console.log("Provide an entity name or run `vega graph stats`.");
         return;
       }
 
-      const result = knowledgeGraphService.query(entity, options.depth);
+      const result = knowledgeGraphService.query(entity, options.depth, options.minConfidence);
 
       if (result.entity === null) {
         console.log("Entity not found.");

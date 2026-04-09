@@ -1,4 +1,6 @@
 import type {
+  EntityRelation,
+  ExtractionMethod,
   ExtractedEntity,
   GraphQueryResult,
   RelationType,
@@ -39,8 +41,24 @@ const CAPITALIZED_VERBS = new Set([
 ]);
 
 const FILE_PATTERN = /[\\/]|(?:\.[a-z0-9]+)$/i;
+const DEFAULT_EXTRACTED_RELATION_CONFIDENCE = 1;
+const DEFAULT_AMBIGUOUS_RELATION_CONFIDENCE = 0.6;
+const INFERRED_RELATION_DECAY = 0.85;
 
 const normalizeName = (value: string): string => value.trim().replace(/\s+/g, " ");
+
+const clampConfidence = (value: number): number => Math.max(0, Math.min(1, value));
+
+const createPairKey = (leftId: string, rightId: string): string =>
+  [leftId, rightId].sort().join("\u0000");
+
+const relatedEntityIdFor = (relation: EntityRelation, entityId: string): string =>
+  relation.source_entity_id === entityId ? relation.target_entity_id : relation.source_entity_id;
+
+interface CreateRelationOptions {
+  confidence?: number;
+  extraction_method?: ExtractionMethod;
+}
 
 const classifyEntity = (value: string): ExtractedEntity["type"] => {
   const normalized = normalizeName(value);
@@ -83,6 +101,23 @@ const inferRelationType = (content: string): RelationType => {
 
 export class KnowledgeGraphService {
   constructor(private readonly repository: Repository) {}
+
+  createRelation(
+    sourceId: string,
+    targetId: string,
+    relationType: RelationType,
+    memoryId: string,
+    options: CreateRelationOptions = {}
+  ): void {
+    this.repository.createRelation(
+      sourceId,
+      targetId,
+      relationType,
+      memoryId,
+      clampConfidence(options.confidence ?? DEFAULT_EXTRACTED_RELATION_CONFIDENCE),
+      options.extraction_method ?? "EXTRACTED"
+    );
+  }
 
   extractEntities(content: string, tags: string[]): ExtractedEntity[] {
     const entities = new Map<string, ExtractedEntity>();
@@ -130,6 +165,7 @@ export class KnowledgeGraphService {
 
     const previousEntityIds = this.repository.getRelationEntityIdsForMemory(memoryId);
     this.repository.deleteSemanticRelationsForMemory(memoryId);
+    this.repository.deleteInferredRelationsForMemory(memoryId);
     if (entities.length === 0) {
       this.repository.pruneEntitiesWithoutRelations(previousEntityIds);
       return;
@@ -142,7 +178,11 @@ export class KnowledgeGraphService {
 
     if (storedEntities.length === 1) {
       const entity = storedEntities[0];
-      this.repository.createRelation(entity.id, entity.id, relationType, memoryId);
+      this.createRelation(entity.id, entity.id, relationType, memoryId, {
+        confidence: DEFAULT_AMBIGUOUS_RELATION_CONFIDENCE,
+        extraction_method: "AMBIGUOUS"
+      });
+      this.inferRelations(memoryId);
       return;
     }
 
@@ -152,15 +192,20 @@ export class KnowledgeGraphService {
         rightIndex < storedEntities.length;
         rightIndex += 1
       ) {
-        this.repository.createRelation(
+        this.createRelation(
           storedEntities[leftIndex].id,
           storedEntities[rightIndex].id,
           relationType,
-          memoryId
+          memoryId,
+          {
+            confidence: DEFAULT_AMBIGUOUS_RELATION_CONFIDENCE,
+            extraction_method: "AMBIGUOUS"
+          }
         );
       }
     }
 
+    this.inferRelations(memoryId);
     this.repository.pruneEntitiesWithoutRelations(previousEntityIds);
   }
 
@@ -173,6 +218,7 @@ export class KnowledgeGraphService {
 
     const previousEntityIds = this.repository.getRelationEntityIdsForMemory(memoryId);
     this.repository.deleteStructuralRelationsForMemory(memoryId);
+    this.repository.deleteInferredRelationsForMemory(memoryId);
 
     if (graph.entities.length === 0 || graph.relations.length === 0) {
       this.repository.pruneEntitiesWithoutRelations(previousEntityIds);
@@ -194,9 +240,13 @@ export class KnowledgeGraphService {
         continue;
       }
 
-      this.repository.createRelation(source.id, target.id, relation.relation_type, memoryId);
+      this.createRelation(source.id, target.id, relation.relation_type, memoryId, {
+        confidence: relation.confidence ?? DEFAULT_EXTRACTED_RELATION_CONFIDENCE,
+        extraction_method: relation.extraction_method ?? "EXTRACTED"
+      });
     }
 
+    this.inferRelations(memoryId);
     this.repository.pruneEntitiesWithoutRelations(previousEntityIds);
   }
 
@@ -204,7 +254,81 @@ export class KnowledgeGraphService {
     return this.repository.getGraphStats();
   }
 
-  query(entityName: string, depth = 1): GraphQueryResult {
+  inferRelations(memoryId?: string): number {
+    if (memoryId === undefined) {
+      return this.repository
+        .listMemoryIdsWithRelations()
+        .reduce((count, currentMemoryId) => count + this.inferRelations(currentMemoryId), 0);
+    }
+
+    this.repository.deleteInferredRelationsForMemory(memoryId);
+
+    const directRelations = this.repository.listRelationsForMemory(memoryId);
+    if (directRelations.length < 2) {
+      return 0;
+    }
+
+    const existingPairs = new Set(
+      directRelations.map((relation) =>
+        createPairKey(relation.source_entity_id, relation.target_entity_id)
+      )
+    );
+    const adjacency = new Map<string, EntityRelation[]>();
+    const inferredByPair = new Map<string, number>();
+
+    for (const relation of directRelations) {
+      for (const entityId of [relation.source_entity_id, relation.target_entity_id]) {
+        const entityRelations = adjacency.get(entityId) ?? [];
+        entityRelations.push(relation);
+        adjacency.set(entityId, entityRelations);
+      }
+    }
+
+    for (const [pivotId, adjacentRelations] of adjacency.entries()) {
+      for (let leftIndex = 0; leftIndex < adjacentRelations.length; leftIndex += 1) {
+        for (
+          let rightIndex = leftIndex + 1;
+          rightIndex < adjacentRelations.length;
+          rightIndex += 1
+        ) {
+          const leftRelation = adjacentRelations[leftIndex];
+          const rightRelation = adjacentRelations[rightIndex];
+          const sourceId = relatedEntityIdFor(leftRelation, pivotId);
+          const targetId = relatedEntityIdFor(rightRelation, pivotId);
+
+          if (sourceId === targetId) {
+            continue;
+          }
+
+          const pairKey = createPairKey(sourceId, targetId);
+          if (existingPairs.has(pairKey)) {
+            continue;
+          }
+
+          const confidence = clampConfidence(
+            Math.min(leftRelation.confidence, rightRelation.confidence) * INFERRED_RELATION_DECAY
+          );
+          const existingConfidence = inferredByPair.get(pairKey);
+
+          if (existingConfidence === undefined || confidence > existingConfidence) {
+            inferredByPair.set(pairKey, confidence);
+          }
+        }
+      }
+    }
+
+    for (const [pairKey, confidence] of inferredByPair.entries()) {
+      const [sourceId, targetId] = pairKey.split("\u0000");
+      this.createRelation(sourceId, targetId, "related_to", memoryId, {
+        confidence,
+        extraction_method: "INFERRED"
+      });
+    }
+
+    return inferredByPair.size;
+  }
+
+  query(entityName: string, depth = 1, minConfidence = 0): GraphQueryResult {
     const entity = this.repository.findEntity(entityName);
 
     if (!entity) {
@@ -215,7 +339,11 @@ export class KnowledgeGraphService {
       };
     }
 
-    const graph = this.repository.traverseGraph(entity.id, Math.max(0, depth));
+    const graph = this.repository.traverseGraph(
+      entity.id,
+      Math.max(0, depth),
+      clampConfidence(minConfidence)
+    );
     const memoryIds = [...new Set(graph.relations.map((relation) => relation.memory_id))];
 
     return {

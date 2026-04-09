@@ -49,6 +49,8 @@ export const STRUCTURAL_RELATION_TYPES = [
   "references"
 ] as const satisfies RelationType[];
 
+export type ExtractionMethod = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
+
 export type MemorySource = "auto" | "explicit";
 
 export type MemoryStatus = "active" | "archived";
@@ -235,6 +237,8 @@ export interface EntityRelation {
   target_entity_id: string;
   relation_type: RelationType;
   memory_id: string;
+  confidence: number;
+  extraction_method: ExtractionMethod;
   created_at: string;
   source_entity_name: string;
   source_entity_type: EntityType;
@@ -257,6 +261,8 @@ export interface StructuredRelation {
   source: string;
   target: string;
   relation_type: RelationType;
+  confidence?: number;
+  extraction_method?: ExtractionMethod;
 }
 
 export interface StructuredGraph {
