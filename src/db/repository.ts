@@ -14,6 +14,8 @@ import type {
   FactClaim,
   FactClaimStatus,
   GraphStats,
+  GraphContentCacheKind,
+  GraphContentCacheRecord,
   GraphTraversal,
   MetadataEntry,
   Memory,
@@ -167,6 +169,17 @@ interface MetadataRow {
   key: string;
   value: string;
   updated_at: string;
+}
+
+interface GraphContentCacheRow {
+  kind: GraphContentCacheKind;
+  scope_key: string;
+  file_path: string;
+  content_hash: string;
+  last_indexed_at: string;
+  entity_count: number;
+  memory_ids: string;
+  last_modified_ms: number | null;
 }
 
 interface GraphCountRow {
@@ -357,6 +370,17 @@ function serializeJsonArray(value: string[]): string {
 function serializeJsonObject(value: Record<string, unknown>): string {
   return JSON.stringify(value);
 }
+
+const mapGraphContentCacheRow = (row: GraphContentCacheRow): GraphContentCacheRecord => ({
+  kind: row.kind,
+  scope_key: row.scope_key,
+  file_path: row.file_path,
+  content_hash: row.content_hash,
+  last_indexed_at: row.last_indexed_at,
+  entity_count: row.entity_count,
+  memory_ids: parseJsonArray(row.memory_ids),
+  last_modified_ms: row.last_modified_ms
+});
 
 function mapMemory(row: MemoryRow): Memory {
   return {
@@ -3256,6 +3280,138 @@ export class Repository {
     this.db.prepare<[string]>("DELETE FROM metadata WHERE key = ?").run(key);
   }
 
+  getGraphContentCache(
+    kind: GraphContentCacheKind,
+    scopeKey: string,
+    filePath: string
+  ): GraphContentCacheRecord | null {
+    const row = this.db
+      .prepare<[GraphContentCacheKind, string, string], GraphContentCacheRow>(
+        `SELECT *
+         FROM graph_content_cache
+         WHERE kind = ?
+           AND scope_key = ?
+           AND file_path = ?`
+      )
+      .get(kind, scopeKey, filePath);
+
+    return row ? mapGraphContentCacheRow(row) : null;
+  }
+
+  listGraphContentCache(
+    kind?: GraphContentCacheKind,
+    scopeKey?: string
+  ): GraphContentCacheRecord[] {
+    let rows: GraphContentCacheRow[];
+
+    if (kind === undefined) {
+      rows = this.db
+        .prepare<[], GraphContentCacheRow>(
+          `SELECT *
+           FROM graph_content_cache
+           ORDER BY kind ASC, scope_key ASC, file_path ASC`
+        )
+        .all();
+    } else if (scopeKey === undefined) {
+      rows = this.db
+        .prepare<[GraphContentCacheKind], GraphContentCacheRow>(
+          `SELECT *
+           FROM graph_content_cache
+           WHERE kind = ?
+           ORDER BY scope_key ASC, file_path ASC`
+        )
+        .all(kind);
+    } else {
+      rows = this.db
+        .prepare<[GraphContentCacheKind, string], GraphContentCacheRow>(
+          `SELECT *
+           FROM graph_content_cache
+           WHERE kind = ?
+             AND scope_key = ?
+           ORDER BY file_path ASC`
+        )
+        .all(kind, scopeKey);
+    }
+
+    return rows.map(mapGraphContentCacheRow);
+  }
+
+  setGraphContentCache(
+    record: Omit<GraphContentCacheRecord, "last_indexed_at"> & { last_indexed_at?: string }
+  ): void {
+    this.db
+      .prepare<
+        [
+          GraphContentCacheKind,
+          string,
+          string,
+          string,
+          string,
+          number,
+          string,
+          number | null
+        ]
+      >(
+        `INSERT INTO graph_content_cache (
+           kind,
+           scope_key,
+           file_path,
+           content_hash,
+           last_indexed_at,
+           entity_count,
+           memory_ids,
+           last_modified_ms
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(kind, scope_key, file_path) DO UPDATE SET
+           content_hash = excluded.content_hash,
+           last_indexed_at = excluded.last_indexed_at,
+           entity_count = excluded.entity_count,
+           memory_ids = excluded.memory_ids,
+           last_modified_ms = excluded.last_modified_ms`
+      )
+      .run(
+        record.kind,
+        record.scope_key,
+        record.file_path,
+        record.content_hash,
+        record.last_indexed_at ?? timestamp(),
+        record.entity_count,
+        serializeJsonArray(record.memory_ids),
+        record.last_modified_ms
+      );
+  }
+
+  deleteGraphContentCache(kind: GraphContentCacheKind, scopeKey: string, filePath: string): void {
+    this.db
+      .prepare<[GraphContentCacheKind, string, string]>(
+        `DELETE FROM graph_content_cache
+         WHERE kind = ?
+           AND scope_key = ?
+           AND file_path = ?`
+      )
+      .run(kind, scopeKey, filePath);
+  }
+
+  countGraphContentCache(kind?: GraphContentCacheKind): number {
+    if (kind === undefined) {
+      return (
+        this.db
+          .prepare<[], CountRow>("SELECT COUNT(*) AS total FROM graph_content_cache")
+          .get()?.total ?? 0
+      );
+    }
+
+    return (
+      this.db
+        .prepare<[GraphContentCacheKind], CountRow>(
+          `SELECT COUNT(*) AS total
+           FROM graph_content_cache
+           WHERE kind = ?`
+        )
+        .get(kind)?.total ?? 0
+    );
+  }
+
   getGraphStats(): GraphStats {
     const entityRows = this.db
       .prepare<[], GraphCountRow>(
@@ -3277,12 +3433,8 @@ export class Repository {
       this.db.prepare<[], CountRow>("SELECT COUNT(*) AS total FROM entities").get()?.total ?? 0;
     const totalRelations =
       this.db.prepare<[], CountRow>("SELECT COUNT(*) AS total FROM relations").get()?.total ?? 0;
-    const trackedCodeFiles = this.db
-      .prepare<[string], CountRow>("SELECT COUNT(*) AS total FROM metadata WHERE key LIKE ?")
-      .get("sidecar:code-graph:%")?.total ?? 0;
-    const trackedDocFiles = this.db
-      .prepare<[string], CountRow>("SELECT COUNT(*) AS total FROM metadata WHERE key LIKE ?")
-      .get("sidecar:doc-graph:%")?.total ?? 0;
+    const trackedCodeFiles = this.countGraphContentCache("code");
+    const trackedDocFiles = this.countGraphContentCache("doc");
 
     return {
       total_entities: totalEntities,

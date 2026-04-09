@@ -411,7 +411,7 @@ test("CodeIndexService.indexDirectory leaves structural graph disabled by defaul
   }
 });
 
-test("CodeIndexService.indexDirectory builds structural code graph, skips unchanged files, and clears deleted files", async () => {
+test("CodeIndexService.indexDirectory tracks cache status, skips unchanged files, and clears deleted files", async () => {
   const restoreFetch = installEmbeddingMock();
   const tempDir = mkdtempSync(join(tmpdir(), "vega-code-index-graph-"));
   const repository = new Repository(":memory:");
@@ -422,11 +422,13 @@ test("CodeIndexService.indexDirectory builds structural code graph, skips unchan
       codeGraph: true
     }
   });
-  const filePath = join(tempDir, "src", "index.ts");
+  const indexPath = join(tempDir, "src", "index.ts");
+  const utilPath = join(tempDir, "src", "util.ts");
+  const keepPath = join(tempDir, "src", "keep.ts");
 
   mkdirSync(join(tempDir, "src"), { recursive: true });
   writeFileSync(
-    filePath,
+    indexPath,
     [
       "import { join } from \"node:path\";",
       "export class App {}",
@@ -434,6 +436,8 @@ test("CodeIndexService.indexDirectory builds structural code graph, skips unchan
     ].join("\n"),
     "utf8"
   );
+  writeFileSync(utilPath, ["export function oldUtil(): void {}", ""].join("\n"), "utf8");
+  writeFileSync(keepPath, ["export function keepAlive(): void {}", ""].join("\n"), "utf8");
 
   try {
     await service.indexDirectory(tempDir, ["ts"], { graph: true });
@@ -441,37 +445,106 @@ test("CodeIndexService.indexDirectory builds structural code graph, skips unchan
     const firstMemory = repository.listMemories({
       project: basename(tempDir),
       type: "project_context",
-      limit: 10
-    })[0];
+      limit: 20
+    }).find((memory) => memory.title === "Code Index: src/keep.ts");
     const firstStats = graphService.getStats();
+    const cacheTable = repository.db
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'graph_content_cache'"
+      )
+      .get();
 
     assert.ok(firstMemory);
-    assert.equal(firstStats.tracked_code_files, 1);
+    assert.ok(cacheTable);
+    assert.equal(firstStats.tracked_code_files, 3);
     assert.equal((firstStats.entity_types.module ?? 0) >= 1, true);
     assert.equal((firstStats.relation_types.imports ?? 0) >= 1, true);
     assert.equal((firstStats.relation_types.declares ?? 0) >= 1, true);
     assert.equal((firstStats.relation_types.exports ?? 0) >= 1, true);
+    assert.equal(
+      repository.db
+        .prepare<[], { total: number }>("SELECT COUNT(*) AS total FROM graph_content_cache")
+        .get()?.total ?? 0,
+      3
+    );
+    assert.deepEqual(service.getDirectoryStatus(tempDir, ["ts"]), {
+      indexed_files: 3,
+      pending_files: 0,
+      new_files: 0,
+      modified_files: 0,
+      deleted_files: 0,
+      unchanged_files: 3
+    });
 
     await service.indexDirectory(tempDir, ["ts"], { graph: true });
 
     const unchangedMemory = repository.listMemories({
       project: basename(tempDir),
       type: "project_context",
-      limit: 10
-    })[0];
+      limit: 20
+    }).find((memory) => memory.title === "Code Index: src/keep.ts");
 
     assert.equal(unchangedMemory?.updated_at, firstMemory.updated_at);
 
-    rmSync(filePath, { force: true });
+    const deletedMemoryId = repository
+      .listMemories({
+        project: basename(tempDir),
+        type: "project_context",
+        limit: 20
+      })
+      .find((memory) => memory.title === "Code Index: src/util.ts")?.id;
 
-    await service.indexDirectory(tempDir, ["ts"], { graph: true });
+    writeFileSync(
+      indexPath,
+      [
+        "import { join } from \"node:path\";",
+        "export class App {}",
+        "export async function run(name: string): Promise<string> {",
+        "  return join(name, \"done\");",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      join(tempDir, "src", "new.ts"),
+      ["export const created = true;", ""].join("\n"),
+      "utf8"
+    );
+    rmSync(utilPath, { force: true });
+
+    assert.deepEqual(service.getDirectoryStatus(tempDir, ["ts"]), {
+      indexed_files: 3,
+      pending_files: 2,
+      new_files: 1,
+      modified_files: 1,
+      deleted_files: 1,
+      unchanged_files: 1
+    });
+
+    await service.indexDirectory(tempDir, ["ts"], { graph: true, incremental: true });
 
     const stats = graphService.getStats();
 
-    assert.equal(stats.tracked_code_files, 0);
-    assert.equal(stats.relation_types.imports ?? 0, 0);
-    assert.equal(stats.relation_types.declares ?? 0, 0);
-    assert.equal(stats.relation_types.exports ?? 0, 0);
+    assert.equal(stats.tracked_code_files, 3);
+    assert.equal(graphService.query("module:src/util.ts").entity, null);
+    assert.equal(
+      deletedMemoryId === undefined ? null : repository.getMemory(deletedMemoryId),
+      null
+    );
+    assert.equal(
+      repository.db
+        .prepare<[], { total: number }>("SELECT COUNT(*) AS total FROM graph_content_cache")
+        .get()?.total ?? 0,
+      3
+    );
+    assert.deepEqual(service.getDirectoryStatus(tempDir, ["ts"]), {
+      indexed_files: 3,
+      pending_files: 0,
+      new_files: 0,
+      modified_files: 0,
+      deleted_files: 0,
+      unchanged_files: 3
+    });
   } finally {
     restoreFetch();
     repository.close();
@@ -755,6 +828,123 @@ test("DocIndexService.indexMarkdown builds document graph sidecar when enabled",
     assert.equal(stats.relation_types.contains ?? 0, 2);
     assert.equal(stats.relation_types.references ?? 0, 1);
     assert.equal(stats.relation_types.defines ?? 0, 1);
+  } finally {
+    restoreFetch();
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("DocIndexService.indexDirectory tracks cache status and removes stale section memories", async () => {
+  const restoreFetch = installEmbeddingMock();
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-doc-index-incremental-"));
+  const repository = new Repository(":memory:");
+  const memoryService = new MemoryService(repository, baseConfig);
+  const service = new DocIndexService(repository, memoryService, {
+    features: {
+      codeGraph: true
+    }
+  });
+  const guidePath = join(tempDir, "guide.md");
+  const deletePath = join(tempDir, "delete.md");
+  const keepPath = join(tempDir, "keep.md");
+
+  writeFileSync(
+    guidePath,
+    ["## Setup", "", "Initial setup notes.", "", "## API", "", "Old API section."].join("\n"),
+    "utf8"
+  );
+  writeFileSync(deletePath, ["## Delete", "", "This file will be removed."].join("\n"), "utf8");
+  writeFileSync(keepPath, ["## Keep", "", "This file stays unchanged."].join("\n"), "utf8");
+
+  try {
+    await service.indexDirectory(tempDir, "docs", ["md"], { graph: true });
+
+    const keepMemory = repository
+      .listMemories({
+        project: "docs",
+        type: "project_context",
+        limit: 20
+      })
+      .find((memory) => memory.title === "keep.md: Keep");
+    const staleGuideMemoryId = repository
+      .listMemories({
+        project: "docs",
+        type: "project_context",
+        limit: 20
+      })
+      .find((memory) => memory.title === "guide.md: API")?.id;
+
+    assert.ok(keepMemory);
+    assert.equal(
+      repository.db
+        .prepare<[], { total: number }>("SELECT COUNT(*) AS total FROM graph_content_cache")
+        .get()?.total ?? 0,
+      3
+    );
+    assert.deepEqual(service.getDirectoryStatus(tempDir, ["md"]), {
+      indexed_files: 3,
+      pending_files: 0,
+      new_files: 0,
+      modified_files: 0,
+      deleted_files: 0,
+      unchanged_files: 3
+    });
+
+    writeFileSync(
+      guidePath,
+      ["## Setup", "", "Updated setup notes.", "", "## New", "", "Fresh section."].join("\n"),
+      "utf8"
+    );
+    writeFileSync(join(tempDir, "new.md"), ["## Added", "", "Brand new file."].join("\n"), "utf8");
+    rmSync(deletePath, { force: true });
+
+    assert.deepEqual(service.getDirectoryStatus(tempDir, ["md"]), {
+      indexed_files: 3,
+      pending_files: 2,
+      new_files: 1,
+      modified_files: 1,
+      deleted_files: 1,
+      unchanged_files: 1
+    });
+
+    await service.indexDirectory(tempDir, "docs", ["md"], {
+      graph: true,
+      incremental: true
+    });
+
+    assert.equal(
+      staleGuideMemoryId === undefined ? null : repository.getMemory(staleGuideMemoryId),
+      null
+    );
+    assert.equal(
+      repository
+        .listMemories({
+          project: "docs",
+          type: "project_context",
+          limit: 20
+        })
+        .some((memory) => memory.title === "delete.md: Delete"),
+      false
+    );
+    assert.equal(
+      repository
+        .listMemories({
+          project: "docs",
+          type: "project_context",
+          limit: 20
+        })
+        .find((memory) => memory.title === "keep.md: Keep")?.updated_at,
+      keepMemory.updated_at
+    );
+    assert.deepEqual(service.getDirectoryStatus(tempDir, ["md"]), {
+      indexed_files: 3,
+      pending_files: 0,
+      new_files: 0,
+      modified_files: 0,
+      deleted_files: 0,
+      unchanged_files: 3
+    });
   } finally {
     restoreFetch();
     repository.close();

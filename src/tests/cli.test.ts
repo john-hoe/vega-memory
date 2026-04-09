@@ -271,6 +271,92 @@ test("CLI index --graph builds the sidecar graph and graph stats report it", () 
   }
 });
 
+test("CLI index --status and --incremental report cache-backed refresh state", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-index-status-"));
+  const dbPath = join(tempDir, "memory.db");
+  const sourceDir = join(tempDir, "repo");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999",
+    VEGA_FEATURE_CODE_GRAPH: "true"
+  };
+
+  mkdirSync(join(sourceDir, "src"), { recursive: true });
+  writeFileSync(join(sourceDir, "src", "index.ts"), "export function run(): void {}\n", "utf8");
+  writeFileSync(join(sourceDir, "src", "keep.ts"), "export function keep(): void {}\n", "utf8");
+  writeFileSync(join(sourceDir, "src", "remove.ts"), "export function remove(): void {}\n", "utf8");
+
+  try {
+    runCli(["index", sourceDir, "--graph"], env);
+
+    const initialStatus = JSON.parse(runCli(["index", sourceDir, "--status"], env)) as {
+      indexed_files: number;
+      pending_files: number;
+      new_files: number;
+      modified_files: number;
+      deleted_files: number;
+      unchanged_files: number;
+    };
+
+    assert.deepEqual(initialStatus, {
+      indexed_files: 3,
+      pending_files: 0,
+      new_files: 0,
+      modified_files: 0,
+      deleted_files: 0,
+      unchanged_files: 3
+    });
+
+    writeFileSync(
+      join(sourceDir, "src", "index.ts"),
+      ["export function run(): string {", "  return \"done\";", "}"].join("\n"),
+      "utf8"
+    );
+    writeFileSync(join(sourceDir, "src", "new.ts"), "export const created = true;\n", "utf8");
+    rmSync(join(sourceDir, "src", "remove.ts"), { force: true });
+
+    const pendingStatus = JSON.parse(runCli(["index", sourceDir, "--status"], env)) as {
+      indexed_files: number;
+      pending_files: number;
+      new_files: number;
+      modified_files: number;
+      deleted_files: number;
+      unchanged_files: number;
+    };
+
+    assert.deepEqual(pendingStatus, {
+      indexed_files: 3,
+      pending_files: 2,
+      new_files: 1,
+      modified_files: 1,
+      deleted_files: 1,
+      unchanged_files: 1
+    });
+
+    const incrementalOutput = runCli(["index", sourceDir, "--graph", "--incremental"], env);
+    const finalStatus = JSON.parse(runCli(["index", sourceDir, "--status"], env)) as {
+      indexed_files: number;
+      pending_files: number;
+      new_files: number;
+      modified_files: number;
+      deleted_files: number;
+      unchanged_files: number;
+    };
+
+    assert.match(incrementalOutput, /indexed 2 files/);
+    assert.deepEqual(finalStatus, {
+      indexed_files: 3,
+      pending_files: 0,
+      new_files: 0,
+      modified_files: 0,
+      deleted_files: 0,
+      unchanged_files: 3
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CLI topic override and history expose versioned taxonomy changes", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-topic-"));
   const dbPath = join(tempDir, "memory.db");

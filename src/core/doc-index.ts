@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 
+import type { GraphDirectoryStatus } from "./types.js";
 import { GraphSidecarService } from "./graph-sidecar.js";
 import { MemoryService } from "./memory.js";
 import { extractStructuredDocGraphs } from "./doc-graph.js";
@@ -14,15 +15,16 @@ interface DocumentSection {
 
 interface IndexedSectionResult {
   count: number;
+  memoryIds: string[];
   memoryGraphs: ReturnType<typeof extractStructuredDocGraphs>;
 }
 
 interface DocIndexOptions {
   graph?: boolean;
+  incremental?: boolean;
 }
 
 const INDEXED_MEMORY_IMPORTANCE = 0.95;
-const SKIPPED_DIRECTORIES = new Set([".git", "dist", "node_modules"]);
 
 const normalizeGraphPath = (value: string): string => value.replaceAll("\\", "/");
 
@@ -34,31 +36,6 @@ const toWordLimit = (value: string, wordLimit: number): string => {
   }
 
   return `${words.slice(0, wordLimit).join(" ")}...`;
-};
-
-const walkFiles = (directoryPath: string): string[] => {
-  const entries = readdirSync(directoryPath).sort((left, right) => left.localeCompare(right));
-  const files: string[] = [];
-
-  for (const entry of entries) {
-    const fullPath = join(directoryPath, entry);
-    const stats = statSync(fullPath);
-
-    if (stats.isDirectory()) {
-      if (SKIPPED_DIRECTORIES.has(entry)) {
-        continue;
-      }
-
-      files.push(...walkFiles(fullPath));
-      continue;
-    }
-
-    if (stats.isFile()) {
-      files.push(fullPath);
-    }
-  }
-
-  return files;
 };
 
 const extractHeadingKeywords = (heading: string): string[] =>
@@ -216,6 +193,7 @@ export class DocIndexService {
 
     return {
       count: sections.length,
+      memoryIds: indexedSections.map((section) => section.memoryId),
       memoryGraphs: extractStructuredDocGraphs(sourceLabel, indexedSections)
     };
   }
@@ -224,7 +202,8 @@ export class DocIndexService {
     relativePath: string,
     project: string,
     content: string,
-    indexed: IndexedSectionResult
+    indexed: IndexedSectionResult,
+    lastModifiedMs: number | null
   ): void {
     try {
       this.graphSidecar.syncFileGraph({
@@ -233,6 +212,8 @@ export class DocIndexService {
         relativePath,
         hash: this.graphSidecar.hashContent(content),
         itemCount: indexed.count,
+        memoryIds: indexed.memoryIds,
+        lastModifiedMs,
         memoryGraphs: indexed.memoryGraphs
       });
     } catch (error) {
@@ -248,6 +229,22 @@ export class DocIndexService {
     }
   }
 
+  getDirectoryStatus(dirPath: string, extensions = ["md"]): GraphDirectoryStatus {
+    const absoluteDirectory = resolve(dirPath);
+    const allowedExtensions = new Set(
+      extensions.map((extension) =>
+        extension.startsWith(".") ? extension.toLowerCase() : `.${extension.toLowerCase()}`
+      )
+    );
+
+    return this.graphSidecar.scanDirectory(
+      "doc",
+      absoluteDirectory,
+      absoluteDirectory,
+      allowedExtensions
+    ).status;
+  }
+
   async indexMarkdown(
     filePath: string,
     project: string,
@@ -258,23 +255,31 @@ export class DocIndexService {
     const projectScope = dirname(absolutePath);
     const content = readFileSync(absolutePath, "utf8");
     const graphEnabled = options.graph === true || isCodeGraphEnabled(this.config);
+    const cacheEnabled = graphEnabled || options.incremental === true;
+    const contentHash = this.graphSidecar.hashContent(content);
+    const lastModifiedMs = statSync(absolutePath).mtimeMs;
 
     if (
-      graphEnabled &&
-      this.graphSidecar.isFileUnchanged(
-        "doc",
-        projectScope,
-        sourceLabel,
-        this.graphSidecar.hashContent(content)
-      )
+      cacheEnabled &&
+      this.graphSidecar.isFileUnchanged("doc", projectScope, sourceLabel, contentHash)
     ) {
-      return this.graphSidecar.getCacheRecord("doc", projectScope, sourceLabel)?.itemCount ?? 0;
+      return this.graphSidecar.getCacheRecord("doc", projectScope, sourceLabel)?.entity_count ?? 0;
     }
 
     const indexed = await this.indexSections(absolutePath, sourceLabel, project, content);
 
     if (graphEnabled) {
-      this.syncStructuredGraph(sourceLabel, projectScope, content, indexed);
+      this.syncStructuredGraph(sourceLabel, projectScope, content, indexed, lastModifiedMs);
+    } else if (options.incremental === true) {
+      this.graphSidecar.syncFileCache({
+        kind: "doc",
+        scopeKey: projectScope,
+        relativePath: sourceLabel,
+        hash: contentHash,
+        itemCount: indexed.count,
+        memoryIds: indexed.memoryIds,
+        lastModifiedMs
+      });
     }
 
     return indexed.count;
@@ -293,45 +298,53 @@ export class DocIndexService {
       )
     );
     const graphEnabled = options.graph === true || isCodeGraphEnabled(this.config);
-    let totalSections = 0;
-    const currentRelativePaths = new Set<string>();
-
-    for (const filePath of walkFiles(absoluteDirectory)) {
-      if (!allowedExtensions.has(extname(filePath).toLowerCase())) {
-        continue;
-      }
-
-      const relativePath = normalizeGraphPath(
-        relative(absoluteDirectory, filePath) || basename(filePath)
-      );
-      const content = readFileSync(filePath, "utf8");
-
-      currentRelativePaths.add(relativePath);
-
-      if (
-        graphEnabled &&
-        this.graphSidecar.isFileUnchanged(
-          "doc",
-          absoluteDirectory,
-          relativePath,
-          this.graphSidecar.hashContent(content)
+    const cacheEnabled = graphEnabled || options.incremental === true;
+    const scan = this.graphSidecar.scanDirectory(
+      "doc",
+      absoluteDirectory,
+      absoluteDirectory,
+      allowedExtensions
+    );
+    const filesToProcess =
+      cacheEnabled ? [...scan.new_files, ...scan.modified_files] : scan.current_files;
+    let totalSections = cacheEnabled
+      ? scan.unchanged_files.reduce(
+          (count, file) =>
+            count +
+            (this.graphSidecar.getCacheRecord("doc", absoluteDirectory, file.file_path)?.entity_count ??
+              0),
+          0
         )
-      ) {
-        totalSections +=
-          this.graphSidecar.getCacheRecord("doc", absoluteDirectory, relativePath)?.itemCount ?? 0;
-        continue;
-      }
+      : 0;
 
-      const indexed = await this.indexSections(filePath, relativePath, project, content);
+    for (const file of filesToProcess) {
+      const content = readFileSync(file.absolute_path, "utf8");
+      const indexed = await this.indexSections(file.absolute_path, file.file_path, project, content);
       totalSections += indexed.count;
 
       if (graphEnabled) {
-        this.syncStructuredGraph(relativePath, absoluteDirectory, content, indexed);
+        this.syncStructuredGraph(
+          file.file_path,
+          absoluteDirectory,
+          content,
+          indexed,
+          file.last_modified_ms
+        );
+      } else if (options.incremental === true) {
+        this.graphSidecar.syncFileCache({
+          kind: "doc",
+          scopeKey: absoluteDirectory,
+          relativePath: file.file_path,
+          hash: file.content_hash,
+          itemCount: indexed.count,
+          memoryIds: indexed.memoryIds,
+          lastModifiedMs: file.last_modified_ms
+        });
       }
     }
 
-    if (graphEnabled) {
-      this.graphSidecar.cleanupMissingFiles("doc", absoluteDirectory, currentRelativePaths);
+    if (cacheEnabled) {
+      this.graphSidecar.cleanupDeletedFiles(scan.deleted_files);
     }
 
     return totalSections;

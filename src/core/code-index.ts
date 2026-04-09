@@ -1,7 +1,7 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { basename, dirname, extname, relative, resolve } from "node:path";
 
-import type { CodeSymbol, Memory, StructuredGraph } from "./types.js";
+import type { CodeSymbol, GraphDirectoryStatus, Memory, StructuredGraph } from "./types.js";
 import { GraphSidecarService } from "./graph-sidecar.js";
 import { MemoryService } from "./memory.js";
 import { isCodeGraphEnabled, type VegaConfig } from "../config.js";
@@ -11,11 +11,11 @@ const TS_EXPORT_PATTERN =
   /export\s+(?:default\s+)?(?:async\s+)?(class|function|const|interface|type)\s+(\w+)/g;
 const PYTHON_PATTERN = /^\s*(?:async\s+)?(class|def)\s+(\w+)/g;
 const INDEXED_MEMORY_IMPORTANCE = 0.95;
-const SKIPPED_DIRECTORIES = new Set([".git", "dist", "node_modules"]);
 const AST_GRAPH_EXTENSIONS = new Set([".cjs", ".js", ".jsx", ".mjs", ".ts", ".tsx"]);
 
 interface CodeIndexOptions {
   graph?: boolean;
+  incremental?: boolean;
 }
 
 interface TypeScriptModule {
@@ -73,31 +73,6 @@ const normalizeExtensions = (extensions: string[]): Set<string> =>
       .filter((extension) => extension.length > 0)
       .map((extension) => (extension.startsWith(".") ? extension : `.${extension}`))
   );
-
-const walkFiles = (directoryPath: string): string[] => {
-  const entries = readdirSync(directoryPath).sort((left, right) => left.localeCompare(right));
-  const files: string[] = [];
-
-  for (const entry of entries) {
-    const fullPath = join(directoryPath, entry);
-    const stats = statSync(fullPath);
-
-    if (stats.isDirectory()) {
-      if (SKIPPED_DIRECTORIES.has(entry)) {
-        continue;
-      }
-
-      files.push(...walkFiles(fullPath));
-      continue;
-    }
-
-    if (stats.isFile()) {
-      files.push(fullPath);
-    }
-  }
-
-  return files;
-};
 
 const findSymbols = (content: string, filePath: string): CodeSymbol[] => {
   const extension = extname(filePath).toLowerCase();
@@ -378,6 +353,18 @@ export class CodeIndexService {
     return findSymbols(content, absolutePath);
   }
 
+  getDirectoryStatus(dirPath: string, extensions: string[]): GraphDirectoryStatus {
+    const absoluteDirectory = resolve(dirPath);
+    const allowedExtensions = normalizeExtensions(extensions);
+
+    return this.graphSidecar.scanDirectory(
+      "code",
+      absoluteDirectory,
+      absoluteDirectory,
+      allowedExtensions
+    ).status;
+  }
+
   async indexDirectory(
     dirPath: string,
     extensions: string[],
@@ -387,6 +374,15 @@ export class CodeIndexService {
     const allowedExtensions = normalizeExtensions(extensions);
     const project = basename(absoluteDirectory);
     const graphEnabled = options.graph === true || isCodeGraphEnabled(this.config);
+    const cacheEnabled = graphEnabled || options.incremental === true;
+    const scan = this.graphSidecar.scanDirectory(
+      "code",
+      absoluteDirectory,
+      absoluteDirectory,
+      allowedExtensions
+    );
+    const filesToProcess =
+      cacheEnabled ? [...scan.new_files, ...scan.modified_files] : scan.current_files;
     const existingByTitle = new Map(
       this.repository
         .listMemories({
@@ -397,30 +393,11 @@ export class CodeIndexService {
         .map((memory) => [memory.title, memory])
     );
     let indexedFiles = 0;
-    const currentRelativePaths = new Set<string>();
 
-    for (const filePath of walkFiles(absoluteDirectory)) {
-      if (!allowedExtensions.has(extname(filePath).toLowerCase())) {
-        continue;
-      }
-
-      const relativeFilePath = normalizeGraphPath(
-        relative(absoluteDirectory, filePath) || basename(filePath)
-      );
+    for (const file of filesToProcess) {
+      const filePath = file.absolute_path;
+      const relativeFilePath = file.file_path;
       const content = readFileSync(filePath, "utf8");
-      currentRelativePaths.add(relativeFilePath);
-
-      if (
-        graphEnabled &&
-        this.graphSidecar.isFileUnchanged(
-          "code",
-          absoluteDirectory,
-          relativeFilePath,
-          this.graphSidecar.hashContent(content)
-        )
-      ) {
-        continue;
-      }
 
       const symbols = findSymbols(content, resolve(filePath));
       const title = `Code Index: ${relativeFilePath}`;
@@ -464,8 +441,10 @@ export class CodeIndexService {
             kind: "code",
             scopeKey: absoluteDirectory,
             relativePath: relativeFilePath,
-            hash: this.graphSidecar.hashContent(content),
+            hash: file.content_hash,
             itemCount: 1,
+            memoryIds: [indexedMemory.id],
+            lastModifiedMs: file.last_modified_ms,
             memoryGraphs: [
               {
                 memoryId: indexedMemory.id,
@@ -489,13 +468,23 @@ export class CodeIndexService {
             tenant_id: indexedMemory.tenant_id ?? null
           });
         }
+      } else if (indexedMemory && options.incremental === true) {
+        this.graphSidecar.syncFileCache({
+          kind: "code",
+          scopeKey: absoluteDirectory,
+          relativePath: relativeFilePath,
+          hash: file.content_hash,
+          itemCount: 1,
+          memoryIds: [indexedMemory.id],
+          lastModifiedMs: file.last_modified_ms
+        });
       }
 
       indexedFiles += 1;
     }
 
-    if (graphEnabled) {
-      this.graphSidecar.cleanupMissingFiles("code", absoluteDirectory, currentRelativePaths);
+    if (cacheEnabled) {
+      this.graphSidecar.cleanupDeletedFiles(scan.deleted_files);
     }
 
     return indexedFiles;

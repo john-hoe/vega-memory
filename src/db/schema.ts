@@ -135,6 +135,18 @@ export function initializeDatabase(db: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS graph_content_cache (
+      kind TEXT NOT NULL CHECK(kind IN ('code', 'doc')),
+      scope_key TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      last_indexed_at TEXT NOT NULL,
+      entity_count INTEGER NOT NULL DEFAULT 0,
+      memory_ids TEXT NOT NULL DEFAULT '[]',
+      last_modified_ms REAL,
+      PRIMARY KEY (kind, scope_key, file_path)
+    );
+
     CREATE TABLE IF NOT EXISTS teams (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
@@ -437,6 +449,12 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_relations_memory
       ON relations(memory_id);
+
+    CREATE INDEX IF NOT EXISTS idx_graph_content_cache_scope
+      ON graph_content_cache(kind, scope_key);
+
+    CREATE INDEX IF NOT EXISTS idx_graph_content_cache_hash
+      ON graph_content_cache(content_hash);
 
     CREATE INDEX IF NOT EXISTS idx_team_members_team
       ON team_members(team_id);

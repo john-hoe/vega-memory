@@ -279,6 +279,45 @@ export interface GraphStats {
   tracked_doc_files: number;
 }
 
+export type GraphContentCacheKind = "code" | "doc";
+
+export interface GraphContentCacheRecord {
+  kind: GraphContentCacheKind;
+  scope_key: string;
+  file_path: string;
+  content_hash: string;
+  last_indexed_at: string;
+  entity_count: number;
+  memory_ids: string[];
+  last_modified_ms: number | null;
+}
+
+export interface GraphDirectoryStatus {
+  indexed_files: number;
+  pending_files: number;
+  new_files: number;
+  modified_files: number;
+  deleted_files: number;
+  unchanged_files: number;
+}
+
+export interface GraphDirectoryScanFile {
+  absolute_path: string;
+  file_path: string;
+  status: "new" | "modified" | "unchanged";
+  content_hash: string;
+  last_modified_ms: number | null;
+}
+
+export interface GraphDirectoryScanResult {
+  current_files: GraphDirectoryScanFile[];
+  new_files: GraphDirectoryScanFile[];
+  modified_files: GraphDirectoryScanFile[];
+  unchanged_files: GraphDirectoryScanFile[];
+  deleted_files: GraphContentCacheRecord[];
+  status: GraphDirectoryStatus;
+}
+
 export interface MetadataEntry {
   key: string;
   value: string;

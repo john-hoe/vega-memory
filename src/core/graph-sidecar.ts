@@ -1,63 +1,76 @@
 import { createHash } from "node:crypto";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, extname, join, relative, resolve } from "node:path";
 
-import type { MetadataEntry, StructuredGraph } from "./types.js";
+import type {
+  GraphContentCacheKind,
+  GraphContentCacheRecord,
+  GraphDirectoryScanFile,
+  GraphDirectoryScanResult,
+  StructuredGraph
+} from "./types.js";
 import { KnowledgeGraphService } from "./knowledge-graph.js";
 import { Repository } from "../db/repository.js";
 
-export type GraphSidecarKind = "code" | "doc";
-
-export interface GraphSidecarCacheRecord {
-  hash: string;
-  memoryIds: string[];
-  itemCount: number;
-}
-
-interface SyncFileGraphParams {
-  kind: GraphSidecarKind;
+interface SyncFileCacheParams {
+  kind: GraphContentCacheKind;
   scopeKey: string;
   relativePath: string;
   hash: string;
   itemCount: number;
+  memoryIds: string[];
+  lastModifiedMs: number | null;
+}
+
+interface SyncFileGraphParams extends SyncFileCacheParams {
   memoryGraphs: Array<{
     memoryId: string;
     graph: StructuredGraph;
   }>;
 }
 
-const buildScopeId = (scopeKey: string): string =>
-  createHash("sha256").update(scopeKey).digest("hex");
+const SKIPPED_DIRECTORIES = new Set([".git", "dist", "node_modules"]);
 
-const buildMetadataPrefix = (kind: GraphSidecarKind, scopeKey: string): string =>
-  `sidecar:${kind}-graph:${buildScopeId(scopeKey)}:`;
+const normalizeGraphPath = (value: string): string => value.replaceAll("\\", "/");
 
-const buildMetadataKey = (
-  kind: GraphSidecarKind,
-  scopeKey: string,
-  relativePath: string
-): string => `${buildMetadataPrefix(kind, scopeKey)}${relativePath}`;
+const walkFiles = (directoryPath: string): string[] => {
+  const entries = readdirSync(directoryPath).sort((left, right) => left.localeCompare(right));
+  const files: string[] = [];
 
-const parseCacheRecord = (entry: MetadataEntry): GraphSidecarCacheRecord | null => {
-  try {
-    const parsed = JSON.parse(entry.value) as Partial<GraphSidecarCacheRecord>;
+  for (const entry of entries) {
+    const fullPath = join(directoryPath, entry);
+    const stats = statSync(fullPath);
 
-    if (
-      typeof parsed.hash !== "string" ||
-      !Array.isArray(parsed.memoryIds) ||
-      parsed.memoryIds.some((memoryId) => typeof memoryId !== "string") ||
-      typeof parsed.itemCount !== "number"
-    ) {
-      return null;
+    if (stats.isDirectory()) {
+      if (SKIPPED_DIRECTORIES.has(entry)) {
+        continue;
+      }
+
+      files.push(...walkFiles(fullPath));
+      continue;
     }
 
-    return {
-      hash: parsed.hash,
-      memoryIds: parsed.memoryIds,
-      itemCount: parsed.itemCount
-    };
-  } catch {
-    return null;
+    if (stats.isFile()) {
+      files.push(fullPath);
+    }
   }
+
+  return files;
 };
+
+const toStatus = (
+  status: GraphDirectoryScanFile["status"],
+  absolutePath: string,
+  filePath: string,
+  contentHash: string,
+  lastModifiedMs: number | null
+): GraphDirectoryScanFile => ({
+  absolute_path: absolutePath,
+  file_path: filePath,
+  status,
+  content_hash: contentHash,
+  last_modified_ms: lastModifiedMs
+});
 
 export class GraphSidecarService {
   constructor(
@@ -70,109 +83,194 @@ export class GraphSidecarService {
   }
 
   getCacheRecord(
-    kind: GraphSidecarKind,
+    kind: GraphContentCacheKind,
     scopeKey: string,
     relativePath: string
-  ): GraphSidecarCacheRecord | null {
-    const value = this.repository.getMetadata(buildMetadataKey(kind, scopeKey, relativePath));
-
-    if (value === null) {
-      return null;
-    }
-
-    return parseCacheRecord({
-      key: buildMetadataKey(kind, scopeKey, relativePath),
-      value,
-      updated_at: ""
-    });
+  ): GraphContentCacheRecord | null {
+    return this.repository.getGraphContentCache(kind, scopeKey, relativePath);
   }
 
-  listCacheRecords(
-    kind: GraphSidecarKind,
-    scopeKey: string
-  ): Array<{ relativePath: string; record: GraphSidecarCacheRecord }> {
-    const prefix = buildMetadataPrefix(kind, scopeKey);
-
-    return this.repository.listMetadata(prefix).flatMap((entry) => {
-      const record = parseCacheRecord(entry);
-
-      if (record === null) {
-        return [];
-      }
-
-      return [
-        {
-          relativePath: entry.key.slice(prefix.length),
-          record
-        }
-      ];
-    });
+  listCacheRecords(kind: GraphContentCacheKind, scopeKey: string): GraphContentCacheRecord[] {
+    return this.repository.listGraphContentCache(kind, scopeKey);
   }
 
   isFileUnchanged(
-    kind: GraphSidecarKind,
+    kind: GraphContentCacheKind,
     scopeKey: string,
     relativePath: string,
     hash: string
   ): boolean {
     const record = this.getCacheRecord(kind, scopeKey, relativePath);
 
-    return (
-      record?.hash === hash &&
-      record.memoryIds.length > 0 &&
-      record.memoryIds.every((memoryId) => this.repository.getMemory(memoryId) !== null)
+    return record !== null && record.content_hash === hash && this.hasTrackedState(record);
+  }
+
+  scanDirectory(
+    kind: GraphContentCacheKind,
+    scopeKey: string,
+    directoryPath: string,
+    allowedExtensions: Set<string>
+  ): GraphDirectoryScanResult {
+    const absoluteDirectory = resolve(directoryPath);
+    const cacheRecords = this.listCacheRecords(kind, scopeKey);
+    const cacheByPath = new Map(cacheRecords.map((record) => [record.file_path, record]));
+    const currentFiles: GraphDirectoryScanFile[] = [];
+    const newFiles: GraphDirectoryScanFile[] = [];
+    const modifiedFiles: GraphDirectoryScanFile[] = [];
+    const unchangedFiles: GraphDirectoryScanFile[] = [];
+
+    for (const filePath of walkFiles(absoluteDirectory)) {
+      if (!allowedExtensions.has(extname(filePath).toLowerCase())) {
+        continue;
+      }
+
+      const relativePath = normalizeGraphPath(
+        relative(absoluteDirectory, filePath) || basename(filePath)
+      );
+      const cached = cacheByPath.get(relativePath) ?? null;
+      const lastModifiedMs = statSync(filePath).mtimeMs;
+
+      cacheByPath.delete(relativePath);
+
+      if (cached === null) {
+        const scanned = toStatus(
+          "new",
+          filePath,
+          relativePath,
+          this.hashContent(readFileSync(filePath, "utf8")),
+          lastModifiedMs
+        );
+
+        currentFiles.push(scanned);
+        newFiles.push(scanned);
+        continue;
+      }
+
+      if (this.hasUnchangedMtime(cached, lastModifiedMs) && this.hasTrackedState(cached)) {
+        const scanned = toStatus(
+          "unchanged",
+          filePath,
+          relativePath,
+          cached.content_hash,
+          lastModifiedMs
+        );
+
+        currentFiles.push(scanned);
+        unchangedFiles.push(scanned);
+        continue;
+      }
+
+      const contentHash = this.hashContent(readFileSync(filePath, "utf8"));
+      const scanned = toStatus(
+        contentHash === cached.content_hash && this.hasTrackedState(cached) ? "unchanged" : "modified",
+        filePath,
+        relativePath,
+        contentHash,
+        lastModifiedMs
+      );
+
+      currentFiles.push(scanned);
+
+      if (scanned.status === "unchanged") {
+        unchangedFiles.push(scanned);
+      } else {
+        modifiedFiles.push(scanned);
+      }
+    }
+
+    const deletedFiles = [...cacheByPath.values()];
+
+    return {
+      current_files: currentFiles,
+      new_files: newFiles,
+      modified_files: modifiedFiles,
+      unchanged_files: unchangedFiles,
+      deleted_files: deletedFiles,
+      status: {
+        indexed_files: cacheRecords.length,
+        pending_files: newFiles.length + modifiedFiles.length,
+        new_files: newFiles.length,
+        modified_files: modifiedFiles.length,
+        deleted_files: deletedFiles.length,
+        unchanged_files: unchangedFiles.length
+      }
+    };
+  }
+
+  syncFileCache(params: SyncFileCacheParams): void {
+    const previousRecord =
+      this.getCacheRecord(params.kind, params.scopeKey, params.relativePath) ?? null;
+    const currentMemoryIds = [...new Set(params.memoryIds)];
+    const staleMemoryIds = (previousRecord?.memory_ids ?? []).filter(
+      (memoryId) => !currentMemoryIds.includes(memoryId)
     );
+
+    this.deleteTrackedMemories(staleMemoryIds);
+    this.repository.setGraphContentCache({
+      kind: params.kind,
+      scope_key: params.scopeKey,
+      file_path: params.relativePath,
+      content_hash: params.hash,
+      entity_count: params.itemCount,
+      memory_ids: currentMemoryIds,
+      last_modified_ms: params.lastModifiedMs
+    });
   }
 
   syncFileGraph(params: SyncFileGraphParams): void {
     const previousRecord =
       this.getCacheRecord(params.kind, params.scopeKey, params.relativePath) ?? null;
-    const currentMemoryIds = params.memoryGraphs.map(({ memoryId }) => memoryId);
-    const staleMemoryIds = (previousRecord?.memoryIds ?? []).filter(
+    const currentMemoryIds = [...new Set(params.memoryGraphs.map(({ memoryId }) => memoryId))];
+    const staleMemoryIds = (previousRecord?.memory_ids ?? []).filter(
       (memoryId) => !currentMemoryIds.includes(memoryId)
     );
 
-    for (const staleMemoryId of staleMemoryIds) {
-      this.clearMemoryGraph(staleMemoryId);
-    }
+    this.deleteTrackedMemories(staleMemoryIds);
 
     for (const { memoryId, graph } of params.memoryGraphs) {
       this.knowledgeGraphService.replaceMemoryGraph(memoryId, graph);
     }
 
-    this.repository.setMetadata(
-      buildMetadataKey(params.kind, params.scopeKey, params.relativePath),
-      JSON.stringify({
-        hash: params.hash,
-        memoryIds: currentMemoryIds,
-        itemCount: params.itemCount
-      } satisfies GraphSidecarCacheRecord)
-    );
+    this.repository.setGraphContentCache({
+      kind: params.kind,
+      scope_key: params.scopeKey,
+      file_path: params.relativePath,
+      content_hash: params.hash,
+      entity_count: params.itemCount,
+      memory_ids: currentMemoryIds,
+      last_modified_ms: params.lastModifiedMs
+    });
   }
 
-  cleanupMissingFiles(
-    kind: GraphSidecarKind,
-    scopeKey: string,
-    currentRelativePaths: Set<string>
-  ): void {
-    for (const { relativePath, record } of this.listCacheRecords(kind, scopeKey)) {
-      if (currentRelativePaths.has(relativePath)) {
-        continue;
-      }
-
-      for (const memoryId of record.memoryIds) {
-        this.clearMemoryGraph(memoryId);
-      }
-
-      this.repository.deleteMetadata(buildMetadataKey(kind, scopeKey, relativePath));
+  cleanupDeletedFiles(deletedFiles: GraphContentCacheRecord[]): void {
+    for (const record of deletedFiles) {
+      this.deleteTrackedMemories(record.memory_ids);
+      this.repository.deleteGraphContentCache(record.kind, record.scope_key, record.file_path);
     }
   }
 
-  private clearMemoryGraph(memoryId: string): void {
-    const entityIds = this.repository.getRelationEntityIdsForMemory(memoryId);
+  private hasTrackedState(record: GraphContentCacheRecord): boolean {
+    if (record.memory_ids.length === 0) {
+      return record.entity_count === 0;
+    }
 
-    this.repository.deleteStructuralRelationsForMemory(memoryId);
-    this.repository.deleteInferredRelationsForMemory(memoryId);
-    this.repository.pruneEntitiesWithoutRelations(entityIds);
+    return record.memory_ids.every((memoryId) => this.repository.getMemory(memoryId) !== null);
+  }
+
+  private hasUnchangedMtime(record: GraphContentCacheRecord, lastModifiedMs: number | null): boolean {
+    return (
+      record.last_modified_ms !== null &&
+      lastModifiedMs !== null &&
+      Math.abs(record.last_modified_ms - lastModifiedMs) < 1
+    );
+  }
+
+  private deleteTrackedMemories(memoryIds: string[]): void {
+    for (const memoryId of [...new Set(memoryIds)]) {
+      const entityIds = this.repository.getRelationEntityIdsForMemory(memoryId);
+
+      this.repository.deleteMemory(memoryId);
+      this.repository.pruneEntitiesWithoutRelations(entityIds);
+    }
   }
 }
