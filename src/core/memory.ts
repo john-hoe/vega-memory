@@ -22,6 +22,7 @@ import { generateEmbedding, cosineSimilarity } from "../embedding/ollama.js";
 import { shouldExclude } from "../security/exclusion.js";
 import { redactSensitiveData } from "../security/redactor.js";
 import { KnowledgeGraphService } from "./knowledge-graph.js";
+import { SidecarReconciler } from "./sidecar-reconciler.js";
 import { generateSummary } from "./summarize.js";
 
 const DEFAULT_IMPORTANCE: Record<MemoryType, number> = {
@@ -167,7 +168,8 @@ export class MemoryService {
     private readonly config: VegaConfig,
     private readonly knowledgeGraphService = new KnowledgeGraphService(repository),
     private readonly archiveService = new ArchiveService(repository, config),
-    private readonly factClaimService = new FactClaimService(repository, config)
+    private readonly factClaimService = new FactClaimService(repository, config),
+    private readonly sidecarReconciler = new SidecarReconciler(repository, config)
   ) {}
 
   private shouldPreserveRaw(preserveRaw?: boolean): boolean {
@@ -625,6 +627,7 @@ export class MemoryService {
   }
 
   async delete(id: string, auditContext?: AuditContext): Promise<void> {
+    this.sidecarReconciler.onMemoryDeleted(id, resolveAuditContext(auditContext));
     this.repository.deleteMemory(id, auditContext);
   }
 }

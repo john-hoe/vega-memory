@@ -2,6 +2,7 @@ import type { VegaConfig } from "../config.js";
 import type { AuditContext, Memory } from "./types.js";
 import { Repository } from "../db/repository.js";
 import { cosineSimilarity } from "../embedding/ollama.js";
+import { SidecarReconciler } from "./sidecar-reconciler.js";
 
 const SIMILARITY_THRESHOLD = 0.9;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -42,7 +43,8 @@ const isCooledTaskState = (memory: Memory): boolean =>
 export class CompactService {
   constructor(
     private readonly repository: Repository,
-    private readonly _config: VegaConfig
+    private readonly config: VegaConfig,
+    private readonly sidecarReconciler = new SidecarReconciler(repository, config)
   ) {}
 
   compact(
@@ -108,6 +110,7 @@ export class CompactService {
           },
           { auditContext }
         );
+        this.sidecarReconciler.onMemoryMerged(newer.id, [older.id], auditContext);
 
         archivedIds.add(older.id);
         merged += 1;
@@ -144,6 +147,7 @@ export class CompactService {
         },
         { auditContext }
       );
+      this.sidecarReconciler.onMemoryArchived(memory.id, auditContext);
       archivedIds.add(memory.id);
       archived += 1;
     }

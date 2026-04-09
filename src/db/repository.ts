@@ -1273,6 +1273,27 @@ export class Repository {
     return rows.map(mapMemoryTopic);
   }
 
+  listMemoryTopicsByMemoryId(memoryId: string, status?: MemoryTopic["status"]): MemoryTopic[] {
+    const clauses = ["memory_id = ?"];
+    const params: unknown[] = [memoryId];
+
+    if (status !== undefined) {
+      clauses.push("status = ?");
+      params.push(status);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], MemoryTopicRow>(
+        `SELECT *
+         FROM memory_topics
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY created_at ASC, topic_id ASC`
+      )
+      .all(...params);
+
+    return rows.map(mapMemoryTopic);
+  }
+
   getMemoryTopic(memoryId: string, topicId: string): MemoryTopic | null {
     const row = this.db
       .prepare<[string, string], MemoryTopicRow>(
@@ -1557,6 +1578,67 @@ export class Repository {
     return rows.map(mapFactClaim);
   }
 
+  listFactClaimsBySourceMemoryId(memoryId: string): FactClaim[] {
+    const rows = this.db
+      .prepare<[string], FactClaimRow>(
+        `SELECT *
+         FROM fact_claims
+         WHERE source_memory_id = ?
+         ORDER BY created_at ASC, id ASC`
+      )
+      .all(memoryId);
+
+    return rows.map(mapFactClaim);
+  }
+
+  updateFactClaimProvenance(
+    id: string,
+    updates: Pick<FactClaim, "updated_at"> &
+      Partial<Pick<FactClaim, "source_memory_id" | "evidence_archive_id" | "source">>
+  ): FactClaim {
+    const existing = this.getFactClaim(id);
+
+    if (existing === null) {
+      throw new Error(`Fact claim not found: ${id}`);
+    }
+
+    const nextClaim: FactClaim = {
+      ...existing,
+      ...updates,
+      id: existing.id,
+      updated_at: updates.updated_at
+    };
+
+    if (nextClaim.source_memory_id === null && nextClaim.evidence_archive_id === null) {
+      throw new Error(`Fact claim must retain at least one provenance pointer: ${id}`);
+    }
+
+    this.db
+      .prepare<[string | null, string | null, FactClaim["source"], string, string]>(
+        `UPDATE fact_claims
+         SET source_memory_id = ?,
+             evidence_archive_id = ?,
+             source = ?,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        nextClaim.source_memory_id,
+        nextClaim.evidence_archive_id,
+        nextClaim.source,
+        nextClaim.updated_at,
+        id
+      );
+
+    const updated = this.getFactClaim(id);
+
+    if (updated === null) {
+      throw new Error(`Fact claim not found after provenance update: ${id}`);
+    }
+
+    return updated;
+  }
+
   updateFactClaimStatus(
     id: string,
     status: FactClaimStatus,
@@ -1750,6 +1832,20 @@ export class Repository {
       .get(tenantId, contentHash);
 
     return row ? mapRawArchive(row) : null;
+  }
+
+  listRawArchivesBySourceMemoryId(memoryId: string, limit = 100): RawArchive[] {
+    const rows = this.db
+      .prepare<[string, number], RawArchiveRow>(
+        `SELECT *
+         FROM raw_archives
+         WHERE source_memory_id = ?
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT ?`
+      )
+      .all(memoryId, normalizePositiveInteger(limit, 100));
+
+    return rows.map(mapRawArchive);
   }
 
   listRawArchives(
