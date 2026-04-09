@@ -12,7 +12,11 @@ import { MemoryService } from "./memory.js";
 import { RecallService } from "./recall.js";
 import { RegressionGuard } from "./regression-guard.js";
 import { exportSnapshot } from "./snapshot.js";
-import { estimateMemoryTokens, estimateWikiPageTokens } from "./token-estimate.js";
+import {
+  estimateMemoryTokens,
+  estimateTextTokens,
+  estimateWikiPageTokens
+} from "./token-estimate.js";
 import type {
   AuditContext,
   ExtractionCandidate,
@@ -38,6 +42,13 @@ const SESSION_BUDGET_RATIOS = {
   activeTasks: 0.2,
   context: 0.2
 } as const;
+const LIGHT_SESSION_BUDGET_RATIO = 0.25;
+const LIGHT_SESSION_BUDGET_RATIOS = {
+  preferences: 0.3,
+  activeTasks: 0.4,
+  conflicts: 0.2,
+  proactiveWarnings: 0.1
+} as const;
 const SESSION_SYNTHESIS_WARNING_PREFIX = "session-synthesis-warning:";
 const SNAPSHOT_EXPORT_DEBOUNCE_MS = 60_000;
 const OLLAMA_AVAILABILITY_TTL_MS = 60_000;
@@ -62,6 +73,9 @@ const estimateTokens = (memories: Memory[]): number =>
 
 const estimateWikiTokens = (pages: SessionStartWikiPage[]): number =>
   pages.reduce((total, page) => total + estimateWikiPageTokens(page), 0);
+
+const estimateWarningTokens = (warnings: string[]): number =>
+  warnings.reduce((total, warning) => total + estimateTextTokens(warning), 0);
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
 
@@ -165,6 +179,28 @@ const takeRelevantResultsWithinBudget = (
   return kept;
 };
 
+const takeWarningsWithinBudget = (warnings: string[], tokenBudget: number): string[] => {
+  if (tokenBudget <= 0) {
+    return [];
+  }
+
+  const kept: string[] = [];
+  let usedTokens = 0;
+
+  for (const warning of warnings) {
+    const warningTokens = estimateTextTokens(warning);
+
+    if (warningTokens > tokenBudget - usedTokens) {
+      continue;
+    }
+
+    kept.push(warning);
+    usedTokens += warningTokens;
+  }
+
+  return kept;
+};
+
 const countSessionResultItems = (result: SessionStartResult): number =>
   result.active_tasks.length +
   result.preferences.length +
@@ -176,6 +212,13 @@ const countSessionResultItems = (result: SessionStartResult): number =>
 
 const appendWarnings = (warnings: string[], nextWarnings: string[]): string[] =>
   [...new Set([...warnings, ...nextWarnings])];
+
+const sortByCreatedAtDesc = (memories: Memory[]): Memory[] =>
+  [...memories].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+
+const dedupeMemoriesById = (memories: Memory[]): Memory[] => [...new Map(
+  memories.map((memory) => [memory.id, memory])
+).values()];
 
 export class SessionService {
   private readonly sessionStartTimes = new Map<string, string>();
@@ -245,192 +288,18 @@ export class SessionService {
       return result;
     }
 
-    const preferences = this.repository
-      .listMemories({
-        type: "preference",
-        status: "active",
-        scope: "global",
-        tenant_id: tenantId ?? undefined,
-        limit: 10_000,
-        sort: "importance DESC"
-      })
-      .filter(isSessionVisible);
-    const globalRelevant = [
-      ...this.repository.listMemories({
-        scope: "global",
-        type: "pitfall",
-        status: "active",
-        tenant_id: tenantId ?? undefined,
-        limit: 20,
-        sort: "importance DESC"
-      }),
-      ...this.repository.listMemories({
-        scope: "global",
-        type: "decision",
-        status: "active",
-        tenant_id: tenantId ?? undefined,
-        limit: 10,
-        sort: "importance DESC"
-      }),
-      ...this.repository.listMemories({
-        scope: "global",
-        type: "insight",
-        status: "active",
-        tenant_id: tenantId ?? undefined,
-        limit: 10,
-        sort: "importance DESC"
-      })
-    ].filter(isSessionVisible);
-    const active_tasks = this.repository
-      .listMemories({
-        type: "task_state",
-        status: "active",
-        project,
-        tenant_id: tenantId ?? undefined,
-        limit: 10_000
-      })
-      .filter(isSessionVisible);
-    const context = this.repository
-      .listMemories({
-        type: "project_context",
-        status: "active",
-        project,
-        tenant_id: tenantId ?? undefined,
-        limit: 10_000
-      })
-      .filter(isSessionVisible);
-    const relevantResults =
-      taskHintKeywords.length > 0
-        ? (await this.recallService.recall(normalizedTaskHint, {
-            limit: 5,
-            minSimilarity: 0.3,
-            tenant_id: tenantId ?? undefined
-          })).map((result) => ({
-            ...result,
-            finalScore:
-              result.memory.project === project ? result.finalScore : result.finalScore * 0.5
-          }))
-            .filter(
-              (result) => isRelevantMemoryType(result.memory) && result.memory.verified !== "conflict"
-            )
-        : [];
-    const excludedIds = new Set([
-      ...preferences.map((memory) => memory.id),
-      ...active_tasks.map((memory) => memory.id),
-      ...context.map((memory) => memory.id)
-    ]);
-    const allRelevantResults = dedupeRelevantResults([
-      ...globalRelevant.map((memory) => toRelevantResult(memory, memory.importance)),
-      ...relevantResults
-    ]).filter((result) => !excludedIds.has(result.memory.id));
-    const allMemories = this.repository.listMemories({
-      status: "active",
-      tenant_id: tenantId ?? undefined,
-      limit: 10_000,
-      sort: "created_at DESC"
-    });
-    const relevant_wiki_pages = this.pageManager
-      ? this.loadRelevantWikiPages(project, taskHintKeywords)
-      : [];
-    const wiki_drafts_pending = this.pageManager ? this.countWikiDrafts(project) : 0;
-    const recent_unverified = allMemories
-      .filter(
-        (memory) => memory.verified === "unverified" && isInProjectScope(memory, project)
-      )
-      .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
-      .slice(0, 3);
-    const conflicts = allMemories.filter(
-      (memory) => memory.verified === "conflict" && isInProjectScope(memory, project)
-    ).sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
-    const proactive_warnings = [
-      ...(taskHintKeywords.length
-        ? this.repository
-            .listMemories({
-              type: "insight",
-              status: "active",
-              tenant_id: tenantId ?? undefined,
-              limit: 10_000,
-              sort: "importance DESC"
-            })
-            .filter((memory) => {
-              if (!isInProjectScope(memory, project) || !isSessionVisible(memory)) {
-                return false;
-              }
-
-              const tags = memory.tags.map((tag) => tag.toLowerCase());
-              return taskHintKeywords.some((keyword) => tags.includes(keyword));
-            })
-            .map((memory) => memory.content)
-        : []),
-      ...this.consumePendingSynthesisWarnings(project)
-    ];
-
-    const preferenceBudget = Math.floor(this.config.tokenBudget * SESSION_BUDGET_RATIOS.preferences);
-    const activeTaskBudget = Math.floor(this.config.tokenBudget * SESSION_BUDGET_RATIOS.activeTasks);
-    const contextBudget = Math.floor(this.config.tokenBudget * SESSION_BUDGET_RATIOS.context);
-    const trimmedPreferences = takeMemoriesWithinBudget(preferences, preferenceBudget);
-    const trimmedActiveTasks = takeMemoriesWithinBudget(active_tasks, activeTaskBudget);
-    const trimmedContext = takeMemoriesWithinBudget(context, contextBudget);
-    const baseBudgetUsage = estimateTokens([
-      ...trimmedPreferences,
-      ...trimmedActiveTasks,
-      ...trimmedContext
-    ]);
-    const trimmedRecentUnverified = takeMemoriesWithinBudget(
-      recent_unverified,
-      Math.max(0, this.config.tokenBudget - baseBudgetUsage)
-    );
-    const trimmedConflicts = takeMemoriesWithinBudget(
-      conflicts,
-      Math.max(
-        0,
-        this.config.tokenBudget -
-          estimateTokens([
-            ...trimmedPreferences,
-            ...trimmedActiveTasks,
-            ...trimmedContext,
-            ...trimmedRecentUnverified
-          ])
-      )
-    );
-    const usedNonRelevantBudget = estimateTokens([
-      ...trimmedPreferences,
-      ...trimmedActiveTasks,
-      ...trimmedContext,
-      ...trimmedRecentUnverified,
-      ...trimmedConflicts
-    ]);
-    const trimmedRelevantResults = takeRelevantResultsWithinBudget(
-      [...allRelevantResults].sort((left, right) => right.finalScore - left.finalScore),
-      Math.max(0, this.config.tokenBudget - usedNonRelevantBudget)
-    );
-    const token_estimate = estimateTokens([
-      ...trimmedPreferences,
-      ...trimmedActiveTasks,
-      ...trimmedContext,
-      ...trimmedRelevantResults.map((result) => result.memory),
-      ...trimmedRecentUnverified,
-      ...trimmedConflicts
-    ]) + estimateWikiTokens(relevant_wiki_pages);
-
-    const result: SessionStartResult = {
-      project,
-      active_tasks: trimmedActiveTasks.map(toSessionMemory),
-      preferences: trimmedPreferences.map(toSessionMemory),
-      context: trimmedContext.map(toSessionMemory),
-      relevant: [...trimmedRelevantResults]
-        .sort((left, right) => right.finalScore - left.finalScore)
-        .map((result) => toSessionMemory(result.memory)),
-      relevant_wiki_pages,
-      wiki_drafts_pending,
-      recent_unverified: trimmedRecentUnverified.map(toSessionMemory),
-      conflicts: trimmedConflicts.map(toSessionMemory),
-      proactive_warnings,
-      token_estimate
-    };
+    const result =
+      mode === "light"
+        ? this.buildLightSessionStartResult(project, taskHintKeywords, tenantId)
+        : await this.buildStandardSessionStartResult(
+            project,
+            normalizedTaskHint,
+            taskHintKeywords,
+            tenantId
+          );
     const violations = this.regressionGuard.recordSessionStart(
       mode,
-      token_estimate,
+      result.token_estimate,
       Date.now() - startedAt,
       {
         tenantId,
@@ -587,6 +456,275 @@ export class SessionService {
     }
 
     return this.extractionService.extractMemories(summary, project);
+  }
+
+  private async buildStandardSessionStartResult(
+    project: string,
+    normalizedTaskHint: string,
+    taskHintKeywords: string[],
+    tenantId?: string | null
+  ): Promise<SessionStartResult> {
+    const preferences = this.loadSessionPreferences(tenantId);
+    const globalRelevant = [
+      ...this.repository.listMemories({
+        scope: "global",
+        type: "pitfall",
+        status: "active",
+        tenant_id: tenantId ?? undefined,
+        limit: 20,
+        sort: "importance DESC"
+      }),
+      ...this.repository.listMemories({
+        scope: "global",
+        type: "decision",
+        status: "active",
+        tenant_id: tenantId ?? undefined,
+        limit: 10,
+        sort: "importance DESC"
+      }),
+      ...this.repository.listMemories({
+        scope: "global",
+        type: "insight",
+        status: "active",
+        tenant_id: tenantId ?? undefined,
+        limit: 10,
+        sort: "importance DESC"
+      })
+    ].filter(isSessionVisible);
+    const active_tasks = this.loadActiveTasks(project, tenantId);
+    const context = this.repository
+      .listMemories({
+        type: "project_context",
+        status: "active",
+        project,
+        tenant_id: tenantId ?? undefined,
+        limit: 10_000
+      })
+      .filter(isSessionVisible);
+    const relevantResults =
+      taskHintKeywords.length > 0
+        ? (await this.recallService.recall(normalizedTaskHint, {
+            limit: 5,
+            minSimilarity: 0.3,
+            tenant_id: tenantId ?? undefined
+          })).map((result) => ({
+            ...result,
+            finalScore:
+              result.memory.project === project ? result.finalScore : result.finalScore * 0.5
+          }))
+            .filter(
+              (result) => isRelevantMemoryType(result.memory) && result.memory.verified !== "conflict"
+            )
+        : [];
+    const excludedIds = new Set([
+      ...preferences.map((memory) => memory.id),
+      ...active_tasks.map((memory) => memory.id),
+      ...context.map((memory) => memory.id)
+    ]);
+    const allRelevantResults = dedupeRelevantResults([
+      ...globalRelevant.map((memory) => toRelevantResult(memory, memory.importance)),
+      ...relevantResults
+    ]).filter((result) => !excludedIds.has(result.memory.id));
+    const allMemories = this.repository.listMemories({
+      status: "active",
+      tenant_id: tenantId ?? undefined,
+      limit: 10_000,
+      sort: "created_at DESC"
+    });
+    const relevant_wiki_pages = this.pageManager
+      ? this.loadRelevantWikiPages(project, taskHintKeywords)
+      : [];
+    const wiki_drafts_pending = this.pageManager ? this.countWikiDrafts(project) : 0;
+    const recent_unverified = sortByCreatedAtDesc(
+      allMemories.filter(
+        (memory) => memory.verified === "unverified" && isInProjectScope(memory, project)
+      )
+    ).slice(0, 3);
+    const conflicts = sortByCreatedAtDesc(
+      allMemories.filter((memory) => memory.verified === "conflict" && isInProjectScope(memory, project))
+    );
+    const proactive_warnings = this.loadProactiveWarnings(project, taskHintKeywords, tenantId);
+
+    const preferenceBudget = Math.floor(this.config.tokenBudget * SESSION_BUDGET_RATIOS.preferences);
+    const activeTaskBudget = Math.floor(this.config.tokenBudget * SESSION_BUDGET_RATIOS.activeTasks);
+    const contextBudget = Math.floor(this.config.tokenBudget * SESSION_BUDGET_RATIOS.context);
+    const trimmedPreferences = takeMemoriesWithinBudget(preferences, preferenceBudget);
+    const trimmedActiveTasks = takeMemoriesWithinBudget(active_tasks, activeTaskBudget);
+    const trimmedContext = takeMemoriesWithinBudget(context, contextBudget);
+    const baseBudgetUsage = estimateTokens([
+      ...trimmedPreferences,
+      ...trimmedActiveTasks,
+      ...trimmedContext
+    ]);
+    const trimmedRecentUnverified = takeMemoriesWithinBudget(
+      recent_unverified,
+      Math.max(0, this.config.tokenBudget - baseBudgetUsage)
+    );
+    const trimmedConflicts = takeMemoriesWithinBudget(
+      conflicts,
+      Math.max(
+        0,
+        this.config.tokenBudget -
+          estimateTokens([
+            ...trimmedPreferences,
+            ...trimmedActiveTasks,
+            ...trimmedContext,
+            ...trimmedRecentUnverified
+          ])
+      )
+    );
+    const usedNonRelevantBudget = estimateTokens([
+      ...trimmedPreferences,
+      ...trimmedActiveTasks,
+      ...trimmedContext,
+      ...trimmedRecentUnverified,
+      ...trimmedConflicts
+    ]);
+    const trimmedRelevantResults = takeRelevantResultsWithinBudget(
+      [...allRelevantResults].sort((left, right) => right.finalScore - left.finalScore),
+      Math.max(0, this.config.tokenBudget - usedNonRelevantBudget)
+    );
+    const token_estimate = estimateTokens([
+      ...trimmedPreferences,
+      ...trimmedActiveTasks,
+      ...trimmedContext,
+      ...trimmedRelevantResults.map((result) => result.memory),
+      ...trimmedRecentUnverified,
+      ...trimmedConflicts
+    ]) + estimateWikiTokens(relevant_wiki_pages);
+
+    return {
+      project,
+      active_tasks: trimmedActiveTasks.map(toSessionMemory),
+      preferences: trimmedPreferences.map(toSessionMemory),
+      context: trimmedContext.map(toSessionMemory),
+      relevant: [...trimmedRelevantResults]
+        .sort((left, right) => right.finalScore - left.finalScore)
+        .map((result) => toSessionMemory(result.memory)),
+      relevant_wiki_pages,
+      wiki_drafts_pending,
+      recent_unverified: trimmedRecentUnverified.map(toSessionMemory),
+      conflicts: trimmedConflicts.map(toSessionMemory),
+      proactive_warnings,
+      token_estimate
+    };
+  }
+
+  private buildLightSessionStartResult(
+    project: string,
+    taskHintKeywords: string[],
+    tenantId?: string | null
+  ): SessionStartResult {
+    const lightTokenBudget = Math.floor(this.config.tokenBudget * LIGHT_SESSION_BUDGET_RATIO);
+    const preferences = this.loadSessionPreferences(tenantId);
+    const active_tasks = this.loadActiveTasks(project, tenantId);
+    const conflicts = sortByCreatedAtDesc(
+      dedupeMemoriesById([
+        ...this.repository.listMemories({
+          project,
+          status: "active",
+          verified: "conflict",
+          tenant_id: tenantId ?? undefined,
+          limit: 10_000,
+          sort: "created_at DESC"
+        }),
+        ...this.repository.listMemories({
+          scope: "global",
+          status: "active",
+          verified: "conflict",
+          tenant_id: tenantId ?? undefined,
+          limit: 10_000,
+          sort: "created_at DESC"
+        })
+      ])
+    );
+    const proactive_warnings = this.loadProactiveWarnings(project, taskHintKeywords, tenantId);
+
+    const preferenceBudget = Math.floor(
+      lightTokenBudget * LIGHT_SESSION_BUDGET_RATIOS.preferences
+    );
+    const activeTaskBudget = Math.floor(
+      lightTokenBudget * LIGHT_SESSION_BUDGET_RATIOS.activeTasks
+    );
+    const conflictBudget = Math.floor(lightTokenBudget * LIGHT_SESSION_BUDGET_RATIOS.conflicts);
+    const proactiveWarningBudget = Math.floor(
+      lightTokenBudget * LIGHT_SESSION_BUDGET_RATIOS.proactiveWarnings
+    );
+    const trimmedPreferences = takeMemoriesWithinBudget(preferences, preferenceBudget);
+    const trimmedActiveTasks = takeMemoriesWithinBudget(active_tasks, activeTaskBudget);
+    const trimmedConflicts = takeMemoriesWithinBudget(conflicts, conflictBudget);
+    const trimmedWarnings = takeWarningsWithinBudget(proactive_warnings, proactiveWarningBudget);
+    const token_estimate =
+      estimateTokens([...trimmedPreferences, ...trimmedActiveTasks, ...trimmedConflicts]) +
+      estimateWarningTokens(trimmedWarnings);
+
+    return {
+      project,
+      active_tasks: trimmedActiveTasks.map(toSessionMemory),
+      preferences: trimmedPreferences.map(toSessionMemory),
+      context: [],
+      relevant: [],
+      relevant_wiki_pages: [],
+      wiki_drafts_pending: 0,
+      recent_unverified: [],
+      conflicts: trimmedConflicts.map(toSessionMemory),
+      proactive_warnings: trimmedWarnings,
+      token_estimate
+    };
+  }
+
+  private loadSessionPreferences(tenantId?: string | null): Memory[] {
+    return this.repository
+      .listMemories({
+        type: "preference",
+        status: "active",
+        scope: "global",
+        tenant_id: tenantId ?? undefined,
+        limit: 10_000,
+        sort: "importance DESC"
+      })
+      .filter(isSessionVisible);
+  }
+
+  private loadActiveTasks(project: string, tenantId?: string | null): Memory[] {
+    return this.repository
+      .listMemories({
+        type: "task_state",
+        status: "active",
+        project,
+        tenant_id: tenantId ?? undefined,
+        limit: 10_000
+      })
+      .filter(isSessionVisible);
+  }
+
+  private loadProactiveWarnings(
+    project: string,
+    taskHintKeywords: string[],
+    tenantId?: string | null
+  ): string[] {
+    return [
+      ...(taskHintKeywords.length > 0
+        ? this.repository
+            .listMemories({
+              type: "insight",
+              status: "active",
+              tenant_id: tenantId ?? undefined,
+              limit: 10_000,
+              sort: "importance DESC"
+            })
+            .filter((memory) => {
+              if (!isInProjectScope(memory, project) || !isSessionVisible(memory)) {
+                return false;
+              }
+
+              const tags = memory.tags.map((tag) => tag.toLowerCase());
+              return taskHintKeywords.some((keyword) => tags.includes(keyword));
+            })
+            .map((memory) => memory.content)
+        : []),
+      ...this.consumePendingSynthesisWarnings(project)
+    ];
   }
 
   inferProject(workingDirectory: string): string {

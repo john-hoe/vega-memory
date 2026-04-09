@@ -489,6 +489,7 @@ export interface MemoryListFilters {
   type?: MemoryType;
   tenant_id?: string | null;
   status?: MemoryStatus;
+  verified?: VerifiedStatus;
   scope?: MemoryScope;
   limit?: number;
   sort?: string;

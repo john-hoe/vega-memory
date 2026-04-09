@@ -644,6 +644,212 @@ test("sessionStart keeps token_estimate within budget and excludes conflicts fro
   }
 });
 
+test("sessionStart light mode loads only the minimal payload and skips semantic recall", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-light-minimal-"));
+  const project = basename(tempDir);
+  const { repository, sessionService } = createSessionService({
+    ...baseConfig,
+    tokenBudget: 400
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "pref-light",
+        type: "preference",
+        project: "shared",
+        scope: "global",
+        verified: "verified",
+        importance: 0.9,
+        content: "Prefer the smallest safe preload."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "task-light",
+        type: "task_state",
+        project,
+        verified: "verified",
+        content: "Ship the light preload path."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "context-standard-only",
+        type: "project_context",
+        project,
+        verified: "verified",
+        content: "Standard mode should still load project context."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "conflict-light",
+        type: "decision",
+        project,
+        verified: "conflict",
+        content: "Two loaders disagree on context ordering.",
+        created_at: "2026-04-03T04:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "unverified-standard-only",
+        type: "decision",
+        project,
+        verified: "unverified",
+        content: "This should stay out of light mode.",
+        created_at: "2026-04-03T05:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "warning-insight",
+        type: "insight",
+        project,
+        verified: "verified",
+        tags: ["sqlite", "latency"],
+        content: "SQLite semantic preload slows recall."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "relevant-standard-only",
+        type: "decision",
+        project: "other-project",
+        scope: "global",
+        verified: "verified",
+        title: "Relevant standard memory",
+        content: "SQLite preload tuning helps the active repository stay fast."
+      })
+    );
+
+    const lightResult = await sessionService.sessionStart(tempDir, "sqlite latency", undefined, "light");
+
+    assert.deepEqual(
+      lightResult.preferences.map((memory) => memory.id),
+      ["pref-light"]
+    );
+    assert.deepEqual(
+      lightResult.active_tasks.map((memory) => memory.id),
+      ["task-light"]
+    );
+    assert.deepEqual(
+      lightResult.conflicts.map((memory) => memory.id),
+      ["conflict-light"]
+    );
+    assert.deepEqual(lightResult.context, []);
+    assert.deepEqual(lightResult.relevant, []);
+    assert.deepEqual(lightResult.relevant_wiki_pages, []);
+    assert.deepEqual(lightResult.recent_unverified, []);
+    assert.equal(lightResult.wiki_drafts_pending, 0);
+    assert.deepEqual(lightResult.proactive_warnings, [
+      "SQLite semantic preload slows recall."
+    ]);
+
+    const restoreFetch = installEmbeddingMock([0.6, 0.4]);
+
+    try {
+      const standardResult = await sessionService.sessionStart(
+        tempDir,
+        "sqlite latency",
+        undefined,
+        "standard"
+      );
+
+      assert.deepEqual(
+        standardResult.context.map((memory) => memory.id),
+        ["context-standard-only"]
+      );
+      assert.deepEqual(
+        standardResult.recent_unverified.map((memory) => memory.id),
+        ["unverified-standard-only"]
+      );
+      assert.equal(
+        standardResult.relevant.some((memory) => memory.id === "relevant-standard-only"),
+        true
+      );
+      assert.equal(standardResult.token_estimate > lightResult.token_estimate, true);
+    } finally {
+      restoreFetch();
+    }
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("sessionStart light mode keeps token_estimate within a quarter of tokenBudget", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-light-budget-"));
+  const project = basename(tempDir);
+  const tokenBudget = 200;
+  const { repository, sessionService } = createSessionService({
+    ...baseConfig,
+    tokenBudget
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "pref-big",
+        type: "preference",
+        project: "shared",
+        scope: "global",
+        verified: "verified",
+        importance: 0.9,
+        content: "P".repeat(300)
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "task-big",
+        type: "task_state",
+        project,
+        verified: "verified",
+        content: "T".repeat(300)
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "conflict-big",
+        type: "decision",
+        project,
+        verified: "conflict",
+        content: "C".repeat(300)
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "warning-big",
+        type: "insight",
+        project,
+        verified: "verified",
+        tags: ["budget"],
+        content: "W".repeat(300)
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "context-standard-only",
+        type: "project_context",
+        project,
+        verified: "verified",
+        content: "CTX".repeat(120)
+      })
+    );
+
+    const result = await sessionService.sessionStart(tempDir, "budget", undefined, "light");
+
+    assert.equal(result.context.length, 0);
+    assert.equal(result.relevant.length, 0);
+    assert.equal(result.recent_unverified.length, 0);
+    assert.equal(result.token_estimate <= Math.floor(tokenBudget * 0.25), true);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("sessionEnd extracts decision from summary containing 决定", async () => {
   const restoreFetch = installEmbeddingMock([0.4, 0.6]);
   const { repository, sessionService } = createSessionService();

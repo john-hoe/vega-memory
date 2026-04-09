@@ -810,6 +810,10 @@ export class Repository {
       clauses.push("status = ?");
       params.push(filters.status);
     }
+    if (filters.verified) {
+      clauses.push("verified = ?");
+      params.push(filters.verified);
+    }
     if (filters.scope) {
       clauses.push("scope = ?");
       params.push(filters.scope);
