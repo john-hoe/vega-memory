@@ -11,6 +11,8 @@ import type {
   MemoryListFilters,
   MemoryVersion,
   PerformanceLog,
+  RawArchive,
+  RawArchiveType,
   RelationType,
   Session
 } from "../core/types.js";
@@ -60,6 +62,22 @@ interface MemoryVersionRow {
   content: string;
   embedding: Buffer | null;
   importance: number;
+  updated_at: string;
+}
+
+interface RawArchiveRow {
+  id: string;
+  tenant_id: string | null;
+  project: string;
+  source_memory_id: string | null;
+  archive_type: RawArchive["archive_type"];
+  title: string;
+  source_uri: string | null;
+  content: string;
+  content_hash: string;
+  metadata: string;
+  captured_at: string | null;
+  created_at: string;
   updated_at: string;
 }
 
@@ -211,7 +229,18 @@ function parseJsonArray(value: string): string[] {
   return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
 }
 
+function parseJsonObject(value: string): Record<string, unknown> {
+  const parsed = JSON.parse(value) as unknown;
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : {};
+}
+
 function serializeJsonArray(value: string[]): string {
+  return JSON.stringify(value);
+}
+
+function serializeJsonObject(value: Record<string, unknown>): string {
   return JSON.stringify(value);
 }
 
@@ -221,6 +250,13 @@ function mapMemory(row: MemoryRow): Memory {
     summary: row.summary ?? null,
     tags: parseJsonArray(row.tags),
     accessed_projects: parseJsonArray(row.accessed_projects)
+  };
+}
+
+function mapRawArchive(row: RawArchiveRow): RawArchive {
+  return {
+    ...row,
+    metadata: parseJsonObject(row.metadata)
   };
 }
 
@@ -689,6 +725,137 @@ export class Repository {
     return rows.map(mapMemory);
   }
 
+  createRawArchive(archive: RawArchive): void {
+    const insertArchive = this.db.prepare<
+      [
+        string,
+        string | null,
+        string,
+        string | null,
+        RawArchive["archive_type"],
+        string,
+        string | null,
+        string,
+        string,
+        string,
+        string | null,
+        string,
+        string
+      ]
+    >(
+      `INSERT INTO raw_archives (
+        id,
+        tenant_id,
+        project,
+        source_memory_id,
+        archive_type,
+        title,
+        source_uri,
+        content,
+        content_hash,
+        metadata,
+        captured_at,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const insertFts = this.db.prepare<[number, string, string, string]>(
+      "INSERT INTO raw_archives_fts(rowid, title, content, metadata) VALUES (?, ?, ?, ?)"
+    );
+    const getRowId = this.db.prepare<[string], RowIdRow>(
+      "SELECT rowid FROM raw_archives WHERE id = ?"
+    );
+
+    this.db.transaction(() => {
+      insertArchive.run(
+        archive.id,
+        archive.tenant_id ?? null,
+        archive.project,
+        archive.source_memory_id,
+        archive.archive_type,
+        archive.title,
+        archive.source_uri,
+        archive.content,
+        archive.content_hash,
+        serializeJsonObject(archive.metadata),
+        archive.captured_at,
+        archive.created_at,
+        archive.updated_at
+      );
+
+      const row = getRowId.get(archive.id);
+
+      if (!row) {
+        throw new Error(`Failed to resolve rowid for raw archive ${archive.id}`);
+      }
+
+      insertFts.run(
+        row.rowid,
+        archive.title,
+        archive.content,
+        serializeJsonObject(archive.metadata)
+      );
+    });
+  }
+
+  getRawArchive(id: string): RawArchive | null {
+    const row = this.db
+      .prepare<[string], RawArchiveRow>("SELECT * FROM raw_archives WHERE id = ?")
+      .get(id);
+
+    return row ? mapRawArchive(row) : null;
+  }
+
+  getRawArchiveByHash(contentHash: string, tenantId: string | null): RawArchive | null {
+    const row = this.db
+      .prepare<[string | null, string], RawArchiveRow>(
+        `SELECT *
+         FROM raw_archives
+         WHERE tenant_id IS ? AND content_hash = ?
+         ORDER BY created_at ASC
+         LIMIT 1`
+      )
+      .get(tenantId, contentHash);
+
+    return row ? mapRawArchive(row) : null;
+  }
+
+  listRawArchives(
+    project?: string,
+    type?: RawArchiveType,
+    limit = 100,
+    tenantId?: string | null
+  ): RawArchive[] {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+    if (project) {
+      clauses.push("project = ?");
+      params.push(project);
+    }
+    if (type) {
+      clauses.push("archive_type = ?");
+      params.push(type);
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.db
+      .prepare<unknown[], RawArchiveRow>(
+        `SELECT *
+         FROM raw_archives
+         ${where}
+         ORDER BY updated_at DESC
+         LIMIT ?`
+      )
+      .all(...params, normalizePositiveInteger(limit, 100));
+
+    return rows.map(mapRawArchive);
+  }
+
   listMemoriesNeedingSummary(): Array<Pick<Memory, "id" | "content">> {
     return this.db
       .prepare<[], MemoryNeedingSummaryRow>(
@@ -748,6 +915,53 @@ export class Repository {
 
     return rows.map((row) => ({
       memory: mapMemory(row),
+      rank: row.rank
+    }));
+  }
+
+  searchRawArchives(
+    query: string,
+    project?: string,
+    limit = 10,
+    tenantId?: string | null
+  ): Array<{ archive: RawArchive; rank: number }> {
+    const normalizedQuery = query.trim();
+
+    if (normalizedQuery.length === 0) {
+      return [];
+    }
+
+    const clauses = ["raw_archives_fts MATCH ?"];
+    const params: unknown[] = [normalizedQuery];
+
+    if (tenantId !== undefined) {
+      clauses.push("raw_archives.tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    if (project) {
+      clauses.push("raw_archives.project = ?");
+      params.push(project);
+    }
+
+    const rows = this.db
+      .prepare<
+        unknown[],
+        RawArchiveRow & {
+          rank: number;
+        }
+      >(
+        `SELECT raw_archives.*, bm25(raw_archives_fts) AS rank
+         FROM raw_archives_fts
+         JOIN raw_archives ON raw_archives.rowid = raw_archives_fts.rowid
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY rank
+         LIMIT ?`
+      )
+      .all(...params, normalizePositiveInteger(limit, 10));
+
+    return rows.map((row) => ({
+      archive: mapRawArchive(row),
       rank: row.rank
     }));
   }

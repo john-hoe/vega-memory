@@ -537,6 +537,9 @@ export function initializeDatabase(db: Database.Database): void {
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
     USING fts5(title, content, tags, content=memories, content_rowid=rowid);
 
+    CREATE VIRTUAL TABLE IF NOT EXISTS raw_archives_fts
+    USING fts5(title, content, metadata, content=raw_archives, content_rowid=rowid);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS wiki_pages_fts
     USING fts5(title, content, summary, tags, content=wiki_pages, content_rowid=rowid);
   `);

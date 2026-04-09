@@ -4,6 +4,8 @@ import { v4 as uuidv4 } from "uuid";
 import { Repository } from "../db/repository.js";
 import type {
   CompactResult,
+  DeepRecallRequest,
+  DeepRecallResponse,
   HealthInfo,
   HealthReport,
   Memory,
@@ -251,6 +253,17 @@ export class VegaSyncClient {
 
       return this.searchLocalCache(query, options);
     }
+  }
+
+  async deepRecall(request: DeepRecallRequest): Promise<DeepRecallResponse> {
+    return this.requestJson<DeepRecallResponse>(
+      "/api/deep-recall",
+      {
+        method: "POST",
+        body: JSON.stringify(request)
+      },
+      DEFAULT_REQUEST_TIMEOUT_MS
+    );
   }
 
   async list(filters: MemoryListFilters): Promise<Memory[]> {

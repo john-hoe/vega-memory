@@ -10,6 +10,7 @@ import type {
   StoreParams,
   StoreResult
 } from "./types.js";
+import { ArchiveService } from "./archive-service.js";
 import { Repository } from "../db/repository.js";
 import { generateEmbedding, cosineSimilarity } from "../embedding/ollama.js";
 import { shouldExclude } from "../security/exclusion.js";
@@ -158,8 +159,28 @@ export class MemoryService {
   constructor(
     private readonly repository: Repository,
     private readonly config: VegaConfig,
-    private readonly knowledgeGraphService = new KnowledgeGraphService(repository)
+    private readonly knowledgeGraphService = new KnowledgeGraphService(repository),
+    private readonly archiveService = new ArchiveService(repository)
   ) {}
+
+  private captureRawContent(
+    content: string,
+    project: string,
+    type: MemoryType,
+    tenantId: string | null,
+    sourceMemoryId: string,
+    title?: string
+  ): void {
+    this.archiveService.store(content, "document", project, {
+      tenant_id: tenantId,
+      source_memory_id: sourceMemoryId,
+      title,
+      metadata: {
+        captured_from: "memory_service",
+        memory_type: type
+      }
+    });
+  }
 
   private linkKnowledgeGraph(memoryId: string, content: string, tags: string[]): void {
     const entities = this.knowledgeGraphService.extractEntities(content, tags);
@@ -248,6 +269,7 @@ export class MemoryService {
     const auditContext = resolveAuditContext(params.auditContext);
     const tenantId = params.tenant_id ?? auditContext.tenant_id ?? null;
     const source = params.source ?? "auto";
+    const rawContent = params.content;
 
     if (source !== "explicit") {
       const exclusion = shouldExclude(params.content);
@@ -329,6 +351,7 @@ export class MemoryService {
       });
 
       this.linkKnowledgeGraph(id, redacted, tags);
+      this.captureRawContent(rawContent, params.project, params.type, tenantId, id, params.title);
 
       return { id, action: "conflict", title };
     }
@@ -394,6 +417,14 @@ export class MemoryService {
       });
 
       this.linkKnowledgeGraph(matched.memory.id, mergedContent, mergedTags);
+      this.captureRawContent(
+        rawContent,
+        params.project,
+        params.type,
+        tenantId,
+        matched.memory.id,
+        params.title ?? matched.memory.title
+      );
 
       return { id: matched.memory.id, action: "updated", title: nextTitle };
     }
@@ -440,6 +471,7 @@ export class MemoryService {
     });
 
     this.linkKnowledgeGraph(id, redacted, tags);
+    this.captureRawContent(rawContent, params.project, params.type, tenantId, id, params.title);
 
     return { id, action: "created", title };
   }
@@ -451,7 +483,9 @@ export class MemoryService {
     }
 
     const nextUpdates: Partial<Memory> = {};
+    let rawContentToArchive: string | null = null;
     if (updates.content !== undefined) {
+      const rawContent = updates.content;
       const { redacted } = redactSensitiveData(
         updates.content,
         this.config.customRedactionPatterns
@@ -463,6 +497,7 @@ export class MemoryService {
         updates.tags !== undefined
           ? unique(updates.tags.map(normalizeToken).filter(Boolean))
           : extractTags(redacted);
+      rawContentToArchive = rawContent;
     }
     if (updates.importance !== undefined) {
       nextUpdates.importance = Math.max(0, Math.min(1, updates.importance));
@@ -479,6 +514,16 @@ export class MemoryService {
 
     nextUpdates.updated_at = now();
     this.repository.updateMemory(id, nextUpdates, { auditContext });
+    if (rawContentToArchive !== null) {
+      this.captureRawContent(
+        rawContentToArchive,
+        existing.project,
+        existing.type,
+        existing.tenant_id ?? null,
+        existing.id,
+        updates.title ?? existing.title
+      );
+    }
 
     const refreshed = this.repository.getMemory(id);
     if (refreshed) {

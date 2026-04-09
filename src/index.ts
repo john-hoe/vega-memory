@@ -93,6 +93,10 @@ async function main(): Promise<void> {
               compact: (project?: Parameters<VegaSyncClient["compact"]>[0]) =>
                 client.compact(project)
             },
+            archiveService: {
+              deepRecall: (request: Parameters<VegaSyncClient["deepRecall"]>[0]) =>
+                client.deepRecall(request)
+            },
             healthProvider: () => client.health()
           };
         })()

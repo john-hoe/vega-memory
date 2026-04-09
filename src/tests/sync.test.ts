@@ -483,3 +483,32 @@ test("SyncManager.syncPending preserves the queue when the API key is invalid", 
     await harness.cleanup();
   }
 });
+
+test("VegaSyncClient.deepRecall fetches cold archive evidence from the server", async () => {
+  const harness = await createHarness();
+  const client = new VegaSyncClient(harness.baseUrl, undefined);
+
+  try {
+    const storeResponse = await harness.request("/api/store", {
+      method: "POST",
+      body: JSON.stringify({
+        content: "Tool log export includes backup evidence for SQLite restore.",
+        type: "insight",
+        project: "vega"
+      })
+    });
+    const stored = await readJson<{ id: string }>(storeResponse);
+    const result = await client.deepRecall({
+      query: "backup evidence",
+      project: "vega",
+      include_content: true
+    });
+
+    assert.equal(result.results.length, 1);
+    assert.equal(result.results[0]?.memory_id, stored.id);
+    assert.equal(result.results[0]?.archive_type, "document");
+    assert.match(result.results[0]?.content ?? "", /SQLite restore/);
+  } finally {
+    await harness.cleanup();
+  }
+});

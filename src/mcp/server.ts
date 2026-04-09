@@ -7,6 +7,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import type { VegaConfig } from "../config.js";
+import { ArchiveService } from "../core/archive-service.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { getHealthReport } from "../core/health.js";
 import { Repository } from "../db/repository.js";
@@ -22,6 +23,8 @@ import { SynthesisEngine } from "../wiki/synthesis.js";
 import type {
   AuditContext,
   CompactResult,
+  DeepRecallRequest,
+  DeepRecallResponse,
   GraphQueryResult,
   HealthInfo,
   Memory,
@@ -263,6 +266,12 @@ export interface CreateMCPServerOptions {
   compactService: {
     compact(project?: string, auditContext?: AuditContext): CompactResult | Promise<CompactResult>;
   };
+  archiveService?: {
+    deepRecall(
+      request: DeepRecallRequest,
+      tenantId?: string | null
+    ): DeepRecallResponse | Promise<DeepRecallResponse>;
+  };
   compressionService?: {
     compressMemory(memoryId: string): Promise<{
       original_length: number;
@@ -294,6 +303,7 @@ export function createMCPServer({
   recallService,
   sessionService,
   compactService,
+  archiveService,
   compressionService,
   observerService,
   config,
@@ -304,6 +314,7 @@ export function createMCPServer({
     version: "0.1.0"
   });
   const diagnoseService = new DiagnoseService(repository, config);
+  const rawArchiveService = archiveService ?? new ArchiveService(repository);
   const observer = {
     enabled: config.observerEnabled,
     service: observerService
@@ -396,6 +407,29 @@ export function createMCPServer({
             project: entry.memory.project
           })),
           resultCount: result.length
+        };
+      })
+  );
+
+  server.tool(
+    "deep_recall",
+    "Retrieve cold evidence and archived original text from Vega Memory's raw archive tier.",
+    {
+      query: z.string().trim().min(1),
+      project: z.string().trim().min(1).optional(),
+      limit: z.number().int().positive().default(5),
+      evidence_limit: z.number().int().positive().optional(),
+      include_content: z.boolean().default(true),
+      include_metadata: z.boolean().default(false),
+      inject_into_session: z.boolean().default(false)
+    },
+    async (args) =>
+      runTool(repository, "deep_recall", args, observer, async () => {
+        const result = await Promise.resolve(rawArchiveService.deepRecall(args));
+
+        return {
+          result,
+          resultCount: result.results.length
         };
       })
   );

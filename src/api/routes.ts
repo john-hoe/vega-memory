@@ -7,6 +7,7 @@ import { WebhookService } from "../integrations/webhooks.js";
 import { getRequestTenantId, getRequestUser } from "./auth.js";
 import { requireRole, requireTenantAccess } from "./permissions.js";
 import { AnalyticsService } from "../core/analytics.js";
+import { ArchiveService } from "../core/archive-service.js";
 import { AuditService, buildAuditFiltersForQuery } from "../core/audit-service.js";
 import { CompactService } from "../core/compact.js";
 import { getHealthReport } from "../core/health.js";
@@ -620,6 +621,7 @@ export function createRouter(services: APIRouterServices): Router {
   const spaceService = new SpaceService(services.repository);
   const pagePermissionService = new PagePermissionService(services.repository);
   const webhookService = new WebhookService(services.config.webhooks);
+  const archiveService = new ArchiveService(services.repository);
 
   router.post(
     "/api/billing/webhook",
@@ -936,18 +938,48 @@ export function createRouter(services: APIRouterServices): Router {
   router.post(
     "/api/deep-recall",
     handleRoute((req, res) => {
-      requireBody(req.body);
+      const startedAt = Date.now();
+      const body = requireBody(req.body);
+      const tenantId = getRequestTenantId(res);
+      const result = archiveService.deepRecall(
+        {
+          query: requireString(body.query, "query"),
+          project: parseSingleValue(body.project, "project"),
+          limit: parseNumber(body.limit, "limit", {
+            integer: true,
+            min: 1
+          }),
+          evidence_limit: parseNumber(body.evidence_limit ?? body.evidenceLimit, "evidence_limit", {
+            integer: true,
+            min: 1
+          }),
+          include_content:
+            body.include_content === undefined
+              ? true
+              : requireBoolean(body.include_content, "include_content"),
+          include_metadata:
+            body.include_metadata === undefined
+              ? false
+              : requireBoolean(body.include_metadata, "include_metadata"),
+          inject_into_session:
+            body.inject_into_session === undefined
+              ? false
+              : requireBoolean(body.inject_into_session, "inject_into_session")
+        },
+        tenantId
+      );
 
-      const error: RecallProtocolError = {
-        status: 501,
-        code: "DEEP_RECALL_NOT_IMPLEMENTED",
-        message: "deep_recall is reserved for VM2-006 and is not implemented yet",
-        retryable: false
-      };
-
-      res.status(501).json({
-        error
+      services.repository.logPerformance({
+        timestamp: new Date().toISOString(),
+        tenant_id: tenantId,
+        operation: "deep_recall",
+        latency_ms: Date.now() - startedAt,
+        memory_count: 0,
+        result_count: result.results.length,
+        bm25_result_count: result.results.length
       });
+
+      res.status(200).json(result);
     })
   );
 

@@ -423,13 +423,18 @@ export interface DeepRecallRequest {
 }
 
 export interface DeepRecallResult {
-  memory_id: string;
+  archive_id: string;
+  memory_id: string | null;
   project: string;
-  type: MemoryType;
+  type: MemoryType | null;
+  archive_type: RawArchiveType;
   title: string;
   content?: string;
   summary?: string | null;
-  verified?: VerifiedStatus;
+  verified?: VerifiedStatus | null;
+  metadata?: Record<string, unknown>;
+  source_uri?: string | null;
+  captured_at?: string | null;
   created_at?: string;
   updated_at?: string;
   evidence_score?: number;

@@ -410,30 +410,45 @@ test("POST /api/session/start accepts light mode without changing current shape"
   }
 });
 
-test("POST /api/deep-recall returns the reserved 501 placeholder", async () => {
+test("POST /api/deep-recall returns archive-backed evidence", async () => {
   const harness = await createHarness();
 
   try {
+    const storeResponse = await harness.request("/api/store", {
+      method: "POST",
+      body: JSON.stringify({
+        content: "SQLite backup evidence lives in the cold archive tier.",
+        type: "decision",
+        project: "vega"
+      })
+    });
+    const stored = await readJson<{ id: string }>(storeResponse);
     const response = await harness.request("/api/deep-recall", {
       method: "POST",
       body: JSON.stringify({
         query: "sqlite backup evidence",
-        project: "vega"
+        project: "vega",
+        include_content: true
       })
     });
     const body = await readJson<{
-      error: {
-        status: number;
-        code: string;
-        message: string;
-        retryable: boolean;
-      };
+      results: Array<{
+        archive_id: string;
+        memory_id: string | null;
+        archive_type: string;
+        content?: string;
+      }>;
+      next_cursor: string | null;
+      injected_into_session: boolean;
     }>(response);
 
-    assert.equal(response.status, 501);
-    assert.equal(body.error.status, 501);
-    assert.equal(body.error.code, "DEEP_RECALL_NOT_IMPLEMENTED");
-    assert.equal(body.error.retryable, false);
+    assert.equal(response.status, 200);
+    assert.equal(body.next_cursor, null);
+    assert.equal(body.injected_into_session, false);
+    assert.equal(body.results.length, 1);
+    assert.equal(body.results[0]?.memory_id, stored.id);
+    assert.equal(body.results[0]?.archive_type, "document");
+    assert.match(body.results[0]?.content ?? "", /cold archive tier/);
   } finally {
     await harness.cleanup();
   }

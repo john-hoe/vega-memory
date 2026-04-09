@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { VegaConfig } from "../config.js";
+import { ArchiveService } from "../core/archive-service.js";
 import type { Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { createMCPServer } from "../mcp/server.js";
@@ -326,6 +327,68 @@ test("wiki_search returns FTS results", () => {
     assert.equal(results[0]?.slug, expected.slug);
   } finally {
     repository.close();
+  }
+});
+
+test("deep_recall MCP tool returns cold archive results", async () => {
+  const { repository, server } = createServerHarness();
+  const archiveService = new ArchiveService(repository);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-archive-1",
+        type: "decision",
+        title: "Backup decision",
+        content: "Hot memory summary for backup validation."
+      })
+    );
+    archiveService.store(
+      "Full tool log with SQLite backup evidence and restore commands.",
+      "tool_log",
+      "vega",
+      {
+        source_memory_id: "memory-archive-1",
+        title: "SQLite backup tool log",
+        metadata: {
+          tool: "backup"
+        }
+      }
+    );
+
+    const result = await getRegisteredTools(server).deep_recall.handler(
+      {
+        query: "restore commands",
+        project: "vega",
+        include_content: true,
+        include_metadata: true
+      },
+      {}
+    );
+    const payload = parseToolPayload<{
+      results: Array<{
+        archive_id: string;
+        memory_id: string | null;
+        archive_type: string;
+        content?: string;
+        metadata?: Record<string, unknown>;
+      }>;
+      next_cursor: string | null;
+      injected_into_session: boolean;
+    }>(result);
+
+    assert.equal(payload.results.length, 1);
+    assert.equal(payload.results[0]?.memory_id, "memory-archive-1");
+    assert.equal(payload.results[0]?.archive_type, "tool_log");
+    assert.match(payload.results[0]?.content ?? "", /restore commands/);
+    assert.deepEqual(payload.results[0]?.metadata, {
+      tool: "backup"
+    });
+    assert.equal(payload.next_cursor, null);
+    assert.equal(payload.injected_into_session, false);
+  } finally {
+    repository.close();
+    await server.close();
   }
 });
 

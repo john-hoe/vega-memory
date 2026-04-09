@@ -17,7 +17,7 @@ import Database from "better-sqlite3-multiple-ciphers";
 import { cleanOldBackups, createBackup, restoreFromBackup, shouldBackup } from "../db/backup.js";
 import { Repository } from "../db/repository.js";
 import { initializeDatabase } from "../db/schema.js";
-import type { Memory, Session } from "../core/types.js";
+import type { Memory, RawArchive, Session } from "../core/types.js";
 import { generateKey } from "../security/encryption.js";
 
 const now = "2026-04-03T12:00:00.000Z";
@@ -61,6 +61,25 @@ function createSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
+function createRawArchive(overrides: Partial<RawArchive> = {}): RawArchive {
+  return {
+    id: "archive-1",
+    tenant_id: null,
+    project: "vega",
+    source_memory_id: null,
+    archive_type: "document",
+    title: "SQLite backup evidence",
+    source_uri: null,
+    content: "Full SQLite backup evidence and restore notes.",
+    content_hash: "hash-1",
+    metadata: {},
+    captured_at: null,
+    created_at: now,
+    updated_at: now,
+    ...overrides
+  };
+}
+
 test("database initialization creates all tables", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-db-init-"));
   const dbPath = join(tempDir, "memory.db");
@@ -83,6 +102,8 @@ test("database initialization creates all tables", () => {
     assert.ok(tables.includes("performance_log"));
     assert.ok(tables.includes("metadata"));
     assert.ok(tables.includes("memories_fts"));
+    assert.ok(tables.includes("raw_archives"));
+    assert.ok(tables.includes("raw_archives_fts"));
     assert.ok(tables.includes("users"));
     assert.ok(tables.includes("fact_claims"));
 
@@ -175,6 +196,47 @@ test("FTS5 search returns results with rank", () => {
     assert.equal(results.length, 1);
     assert.equal(results[0].memory.id, "mem-fts-1");
     assert.equal(typeof results[0].rank, "number");
+  } finally {
+    repository.close();
+  }
+});
+
+test("raw archive repository CRUD and FTS search work", () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createRawArchive(
+      createRawArchive({
+        id: "archive-fts-1",
+        content_hash: "hash-fts-1",
+        title: "SQLite backup tool log",
+        archive_type: "tool_log",
+        content: "Tool output with WAL backup evidence."
+      })
+    );
+    repository.createRawArchive(
+      createRawArchive({
+        id: "archive-fts-2",
+        content_hash: "hash-fts-2",
+        title: "Redis notes",
+        content: "Redis cache invalidation details."
+      })
+    );
+
+    const stored = repository.getRawArchive("archive-fts-1");
+    const byHash = repository.getRawArchiveByHash("hash-fts-1", null);
+    const listed = repository.listRawArchives("vega", "tool_log", 10);
+    const searched = repository.searchRawArchives("backup", "vega", 10);
+
+    assert.ok(stored);
+    assert.equal(stored.archive_type, "tool_log");
+    assert.equal(byHash?.id, "archive-fts-1");
+    assert.deepEqual(
+      listed.map((archive) => archive.id),
+      ["archive-fts-1"]
+    );
+    assert.equal(searched.length, 1);
+    assert.equal(searched[0]?.archive.id, "archive-fts-1");
   } finally {
     repository.close();
   }
