@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { VegaConfig } from "../config.js";
 import { Repository } from "../db/repository.js";
 import { isOllamaAvailable } from "../embedding/ollama.js";
+import { ArchiveService } from "./archive-service.js";
 import { RegressionGuard } from "./regression-guard.js";
 import type { HealthReport } from "./types.js";
 
@@ -140,6 +141,9 @@ export async function getHealthReport(
   const db_size_mb = Number((getDatabaseSizeBytes(config.dbPath) / 1_048_576).toFixed(2));
   const latestBackup = getLatestBackup(config);
   const regressionReport = regressionGuard.getReport();
+  const archiveStats = new ArchiveService(repository, config).getStats();
+  const archiveMaxSizeMb = config.archiveMaxSizeMb ?? 500;
+  const archiveMaxSizeBytes = archiveMaxSizeMb * 1_048_576;
   const diskIssues = getDiskIssues(config);
   const issues: string[] = [];
   const fixSuggestions: string[] = [];
@@ -171,6 +175,14 @@ export async function getHealthReport(
     issues.push(`Average latency over the last 100 operations is ${latency_avg_ms.toFixed(2)} ms`);
     fixSuggestions.push(
       "Run `vega benchmark --suite recall` and verify sqlite-vec indexing if recall latency stays elevated."
+    );
+  }
+  if (archiveStats.total_size_bytes > archiveMaxSizeBytes) {
+    issues.push(
+      `Cold archive size ${archiveStats.total_size_mb.toFixed(2)} MB exceeds ${archiveMaxSizeMb} MB`
+    );
+    fixSuggestions.push(
+      "Run `vega archive stats` to inspect cold-layer growth and review raw archive retention before the archive tier expands further."
     );
   }
   for (const violation of regressionReport.violations) {

@@ -82,6 +82,7 @@ export interface VegaConfig {
   similarityThreshold: number;
   shardingEnabled: boolean;
   backupRetentionDays: number;
+  archiveMaxSizeMb?: number;
   observerEnabled: boolean;
   apiPort: number;
   apiKey: string | undefined;
@@ -539,6 +540,7 @@ export const loadConfig = (): VegaConfig => {
       1,
       365
     ),
+    archiveMaxSizeMb: clamp(parseNumber(process.env.VEGA_ARCHIVE_MAX_SIZE_MB, 500), 1, 100_000),
     observerEnabled: parseBoolean(process.env.VEGA_OBSERVER_ENABLED, false),
     apiPort: parseNumber(process.env.VEGA_API_PORT, 3271),
     apiKey: process.env.VEGA_API_KEY || fileConfig.apiKey || undefined,

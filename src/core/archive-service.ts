@@ -2,8 +2,13 @@ import { createHash } from "node:crypto";
 
 import { v4 as uuidv4 } from "uuid";
 
+import type { VegaConfig } from "../config.js";
 import { Repository } from "../db/repository.js";
+import { generateEmbedding } from "../embedding/ollama.js";
 import type {
+  ArchiveEmbeddingBuildResult,
+  ArchiveHashRepairResult,
+  ArchiveStats,
   DeepRecallRequest,
   DeepRecallResponse,
   RawArchive,
@@ -51,8 +56,24 @@ const toContentHash = (content: string): string =>
 const toEvidenceScore = (rank: number): number =>
   Number((1 / (1 + Math.abs(rank))).toFixed(3));
 
+const toEmbeddingBuffer = (embedding: Float32Array | null): Buffer | null => {
+  if (embedding === null) {
+    return null;
+  }
+
+  return Buffer.from(
+    embedding.buffer.slice(embedding.byteOffset, embedding.byteOffset + embedding.byteLength)
+  );
+};
+
+const normalizeBatchSize = (value: number, fallback: number): number =>
+  Number.isInteger(value) && value > 0 ? value : fallback;
+
 export class ArchiveService {
-  constructor(private readonly repository: Repository) {}
+  constructor(
+    private readonly repository: Repository,
+    private readonly config?: VegaConfig
+  ) {}
 
   store(
     content: string,
@@ -111,6 +132,81 @@ export class ArchiveService {
     };
   }
 
+  getStats(project?: string): ArchiveStats {
+    return this.repository.getRawArchiveStats(project);
+  }
+
+  repairHashes(batchSize = 100, project?: string): ArchiveHashRepairResult {
+    const timestamp = now();
+    const candidates = this.repository.listRawArchivesMissingHash(
+      normalizeBatchSize(batchSize, 100),
+      project
+    );
+    const duplicates: ArchiveHashRepairResult["duplicates"] = [];
+    let updated = 0;
+
+    for (const candidate of candidates) {
+      const contentHash = toContentHash(candidate.content);
+      const existing = this.repository.getRawArchiveByHash(contentHash, candidate.tenant_id);
+
+      if (existing !== null && existing.id !== candidate.id) {
+        duplicates.push({
+          id: candidate.id,
+          duplicate_of: existing.id,
+          tenant_id: candidate.tenant_id,
+          project: candidate.project,
+          content_hash: contentHash
+        });
+        continue;
+      }
+
+      this.repository.updateRawArchiveHash(candidate.id, contentHash, timestamp);
+      updated += 1;
+    }
+
+    return {
+      scanned: candidates.length,
+      updated,
+      duplicates
+    };
+  }
+
+  async buildEmbeddings(
+    batchSize = 50,
+    project?: string
+  ): Promise<ArchiveEmbeddingBuildResult> {
+    if (this.config === undefined) {
+      throw new Error("ArchiveService.buildEmbeddings requires VegaConfig");
+    }
+
+    const safeBatchSize = normalizeBatchSize(batchSize, 50);
+    const hashRepair = this.repairHashes(safeBatchSize, project);
+    const pending = this.repository.listRawArchivesWithoutEmbedding(safeBatchSize, project);
+    let embedded = 0;
+    let skipped = 0;
+
+    for (const archive of pending) {
+      const embedding = await generateEmbedding(archive.content, this.config);
+
+      if (embedding === null) {
+        skipped += 1;
+        continue;
+      }
+
+      this.repository.setRawArchiveEmbedding(archive.id, toEmbeddingBuffer(embedding), now());
+      embedded += 1;
+    }
+
+    return {
+      requested: safeBatchSize,
+      processed: pending.length,
+      embedded,
+      skipped,
+      remaining_without_embedding: this.repository.countRawArchivesWithoutEmbedding(project),
+      hash_repair: hashRepair
+    };
+  }
+
   retrieve(id: string, tenantId?: string | null): RawArchive | null {
     const archive = this.repository.getRawArchive(id);
 
@@ -139,11 +235,16 @@ export class ArchiveService {
     const includeContent = request.include_content ?? true;
     const includeMetadata = request.include_metadata ?? false;
     const matches = this.search(request.query, request.project, limit, tenantId);
-    const sourceMemoryIds = [...new Set(
-      matches
-        .map(({ archive }) => archive.source_memory_id)
-        .filter((memoryId): memoryId is string => typeof memoryId === "string" && memoryId.length > 0)
-    )];
+    const sourceMemoryIds = [
+      ...new Set(
+        matches
+          .map(({ archive }) => archive.source_memory_id)
+          .filter(
+            (memoryId): memoryId is string =>
+              typeof memoryId === "string" && memoryId.length > 0
+          )
+      )
+    ];
     const memoriesById = new Map(
       this.repository.getMemoriesByIds(sourceMemoryIds).map((memory) => [memory.id, memory] as const)
     );

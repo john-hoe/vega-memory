@@ -314,7 +314,7 @@ export function createMCPServer({
     version: "0.1.0"
   });
   const diagnoseService = new DiagnoseService(repository, config);
-  const rawArchiveService = archiveService ?? new ArchiveService(repository);
+  const rawArchiveService = archiveService ?? new ArchiveService(repository, config);
   const observer = {
     enabled: config.observerEnabled,
     service: observerService

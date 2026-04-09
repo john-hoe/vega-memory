@@ -33,6 +33,7 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
     VEGA_SHARDING_ENABLED: process.env.VEGA_SHARDING_ENABLED,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
+    VEGA_ARCHIVE_MAX_SIZE_MB: process.env.VEGA_ARCHIVE_MAX_SIZE_MB,
     VEGA_OBSERVER_ENABLED: process.env.VEGA_OBSERVER_ENABLED,
     VEGA_API_PORT: process.env.VEGA_API_PORT,
     VEGA_API_KEY: process.env.VEGA_API_KEY,
@@ -112,6 +113,7 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_SIMILARITY_THRESHOLD;
   delete process.env.VEGA_SHARDING_ENABLED;
   delete process.env.VEGA_BACKUP_RETENTION_DAYS;
+  delete process.env.VEGA_ARCHIVE_MAX_SIZE_MB;
   delete process.env.VEGA_OBSERVER_ENABLED;
   delete process.env.VEGA_API_PORT;
   delete process.env.VEGA_API_KEY;
@@ -191,6 +193,7 @@ test("loadConfig returns the documented defaults", () => {
     similarityThreshold: 0.85,
     shardingEnabled: false,
     backupRetentionDays: 7,
+    archiveMaxSizeMb: 500,
     apiPort: 3271,
     apiKey: undefined,
     mode: "server",
@@ -265,6 +268,7 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_SIMILARITY_THRESHOLD: process.env.VEGA_SIMILARITY_THRESHOLD,
     VEGA_SHARDING_ENABLED: process.env.VEGA_SHARDING_ENABLED,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
+    VEGA_ARCHIVE_MAX_SIZE_MB: process.env.VEGA_ARCHIVE_MAX_SIZE_MB,
     VEGA_OBSERVER_ENABLED: process.env.VEGA_OBSERVER_ENABLED,
     VEGA_API_PORT: process.env.VEGA_API_PORT,
     VEGA_API_KEY: process.env.VEGA_API_KEY,
@@ -344,6 +348,7 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_SIMILARITY_THRESHOLD = "0.91";
   process.env.VEGA_SHARDING_ENABLED = "true";
   process.env.VEGA_BACKUP_RETENTION_DAYS = "14";
+  process.env.VEGA_ARCHIVE_MAX_SIZE_MB = "750";
   process.env.VEGA_OBSERVER_ENABLED = "true";
   process.env.VEGA_API_PORT = "4321";
   process.env.VEGA_API_KEY = "super-secret";
@@ -431,6 +436,7 @@ test("loadConfig reads overrides from process.env", () => {
     similarityThreshold: 0.91,
     shardingEnabled: true,
     backupRetentionDays: 14,
+    archiveMaxSizeMb: 750,
     apiPort: 4321,
     apiKey: "super-secret",
     mode: "client",

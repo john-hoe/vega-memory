@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 
 import type {
+  ArchiveStats,
   AuditContext,
   AuditEntry,
   AuditQueryFilters,
@@ -77,6 +78,7 @@ interface RawArchiveRow {
   source_uri: string | null;
   content: string;
   content_hash: string;
+  embedding: Buffer | null;
   metadata: string;
   captured_at: string | null;
   created_at: string;
@@ -111,6 +113,26 @@ interface MetadataRow {
 
 interface CountRow {
   total: number;
+}
+
+interface RawArchiveStatsRow {
+  total_count: number;
+  total_size_bytes: number | null;
+  with_embedding_count: number;
+  without_embedding_count: number;
+  missing_hash_count: number;
+}
+
+interface RawArchivePendingEmbeddingRow {
+  id: string;
+  content: string;
+}
+
+interface RawArchiveMissingHashRow {
+  id: string;
+  tenant_id: string | null;
+  project: string;
+  content: string;
 }
 
 interface RowIdRow {
@@ -277,8 +299,19 @@ function mapMemory(row: MemoryRow): Memory {
 
 function mapRawArchive(row: RawArchiveRow): RawArchive {
   return {
-    ...row,
-    metadata: parseJsonObject(row.metadata)
+    id: row.id,
+    tenant_id: row.tenant_id,
+    project: row.project,
+    source_memory_id: row.source_memory_id,
+    archive_type: row.archive_type,
+    title: row.title,
+    source_uri: row.source_uri,
+    content: row.content,
+    content_hash: row.content_hash,
+    metadata: parseJsonObject(row.metadata),
+    captured_at: row.captured_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at
   };
 }
 
@@ -912,6 +945,7 @@ export class Repository {
         string | null,
         string,
         string,
+        Buffer | null,
         string,
         string | null,
         string,
@@ -928,11 +962,12 @@ export class Repository {
         source_uri,
         content,
         content_hash,
+        embedding,
         metadata,
         captured_at,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertFts = this.db.prepare<[number, string, string, string]>(
       "INSERT INTO raw_archives_fts(rowid, title, content, metadata) VALUES (?, ?, ?, ?)"
@@ -952,6 +987,7 @@ export class Repository {
         archive.source_uri,
         archive.content,
         archive.content_hash,
+        null,
         serializeJsonObject(archive.metadata),
         archive.captured_at,
         archive.created_at,
@@ -1029,6 +1065,148 @@ export class Repository {
       .all(...params, normalizePositiveInteger(limit, 100));
 
     return rows.map(mapRawArchive);
+  }
+
+  getRawArchiveStats(project?: string): ArchiveStats {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (project) {
+      clauses.push("project = ?");
+      params.push(project);
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const row =
+      this.db
+        .prepare<unknown[], RawArchiveStatsRow>(
+          `SELECT
+             COUNT(*) AS total_count,
+             SUM(
+               length(id) +
+               length(COALESCE(tenant_id, '')) +
+               length(project) +
+               length(COALESCE(source_memory_id, '')) +
+               length(archive_type) +
+               length(title) +
+               length(COALESCE(source_uri, '')) +
+               length(content) +
+               length(COALESCE(content_hash, '')) +
+               length(metadata) +
+               length(COALESCE(captured_at, '')) +
+               COALESCE(length(embedding), 0)
+             ) AS total_size_bytes,
+             SUM(CASE WHEN embedding IS NOT NULL THEN 1 ELSE 0 END) AS with_embedding_count,
+             SUM(CASE WHEN embedding IS NULL THEN 1 ELSE 0 END) AS without_embedding_count,
+             SUM(CASE WHEN content_hash IS NULL OR content_hash = '' THEN 1 ELSE 0 END) AS missing_hash_count
+           FROM raw_archives
+           ${where}`
+        )
+        .get(...params) ?? {
+        total_count: 0,
+        total_size_bytes: 0,
+        with_embedding_count: 0,
+        without_embedding_count: 0,
+        missing_hash_count: 0
+      };
+    const totalSizeBytes = row.total_size_bytes ?? 0;
+
+    return {
+      total_count: row.total_count,
+      total_size_bytes: totalSizeBytes,
+      total_size_mb: Number((totalSizeBytes / 1_048_576).toFixed(2)),
+      with_embedding_count: row.with_embedding_count ?? 0,
+      without_embedding_count: row.without_embedding_count ?? 0,
+      missing_hash_count: row.missing_hash_count ?? 0
+    };
+  }
+
+  listRawArchivesWithoutEmbedding(
+    limit = 100,
+    project?: string
+  ): Array<{ id: string; content: string }> {
+    const safeLimit = normalizePositiveInteger(limit, 100);
+    const clauses = ["embedding IS NULL", "content_hash IS NOT NULL", "content_hash != ''"];
+    const params: unknown[] = [];
+
+    if (project) {
+      clauses.push("project = ?");
+      params.push(project);
+    }
+
+    return this.db
+      .prepare<unknown[], RawArchivePendingEmbeddingRow>(
+        `SELECT id, content
+         FROM raw_archives
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY created_at ASC
+         LIMIT ?`
+      )
+      .all(...params, safeLimit);
+  }
+
+  countRawArchivesWithoutEmbedding(project?: string): number {
+    const clauses = ["embedding IS NULL", "content_hash IS NOT NULL", "content_hash != ''"];
+    const params: unknown[] = [];
+
+    if (project) {
+      clauses.push("project = ?");
+      params.push(project);
+    }
+
+    return (
+      this.db
+        .prepare<unknown[], CountRow>(
+          `SELECT COUNT(*) AS total
+           FROM raw_archives
+           WHERE ${clauses.join(" AND ")}`
+        )
+        .get(...params)?.total ?? 0
+    );
+  }
+
+  setRawArchiveEmbedding(id: string, embedding: Buffer | null, updatedAt: string): void {
+    this.db
+      .prepare<[Buffer | null, string, string]>(
+        `UPDATE raw_archives
+         SET embedding = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(embedding, updatedAt, id);
+  }
+
+  listRawArchivesMissingHash(
+    limit = 100,
+    project?: string
+  ): Array<{ id: string; tenant_id: string | null; project: string; content: string }> {
+    const safeLimit = normalizePositiveInteger(limit, 100);
+    const clauses = ["(content_hash IS NULL OR content_hash = '')"];
+    const params: unknown[] = [];
+
+    if (project) {
+      clauses.push("project = ?");
+      params.push(project);
+    }
+
+    return this.db
+      .prepare<unknown[], RawArchiveMissingHashRow>(
+        `SELECT id, tenant_id, project, content
+         FROM raw_archives
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY created_at ASC
+         LIMIT ?`
+      )
+      .all(...params, safeLimit);
+  }
+
+  updateRawArchiveHash(id: string, contentHash: string, updatedAt: string): void {
+    this.db
+      .prepare<[string, string, string]>(
+        `UPDATE raw_archives
+         SET content_hash = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(contentHash, updatedAt, id);
   }
 
   listMemoriesNeedingSummary(): Array<Pick<Memory, "id" | "content">> {

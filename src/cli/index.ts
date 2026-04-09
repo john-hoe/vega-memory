@@ -7,6 +7,7 @@ import { Command } from "commander";
 import { loadConfig, requireDatabaseEncryptionKey } from "../config.js";
 import { createAdapter } from "../db/adapter-factory.js";
 import { registerAnalyticsCommand } from "./commands/analytics.js";
+import { registerArchiveCommands } from "./commands/archive.js";
 import { registerAuditCommand } from "./commands/audit.js";
 import { registerBenchmarkCommand } from "./commands/benchmark.js";
 import { registerCompressionCommand } from "./commands/compress.js";
@@ -40,6 +41,7 @@ import { registerTuneCommand } from "./commands/tune.js";
 import { registerWikiCommand } from "./commands/wiki.js";
 import { registerWhiteLabelCommand } from "./commands/whitelabel.js";
 import { AnalyticsService } from "../core/analytics.js";
+import { ArchiveService } from "../core/archive-service.js";
 import { CompactService } from "../core/compact.js";
 import { CodeIndexService } from "../core/code-index.js";
 import { CompressionService } from "../core/compression.js";
@@ -140,6 +142,7 @@ async function main(): Promise<void> {
   const templateMarketplace = new TemplateMarketplace(config);
   const relevanceTuner = new RelevanceTuner(repository);
   const analyticsService = new AnalyticsService(repository);
+  const archiveService = new ArchiveService(repository, config);
   const tenantService = new TenantService(repository);
   const whiteLabelConfig = new WhiteLabelConfig();
   const pageManager = new PageManager(repository);
@@ -188,6 +191,7 @@ async function main(): Promise<void> {
   registerTemplateCommands(program, templateMarketplace, repository);
   registerTuneCommand(program, relevanceTuner);
   registerAnalyticsCommand(program, analyticsService);
+  registerArchiveCommands(program, archiveService);
   registerRSSCommands(program, rssService);
   registerTenantCommands(program, tenantService);
   registerWikiCommand(

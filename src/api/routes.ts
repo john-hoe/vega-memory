@@ -621,7 +621,7 @@ export function createRouter(services: APIRouterServices): Router {
   const spaceService = new SpaceService(services.repository);
   const pagePermissionService = new PagePermissionService(services.repository);
   const webhookService = new WebhookService(services.config.webhooks);
-  const archiveService = new ArchiveService(services.repository);
+  const archiveService = new ArchiveService(services.repository, services.config);
 
   router.post(
     "/api/billing/webhook",

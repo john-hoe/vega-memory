@@ -123,6 +123,38 @@ export interface RawArchive {
   updated_at: string;
 }
 
+export interface ArchiveStats {
+  total_count: number;
+  total_size_bytes: number;
+  total_size_mb: number;
+  with_embedding_count: number;
+  without_embedding_count: number;
+  missing_hash_count: number;
+}
+
+export interface ArchiveHashRepairDuplicate {
+  id: string;
+  duplicate_of: string;
+  tenant_id: string | null;
+  project: string;
+  content_hash: string;
+}
+
+export interface ArchiveHashRepairResult {
+  scanned: number;
+  updated: number;
+  duplicates: ArchiveHashRepairDuplicate[];
+}
+
+export interface ArchiveEmbeddingBuildResult {
+  requested: number;
+  processed: number;
+  embedded: number;
+  skipped: number;
+  remaining_without_embedding: number;
+  hash_repair: ArchiveHashRepairResult;
+}
+
 export interface Topic {
   id: string;
   tenant_id?: string | null;

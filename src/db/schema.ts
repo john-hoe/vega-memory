@@ -344,6 +344,7 @@ export function initializeDatabase(db: Database.Database): void {
       source_uri TEXT,
       content TEXT NOT NULL,
       content_hash TEXT NOT NULL,
+      embedding BLOB,
       metadata TEXT NOT NULL DEFAULT '{}',
       captured_at TEXT,
       created_at TEXT NOT NULL,
@@ -560,6 +561,7 @@ export function initializeDatabase(db: Database.Database): void {
   ensureColumn(db, "usage_log", "metric", "TEXT");
   ensureColumn(db, "usage_log", "amount", "REAL");
   ensureColumn(db, "usage_log", "recorded_at", "TEXT");
+  ensureColumn(db, "raw_archives", "embedding", "BLOB");
   ensureColumn(db, "wiki_pages", "space_id", "TEXT");
   ensureColumn(db, "wiki_pages", "tenant_id", "TEXT");
   ensureColumn(

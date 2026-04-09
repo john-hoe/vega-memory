@@ -160,7 +160,7 @@ export class MemoryService {
     private readonly repository: Repository,
     private readonly config: VegaConfig,
     private readonly knowledgeGraphService = new KnowledgeGraphService(repository),
-    private readonly archiveService = new ArchiveService(repository)
+    private readonly archiveService = new ArchiveService(repository, config)
   ) {}
 
   private captureRawContent(

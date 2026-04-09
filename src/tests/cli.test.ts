@@ -39,6 +39,7 @@ test("CLI help lists core commands", () => {
   assert.match(output, /\brecall\b/);
   assert.match(output, /\bsession-start\b/);
   assert.match(output, /\bhealth\b/);
+  assert.match(output, /\barchive\b/);
 });
 
 test("CLI health --regression --json includes regression guard data", () => {
@@ -64,6 +65,43 @@ test("CLI health --regression --json includes regression guard data", () => {
     assert.equal(typeof output.status, "string");
     assert.equal(typeof output.regression_guard.status, "string");
     assert.equal(output.regression_guard.thresholds.max_session_start_token, 2500);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CLI archive stats reports cold archive growth metrics", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-archive-stats-"));
+  const dbPath = join(tempDir, "memory.db");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999"
+  };
+
+  try {
+    runCli(
+      [
+        "store",
+        "Cold archive stats should include this raw evidence.",
+        "--type",
+        "decision",
+        "--project",
+        "vega"
+      ],
+      env
+    );
+
+    const output = JSON.parse(runCli(["archive", "stats", "--json"], env)) as {
+      total_count: number;
+      with_embedding_count: number;
+      without_embedding_count: number;
+      total_size_mb: number;
+    };
+
+    assert.equal(output.total_count, 1);
+    assert.equal(output.with_embedding_count, 0);
+    assert.equal(output.without_embedding_count, 1);
+    assert.equal(typeof output.total_size_mb, "number");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

@@ -7,11 +7,13 @@ import test from "node:test";
 import { createAPIServer } from "../api/server.js";
 import type { VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
+import { getHealthReport } from "../core/health.js";
 import { CompactService } from "../core/compact.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import { Repository } from "../db/repository.js";
+import { embeddingCache } from "../embedding/cache.js";
 import { SearchEngine } from "../search/engine.js";
 
 interface TestHarness {
@@ -83,6 +85,41 @@ const createHarness = async (overrides: Partial<VegaConfig> = {}): Promise<TestH
 };
 
 const readJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
+
+const baseConfig: VegaConfig = {
+  dbPath: ":memory:",
+  ollamaBaseUrl: "http://mock-ollama.local",
+  ollamaModel: "bge-m3",
+  tokenBudget: 2000,
+  similarityThreshold: 0.85,
+  shardingEnabled: false,
+  backupRetentionDays: 7,
+  archiveMaxSizeMb: 500,
+  apiPort: 0,
+  apiKey: undefined,
+  mode: "server",
+  serverUrl: undefined,
+  cacheDbPath: ":memory:",
+  telegramBotToken: undefined,
+  telegramChatId: undefined,
+  observerEnabled: false,
+  dbEncryption: false
+};
+
+const installFetchMock = (
+  handler: (url: string, init?: RequestInit) => Response | Promise<Response>
+): (() => void) => {
+  const originalFetch = globalThis.fetch;
+  embeddingCache.clear();
+
+  globalThis.fetch = (async (input: URL | RequestInfo, init?: RequestInit) =>
+    handler(String(input), init)) as typeof fetch;
+
+  return () => {
+    embeddingCache.clear();
+    globalThis.fetch = originalFetch;
+  };
+};
 
 test("ArchiveService stores and retrieves raw archives", () => {
   const repository = new Repository(":memory:");
@@ -175,6 +212,181 @@ test("ArchiveService search uses BM25 over raw archive content", () => {
     assert.equal(results[0]?.archive.title, "SQLite backup runbook");
     assert.equal(typeof results[0]?.rank, "number");
   } finally {
+    repository.close();
+  }
+});
+
+test("ArchiveService.store defers embeddings to the background builder", async () => {
+  let postCalls = 0;
+  const restoreFetch = installFetchMock((_url, init) => {
+    if ((init?.method ?? "GET") !== "POST") {
+      return new Response(JSON.stringify({ version: "mock" }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json"
+        }
+      });
+    }
+
+    postCalls += 1;
+
+    return new Response(
+      JSON.stringify({
+        embeddings: [[0.1, 0.2, 0.3]]
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "application/json"
+        }
+      }
+    );
+  });
+  const repository = new Repository(":memory:");
+  const archiveService = new ArchiveService(repository, baseConfig);
+
+  try {
+    archiveService.store("Cold archive writes must not call Ollama.", "document", "vega");
+    const beforeStats = archiveService.getStats();
+
+    assert.equal(postCalls, 0);
+
+    const result = await archiveService.buildEmbeddings(10);
+    const afterStats = archiveService.getStats();
+
+    assert.equal(postCalls, 1);
+    assert.equal(beforeStats.with_embedding_count, 0);
+    assert.equal(beforeStats.without_embedding_count, 1);
+    assert.equal(result.embedded, 1);
+    assert.equal(result.skipped, 0);
+    assert.equal(afterStats.with_embedding_count, 1);
+    assert.equal(afterStats.without_embedding_count, 0);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("ArchiveService.buildEmbeddings populates deferred archive embeddings", async () => {
+  const restoreFetch = installFetchMock((_url, init) => {
+    if ((init?.method ?? "GET") !== "POST") {
+      return new Response(JSON.stringify({ version: "mock" }), { status: 200 });
+    }
+
+    return new Response(
+      JSON.stringify({
+        embeddings: [[0.25, 0.75, 0.5]]
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "application/json"
+        }
+      }
+    );
+  });
+  const repository = new Repository(":memory:");
+  const archiveService = new ArchiveService(repository, baseConfig);
+
+  try {
+    archiveService.store("First cold archive document.", "document", "vega");
+    archiveService.store("Second cold archive document.", "document", "vega");
+
+    const result = await archiveService.buildEmbeddings(10, "vega");
+    const stats = archiveService.getStats("vega");
+
+    assert.equal(result.processed, 2);
+    assert.equal(result.embedded, 2);
+    assert.equal(result.skipped, 0);
+    assert.equal(result.remaining_without_embedding, 0);
+    assert.equal(stats.with_embedding_count, 2);
+    assert.equal(stats.without_embedding_count, 0);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("ArchiveService.repairHashes backfills missing hashes and flags legacy duplicates", () => {
+  const repository = new Repository(":memory:");
+  const archiveService = new ArchiveService(repository, baseConfig);
+
+  try {
+    repository.db.exec("DROP INDEX IF EXISTS idx_raw_archives_dedupe");
+
+    repository.createRawArchive({
+      id: "legacy-1",
+      tenant_id: null,
+      project: "vega",
+      source_memory_id: null,
+      archive_type: "document",
+      title: "Legacy archive 1",
+      source_uri: null,
+      content: "Legacy duplicate content",
+      content_hash: "",
+      metadata: {},
+      captured_at: null,
+      created_at: "2026-04-01T00:00:00.000Z",
+      updated_at: "2026-04-01T00:00:00.000Z"
+    });
+    repository.createRawArchive({
+      id: "legacy-2",
+      tenant_id: null,
+      project: "vega",
+      source_memory_id: null,
+      archive_type: "document",
+      title: "Legacy archive 2",
+      source_uri: null,
+      content: "Legacy duplicate content",
+      content_hash: "",
+      metadata: {},
+      captured_at: null,
+      created_at: "2026-04-01T00:00:01.000Z",
+      updated_at: "2026-04-01T00:00:01.000Z"
+    });
+
+    const repair = archiveService.repairHashes(10, "vega");
+    const stats = archiveService.getStats("vega");
+
+    assert.equal(repair.scanned, 2);
+    assert.equal(repair.updated, 1);
+    assert.equal(repair.duplicates.length, 1);
+    assert.equal(repair.duplicates[0]?.id, "legacy-2");
+    assert.notEqual(repository.getRawArchive("legacy-1")?.content_hash, "");
+    assert.equal(repository.getRawArchive("legacy-2")?.content_hash, "");
+    assert.equal(stats.missing_hash_count, 1);
+  } finally {
+    repository.close();
+  }
+});
+
+test("health report warns when cold archive size exceeds the configured threshold", async () => {
+  const restoreFetch = installFetchMock(() =>
+    new Response(JSON.stringify({ version: "mock" }), {
+      status: 200,
+      headers: {
+        "content-type": "application/json"
+      }
+    })
+  );
+  const repository = new Repository(":memory:");
+  const archiveService = new ArchiveService(repository, {
+    ...baseConfig,
+    archiveMaxSizeMb: 0.0001
+  });
+
+  try {
+    archiveService.store("X".repeat(1024), "document", "vega");
+
+    const report = await getHealthReport(repository, {
+      ...baseConfig,
+      archiveMaxSizeMb: 0.0001
+    });
+
+    assert.equal(report.status, "degraded");
+    assert.match(report.issues.join("\n"), /Cold archive size/);
+  } finally {
+    restoreFetch();
     repository.close();
   }
 });
