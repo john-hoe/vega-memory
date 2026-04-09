@@ -188,6 +188,12 @@ Rules:
 
 `recall` accepts an optional topic filter.
 
+Defaults:
+
+- string shorthand such as `"topic": "database"` means `include_rooms = true` for top-level keys and `fallback_to_tags = true`
+- object form may disable either behavior explicitly
+- topic resolution is project-scoped; if `project` is omitted, topic narrowing cannot be resolved and recall should transparently fall back to the normal path when fallback is enabled
+
 Canonical request examples:
 
 ```json
@@ -305,6 +311,10 @@ Response addition:
 
 Purpose: list active topic taxonomy rows for a project.
 
+Transport:
+
+- expose as both an MCP tool and a CLI command, for example `vega topic list --project <name>`
+
 Canonical request:
 
 ```json
@@ -329,6 +339,10 @@ Canonical response item:
 ### 9.4 `topic_override`
 
 Purpose: replace a memory's active topic assignment with an explicit one.
+
+Transport:
+
+- expose as both an MCP tool and a CLI command, for example `vega topic override --memory-id <id> --topic <topic_key>`
 
 Canonical request:
 

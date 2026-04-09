@@ -49,7 +49,8 @@ export class StreamingSearch {
       options.project,
       options.type,
       true,
-      options.tenant_id
+      options.tenant_id,
+      options.topic
     );
     this.lastBm25ResultCount = bm25Results.length;
     const vectorResults: SearchResult[] = [];
@@ -59,7 +60,8 @@ export class StreamingSearch {
         options.project,
         options.type,
         true,
-        options.tenant_id
+        options.tenant_id,
+        options.topic
       );
 
       for (let offset = 0; offset < totalEmbeddings; offset += CHUNK_SIZE) {
@@ -69,7 +71,8 @@ export class StreamingSearch {
           options.project,
           options.type,
           true,
-          options.tenant_id
+          options.tenant_id,
+          options.topic
         );
         const chunkResults = chunk
           .map(({ embedding, memory }) => ({

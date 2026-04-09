@@ -55,6 +55,20 @@ export class SearchEngine {
     queryEmbedding: Float32Array,
     options: SearchOptions
   ): SearchResult[] {
+    if (options.topic) {
+      return this.bruteForceEngine.search(
+        queryEmbedding,
+        this.repository.getAllEmbeddings(
+          options.project,
+          options.type,
+          true,
+          options.tenant_id,
+          options.topic
+        ),
+        options
+      );
+    }
+
     if (this.activeVectorEngine === "pg-vector") {
       throw new Error("pg-vector backend is not wired yet");
     }
@@ -84,7 +98,8 @@ export class SearchEngine {
           options.project,
           options.type,
           true,
-          options.tenant_id
+          options.tenant_id,
+          options.topic
         );
       case "sqlite-vec":
       case "brute-force":

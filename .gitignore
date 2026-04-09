@@ -4,3 +4,4 @@ data/
 .env
 vec0.dylib
 .omx/
+.omc/state/

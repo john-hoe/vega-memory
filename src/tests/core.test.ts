@@ -67,6 +67,48 @@ const createStoredMemory = (
   };
 };
 
+const toTopicLabel = (topicKey: string): string =>
+  topicKey
+    .split(".")
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" / ");
+
+const attachTopic = (repository: Repository, memoryId: string, topicKey: string, project = "vega"): void => {
+  const timestamp = "2026-04-03T00:00:00.000Z";
+  const topicId = `${memoryId}:${topicKey}`;
+
+  repository.db
+    .prepare(
+      `INSERT INTO topics (
+        id, tenant_id, project, topic_key, version, label, kind, description,
+        source, state, supersedes_topic_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      topicId,
+      null,
+      project,
+      topicKey,
+      1,
+      toTopicLabel(topicKey),
+      topicKey.includes(".") ? "room" : "topic",
+      null,
+      "auto",
+      "active",
+      null,
+      timestamp,
+      timestamp
+    );
+
+  repository.db
+    .prepare(
+      `INSERT INTO memory_topics (
+        memory_id, topic_id, source, confidence, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(memoryId, topicId, "auto", 0.7, "active", timestamp, timestamp);
+};
+
 const defaultSearchOptions: SearchOptions = {
   project: "vega",
   limit: 10,
@@ -385,6 +427,118 @@ test("recall returns results and updates access metadata", async () => {
     assert.equal(stored.access_count, 1);
     assert.deepEqual(stored.accessed_projects, ["vega"]);
     assert.equal(versions.length, 0);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("recall scopes hybrid search by topic before ranking results", async () => {
+  const restoreFetch = installEmbeddingMock([1, 0]);
+  const repository = new Repository(":memory:");
+  const searchEngine = new SearchEngine(repository, baseConfig);
+  const service = new RecallService(repository, searchEngine, baseConfig);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "database-memory",
+        title: "Database migration policy",
+        content: "policy for migration rollouts",
+        embedding: createEmbeddingBuffer([0.6, 0.8]),
+        tags: ["policy", "database", "migration"]
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "auth-memory",
+        title: "Auth policy",
+        content: "policy for login enforcement",
+        embedding: createEmbeddingBuffer([1, 0]),
+        tags: ["policy", "auth", "login"]
+      })
+    );
+    attachTopic(repository, "database-memory", "database.migration");
+    attachTopic(repository, "auth-memory", "auth.login");
+
+    const results = await service.recall("policy", {
+      ...defaultSearchOptions,
+      limit: 1,
+      topic: "database"
+    });
+
+    assert.deepEqual(
+      results.map((result) => result.memory.id),
+      ["database-memory"]
+    );
+    assert.equal(results[0]?.fallback, undefined);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("recall falls back to standard search when topic narrowing has no matches", async () => {
+  const restoreFetch = installEmbeddingMock([1, 0]);
+  const repository = new Repository(":memory:");
+  const searchEngine = new SearchEngine(repository, baseConfig);
+  const service = new RecallService(repository, searchEngine, baseConfig);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "auth-memory",
+        title: "Auth policy",
+        content: "policy for login enforcement",
+        embedding: createEmbeddingBuffer([1, 0]),
+        tags: ["policy", "auth", "login"]
+      })
+    );
+    attachTopic(repository, "auth-memory", "auth.login");
+
+    const results = await service.recall("policy", {
+      ...defaultSearchOptions,
+      topic: "database"
+    });
+
+    assert.deepEqual(
+      results.map((result) => result.memory.id),
+      ["auth-memory"]
+    );
+    assert.equal(results[0]?.fallback, true);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("recall returns no results when topic fallback is disabled", async () => {
+  const restoreFetch = installEmbeddingMock([1, 0]);
+  const repository = new Repository(":memory:");
+  const searchEngine = new SearchEngine(repository, baseConfig);
+  const service = new RecallService(repository, searchEngine, baseConfig);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "auth-memory",
+        title: "Auth policy",
+        content: "policy for login enforcement",
+        embedding: createEmbeddingBuffer([1, 0]),
+        tags: ["policy", "auth", "login"]
+      })
+    );
+    attachTopic(repository, "auth-memory", "auth.login");
+
+    const results = await service.recall("policy", {
+      ...defaultSearchOptions,
+      topic: {
+        topic_key: "database",
+        fallback_to_tags: false
+      }
+    });
+
+    assert.equal(results.length, 0);
   } finally {
     restoreFetch();
     repository.close();

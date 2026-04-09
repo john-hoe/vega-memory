@@ -14,7 +14,9 @@ import type {
   RawArchive,
   RawArchiveType,
   RelationType,
-  Session
+  Session,
+  Topic,
+  TopicRecallOptions
 } from "../core/types.js";
 import type { User, UserRole } from "../core/user.js";
 import type { WikiComment } from "../wiki/comments.js";
@@ -79,6 +81,26 @@ interface RawArchiveRow {
   captured_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface TopicRow {
+  id: string;
+  tenant_id: string | null;
+  project: string;
+  topic_key: string;
+  version: number;
+  label: string;
+  kind: Topic["kind"];
+  description: string | null;
+  source: Topic["source"];
+  state: Topic["state"];
+  supersedes_topic_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TopicMemoryIdRow {
+  memory_id: string;
 }
 
 interface MetadataRow {
@@ -260,6 +282,10 @@ function mapRawArchive(row: RawArchiveRow): RawArchive {
   };
 }
 
+function mapTopic(row: TopicRow): Topic {
+  return row;
+}
+
 function mapEntity(row: EntityRow): Entity {
   return row;
 }
@@ -359,6 +385,80 @@ function appendScopedClauses(
     clauses.push("type = ?");
     params.push(type);
   }
+}
+
+function resolveTopicFilter(
+  topic?: string | TopicRecallOptions
+): { topicKey: string; includeRooms: boolean } | null {
+  if (!topic) {
+    return null;
+  }
+
+  const rawTopicKey = typeof topic === "string" ? topic : topic.topic_key;
+  const topicKey = rawTopicKey.trim().toLowerCase();
+
+  if (topicKey.length === 0) {
+    return null;
+  }
+
+  return {
+    topicKey,
+    includeRooms:
+      typeof topic === "string"
+        ? !topicKey.includes(".")
+        : topic.include_rooms ?? !topicKey.includes(".")
+  };
+}
+
+function appendTopicScopeClause(
+  memoryAlias: string,
+  clauses: string[],
+  params: unknown[],
+  project?: string,
+  topic?: string | TopicRecallOptions,
+  tenantId?: string | null
+): void {
+  const filter = resolveTopicFilter(topic);
+
+  if (!filter) {
+    return;
+  }
+
+  if (!project) {
+    clauses.push("1 = 0");
+    return;
+  }
+
+  const topicClauses = [
+    `topic_memory.memory_id = ${memoryAlias}.id`,
+    "topic_memory.status = 'active'",
+    "topic_scope.id = topic_memory.topic_id",
+    "topic_scope.state = 'active'",
+    "topic_scope.project = ?"
+  ];
+  params.push(project);
+
+  if (tenantId !== undefined && tenantId !== null) {
+    topicClauses.push("topic_scope.tenant_id IS ?");
+    params.push(tenantId);
+  }
+
+  if (filter.includeRooms && !filter.topicKey.includes(".")) {
+    topicClauses.push("(topic_scope.topic_key = ? OR topic_scope.topic_key LIKE ?)");
+    params.push(filter.topicKey, `${filter.topicKey}.%`);
+  } else {
+    topicClauses.push("topic_scope.topic_key = ?");
+    params.push(filter.topicKey);
+  }
+
+  clauses.push(
+    `EXISTS (
+      SELECT 1
+      FROM memory_topics topic_memory
+      JOIN topics topic_scope ON topic_scope.id = topic_memory.topic_id
+      WHERE ${topicClauses.join(" AND ")}
+    )`
+  );
 }
 
 function normalizeSort(sort?: string): string {
@@ -725,6 +825,77 @@ export class Repository {
     return rows.map(mapMemory);
   }
 
+  listTopics(project: string, tenantId?: string | null): Topic[] {
+    const clauses = ["project = ?", "state = 'active'"];
+    const params: unknown[] = [project];
+
+    if (tenantId !== undefined && tenantId !== null) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], TopicRow>(
+        `SELECT *
+         FROM topics
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY kind ASC, topic_key ASC, version DESC`
+      )
+      .all(...params);
+
+    return rows.map(mapTopic);
+  }
+
+  listMemoryIdsByTopic(
+    project: string,
+    topic: string | TopicRecallOptions,
+    tenantId?: string | null
+  ): string[] {
+    const filter = resolveTopicFilter(topic);
+
+    if (!filter || project.trim().length === 0) {
+      return [];
+    }
+
+    const clauses = [
+      "topic_memory.status = 'active'",
+      "topic_scope.id = topic_memory.topic_id",
+      "topic_scope.state = 'active'",
+      "topic_scope.project = ?",
+      "memories.id = topic_memory.memory_id",
+      "memories.status = 'active'",
+      "memories.project = ?"
+    ];
+    const params: unknown[] = [project, project];
+
+    if (tenantId !== undefined && tenantId !== null) {
+      clauses.push("topic_scope.tenant_id IS ?");
+      clauses.push("memories.tenant_id IS ?");
+      params.push(tenantId, tenantId);
+    }
+
+    if (filter.includeRooms && !filter.topicKey.includes(".")) {
+      clauses.push("(topic_scope.topic_key = ? OR topic_scope.topic_key LIKE ?)");
+      params.push(filter.topicKey, `${filter.topicKey}.%`);
+    } else {
+      clauses.push("topic_scope.topic_key = ?");
+      params.push(filter.topicKey);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], TopicMemoryIdRow>(
+        `SELECT DISTINCT topic_memory.memory_id
+         FROM memory_topics topic_memory
+         JOIN topics topic_scope ON topic_scope.id = topic_memory.topic_id
+         JOIN memories ON memories.id = topic_memory.memory_id
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY memories.updated_at DESC`
+      )
+      .all(...params);
+
+    return rows.map((row) => row.memory_id);
+  }
+
   createRawArchive(archive: RawArchive): void {
     const insertArchive = this.db.prepare<
       [
@@ -874,7 +1045,8 @@ export class Repository {
     project?: string,
     type?: string,
     includeGlobal = false,
-    tenantId?: string | null
+    tenantId?: string | null,
+    topic?: string | TopicRecallOptions
   ): { memory: Memory; rank: number }[] {
     const clauses = ["memories_fts MATCH ?", "memories.status = 'active'"];
     const params: unknown[] = [query];
@@ -897,6 +1069,8 @@ export class Repository {
       clauses.push("memories.type = ?");
       params.push(type);
     }
+
+    appendTopicScopeClause("memories", clauses, params, project, topic, tenantId);
 
     const rows = this.db
       .prepare<
@@ -970,11 +1144,13 @@ export class Repository {
     project?: string,
     type?: string,
     includeGlobal = false,
-    tenantId?: string | null
+    tenantId?: string | null,
+    topic?: string | TopicRecallOptions
   ): { id: string; embedding: Buffer; memory: Memory }[] {
     const clauses: string[] = [];
     const params: unknown[] = [];
     appendScopedClauses(clauses, params, project, type, includeGlobal, true, tenantId);
+    appendTopicScopeClause("memories", clauses, params, project, topic, tenantId);
 
     const rows = this.db
       .prepare<unknown[], MemoryRow>(`SELECT * FROM memories WHERE ${clauses.join(" AND ")}`)
@@ -993,7 +1169,8 @@ export class Repository {
     project?: string,
     type?: string,
     includeGlobal = false,
-    tenantId?: string | null
+    tenantId?: string | null,
+    topic?: string | TopicRecallOptions
   ): { id: string; embedding: Buffer; memory: Memory }[] {
     const safeOffset = normalizeNonNegativeInteger(offset);
     const safeLimit = normalizePositiveInteger(limit, 0);
@@ -1004,6 +1181,7 @@ export class Repository {
     const clauses: string[] = [];
     const params: unknown[] = [];
     appendScopedClauses(clauses, params, project, type, includeGlobal, true, tenantId);
+    appendTopicScopeClause("memories", clauses, params, project, topic, tenantId);
 
     const rows = this.db
       .prepare<unknown[], MemoryRow>(
@@ -1021,10 +1199,17 @@ export class Repository {
     }));
   }
 
-  countEmbeddings(project?: string, type?: string, includeGlobal = false, tenantId?: string | null): number {
+  countEmbeddings(
+    project?: string,
+    type?: string,
+    includeGlobal = false,
+    tenantId?: string | null,
+    topic?: string | TopicRecallOptions
+  ): number {
     const clauses: string[] = [];
     const params: unknown[] = [];
     appendScopedClauses(clauses, params, project, type, includeGlobal, true, tenantId);
+    appendTopicScopeClause("memories", clauses, params, project, topic, tenantId);
 
     const row = this.db
       .prepare<unknown[], CountRow>(
@@ -1035,10 +1220,17 @@ export class Repository {
     return row?.total ?? 0;
   }
 
-  countActiveMemories(project?: string, type?: string, includeGlobal = false, tenantId?: string | null): number {
+  countActiveMemories(
+    project?: string,
+    type?: string,
+    includeGlobal = false,
+    tenantId?: string | null,
+    topic?: string | TopicRecallOptions
+  ): number {
     const clauses: string[] = [];
     const params: unknown[] = [];
     appendScopedClauses(clauses, params, project, type, includeGlobal, false, tenantId);
+    appendTopicScopeClause("memories", clauses, params, project, topic, tenantId);
 
     const row = this.db
       .prepare<unknown[], CountRow>(

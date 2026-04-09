@@ -20,7 +20,44 @@ const logRecallInfo = (message: string): void => {
 interface SearchEngineExecution {
   results: SearchResult[];
   bm25ResultCount: number;
+  effectiveOptions: SearchOptions;
 }
+
+interface ResolvedTopicRecallOptions {
+  topic_key: string;
+  include_rooms: boolean;
+  fallback_to_tags: boolean;
+}
+
+const resolveTopicRecallOptions = (
+  topic?: SearchOptions["topic"]
+): ResolvedTopicRecallOptions | null => {
+  if (!topic) {
+    return null;
+  }
+
+  const rawTopicKey = typeof topic === "string" ? topic : topic.topic_key;
+  const topicKey = rawTopicKey.trim().toLowerCase();
+
+  if (topicKey.length === 0) {
+    return null;
+  }
+
+  return {
+    topic_key: topicKey,
+    include_rooms:
+      typeof topic === "string"
+        ? !topicKey.includes(".")
+        : topic.include_rooms ?? !topicKey.includes("."),
+    fallback_to_tags: typeof topic === "string" ? true : topic.fallback_to_tags ?? true
+  };
+};
+
+const markFallbackResults = (results: SearchResult[]): SearchResult[] =>
+  results.map((result) => ({
+    ...result,
+    fallback: true
+  }));
 
 const logRegressionWarnings = (
   regressionGuard: RegressionGuard,
@@ -40,6 +77,7 @@ export class RecallService {
       cachedAt: number;
       results: SearchResult[];
       bm25ResultCount: number;
+      effectiveOptions: SearchOptions;
     }
   >();
 
@@ -83,7 +121,8 @@ export class RecallService {
           options.project,
           options.type,
           true,
-          options.tenant_id
+          options.tenant_id,
+          options.topic
         ),
         resultTypes: results.map((result) => result.memory.type),
         bm25ResultCount,
@@ -142,32 +181,97 @@ export class RecallService {
     };
 
     if (typeof searchEngine.searchDetailed === "function") {
-      return searchEngine.searchDetailed(query, embedding, options);
+      const execution = searchEngine.searchDetailed(query, embedding, options);
+
+      return {
+        ...execution,
+        effectiveOptions: options
+      };
     }
 
     return {
       results: this.searchEngine.search(query, embedding, options),
-      bm25ResultCount: 0
+      bm25ResultCount: 0,
+      effectiveOptions: options
+    };
+  }
+
+  private executeTopicAwareSearch(
+    query: string,
+    embedding: Float32Array | null,
+    options: SearchOptions
+  ): SearchEngineExecution {
+    const topicOptions = resolveTopicRecallOptions(options.topic);
+
+    if (!topicOptions) {
+      return this.executeSearch(query, embedding, options);
+    }
+
+    const scopedOptions: SearchOptions = {
+      ...options,
+      topic: topicOptions
+    };
+    const candidateIds =
+      options.project === undefined
+        ? []
+        : this.repository.listMemoryIdsByTopic(options.project, topicOptions, options.tenant_id);
+
+    if (candidateIds.length === 0) {
+      if (!topicOptions.fallback_to_tags) {
+        return {
+          results: [],
+          bm25ResultCount: 0,
+          effectiveOptions: scopedOptions
+        };
+      }
+
+      const fallbackExecution = this.executeSearch(query, embedding, {
+        ...options,
+        topic: undefined
+      });
+
+      return {
+        ...fallbackExecution,
+        results: markFallbackResults(fallbackExecution.results)
+      };
+    }
+
+    const scopedExecution = this.executeSearch(query, embedding, scopedOptions);
+    if (scopedExecution.results.length > 0 || !topicOptions.fallback_to_tags) {
+      return scopedExecution;
+    }
+
+    const fallbackExecution = this.executeSearch(query, embedding, {
+      ...options,
+      topic: undefined
+    });
+
+    return {
+      ...fallbackExecution,
+      results: markFallbackResults(fallbackExecution.results)
     };
   }
 
   async recall(query: string, options: SearchOptions): Promise<SearchResult[]> {
     const startedAt = Date.now();
     let embeddingLatencyMs: number | null = null;
+    const normalizedTopic = resolveTopicRecallOptions(options.topic);
     const cacheKey = JSON.stringify({
       query,
       project: options.project ?? null,
       type: options.type ?? null,
       limit: options.limit,
       minSimilarity: options.minSimilarity ?? null,
-      tenant_id: options.tenant_id ?? null
+      tenant_id: options.tenant_id ?? null,
+      topic: normalizedTopic
     });
     const cached = this.recallCache.get(cacheKey);
     const execution =
       cached && Date.now() - cached.cachedAt < RECALL_CACHE_TTL_MS
         ? {
             results: structuredClone(cached.results) as SearchResult[],
-            bm25ResultCount: cached.bm25ResultCount
+            bm25ResultCount: cached.bm25ResultCount,
+            effectiveOptions: cached.effectiveOptions
           }
         : (() => {
             const embeddingPromise = generateEmbedding(query, this.config);
@@ -182,11 +286,12 @@ export class RecallService {
       const embeddingStartedAt = Date.now();
       const embedding = await execution.embeddingPromise;
       embeddingLatencyMs = Date.now() - embeddingStartedAt;
-      resolvedExecution = this.executeSearch(query, embedding, options);
+      resolvedExecution = this.executeTopicAwareSearch(query, embedding, options);
       this.recallCache.set(cacheKey, {
         cachedAt: Date.now(),
         results: structuredClone(resolvedExecution.results) as SearchResult[],
-        bm25ResultCount: resolvedExecution.bm25ResultCount
+        bm25ResultCount: resolvedExecution.bm25ResultCount,
+        effectiveOptions: resolvedExecution.effectiveOptions
       });
     }
     const results = resolvedExecution.results;
@@ -199,7 +304,7 @@ export class RecallService {
     this.logRecallPerformance(
       "recall",
       startedAt,
-      options,
+      resolvedExecution.effectiveOptions,
       results,
       resolvedExecution.bm25ResultCount,
       embeddingLatencyMs
@@ -213,6 +318,81 @@ export class RecallService {
     const embeddingStartedAt = Date.now();
     const embedding = await generateEmbedding(query, this.config);
     const embeddingLatencyMs = Date.now() - embeddingStartedAt;
+    const topicOptions = resolveTopicRecallOptions(options.topic);
+
+    if (topicOptions) {
+      const scopedOptions: SearchOptions = {
+        ...options,
+        topic: topicOptions
+      };
+      const candidateIds =
+        options.project === undefined
+          ? []
+          : this.repository.listMemoryIdsByTopic(options.project, topicOptions, options.tenant_id);
+
+      if (candidateIds.length > 0) {
+        const scopedSearch = new StreamingSearch(this.repository, this.config);
+        const scopedResults: SearchResult[] = [];
+
+        for await (const result of scopedSearch.searchStream(query, embedding, scopedOptions)) {
+          scopedResults.push(result);
+        }
+
+        if (scopedResults.length > 0 || !topicOptions.fallback_to_tags) {
+          try {
+            for (const result of scopedResults) {
+              this.updateAccessedMemory(result, scopedOptions.project, now());
+              yield result;
+            }
+          } finally {
+            this.logRecallPerformance(
+              "recall_stream",
+              startedAt,
+              scopedOptions,
+              scopedResults,
+              scopedSearch.getLastMetrics().bm25ResultCount,
+              embeddingLatencyMs
+            );
+          }
+
+          return;
+        }
+      } else if (!topicOptions.fallback_to_tags) {
+        this.logRecallPerformance("recall_stream", startedAt, scopedOptions, [], 0, embeddingLatencyMs);
+        return;
+      }
+
+      const fallbackOptions: SearchOptions = {
+        ...options,
+        topic: undefined
+      };
+      const fallbackSearch = new StreamingSearch(this.repository, this.config);
+      const fallbackResults: SearchResult[] = [];
+
+      try {
+        for await (const result of fallbackSearch.searchStream(query, embedding, fallbackOptions)) {
+          const fallbackResult = {
+            ...result,
+            fallback: true
+          };
+          this.updateAccessedMemory(fallbackResult, fallbackOptions.project, now());
+          fallbackResults.push(fallbackResult);
+          yield fallbackResult;
+        }
+      } finally {
+        this.logRecallPerformance(
+          "recall_stream",
+          startedAt,
+          fallbackOptions,
+          fallbackResults,
+          fallbackSearch.getLastMetrics().bm25ResultCount,
+          embeddingLatencyMs
+        );
+      }
+
+      return;
+    }
+
     const results: SearchResult[] = [];
     const streamingSearch = new StreamingSearch(this.repository, this.config);
 
