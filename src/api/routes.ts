@@ -27,6 +27,7 @@ import type {
   SessionStartMode,
   SessionStartResult
 } from "../core/types.js";
+import { SESSION_START_MODE_VALUES } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { CommentService, type WikiComment } from "../wiki/comments.js";
 import { NotificationService, type WikiNotification } from "../wiki/notifications.js";
@@ -57,7 +58,7 @@ const MEMORY_TYPES = new Set<MemoryType>([
 ]);
 
 const MEMORY_SOURCES = new Set<MemorySource>(["auto", "explicit"]);
-const SESSION_START_MODES = new Set<SessionStartMode>(["light", "standard"]);
+const SESSION_START_MODES = new Set<SessionStartMode>(SESSION_START_MODE_VALUES);
 const WIKI_PAGE_TYPE_VALUES = new Set<WikiPageType>(WIKI_PAGE_TYPES);
 const WIKI_PAGE_STATUS_VALUES = new Set<WikiPageStatus>(WIKI_PAGE_STATUSES);
 const WIKI_SPACE_VISIBILITY_VALUES = new Set<WikiSpaceVisibility>(WIKI_SPACE_VISIBILITIES);
@@ -124,7 +125,8 @@ const serializeSessionStartResult = (result: SessionStartResult) => ({
   recent_unverified: result.recent_unverified.map(serializeMemory),
   conflicts: result.conflicts.map(serializeMemory),
   proactive_warnings: result.proactive_warnings,
-  token_estimate: result.token_estimate
+  token_estimate: result.token_estimate,
+  ...(result.deep_recall !== undefined ? { deep_recall: result.deep_recall } : {})
 });
 
 const serializeSearchResult = (result: SearchResult) => ({
@@ -384,7 +386,10 @@ const parseSessionStartMode = (value: unknown, field: string): SessionStartMode 
   }
 
   if (!SESSION_START_MODES.has(parsed as SessionStartMode)) {
-    throw new ApiError(400, `${field} must be one of light, standard`);
+    throw new ApiError(
+      400,
+      `${field} must be one of ${SESSION_START_MODE_VALUES.join(", ")}`
+    );
   }
 
   return parsed as SessionStartMode;

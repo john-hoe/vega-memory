@@ -81,8 +81,10 @@ async function main(): Promise<void> {
             sessionService: {
               sessionStart: (
                 workingDirectory: Parameters<VegaSyncClient["sessionStart"]>[0],
-                taskHint?: Parameters<VegaSyncClient["sessionStart"]>[1]
-              ) => client.sessionStart(workingDirectory, taskHint),
+                taskHint?: Parameters<VegaSyncClient["sessionStart"]>[1],
+                _tenantId?: string | null,
+                mode?: Parameters<VegaSyncClient["sessionStart"]>[2]
+              ) => client.sessionStart(workingDirectory, taskHint, mode),
               sessionEnd: (
                 project: Parameters<VegaSyncClient["sessionEnd"]>[0],
                 summary: Parameters<VegaSyncClient["sessionEnd"]>[1],

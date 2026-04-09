@@ -6,9 +6,9 @@ Non-goal: change the current `standard` session loading behavior
 
 ## 1. Goal
 
-VM2 introduces a unified two-stage recall protocol for all clients:
+VM2 introduces a unified layered recall protocol for all clients:
 
-1. `session_start(mode)` loads a bounded preload bundle.
+1. `session_start(mode)` loads a bounded preload bundle at an explicit layer.
 2. `recall(query)` performs hot semantic retrieval on demand.
 3. `deep_recall(request)` is reserved for cold evidence retrieval and original-text fetches.
 4. `session_end(...)` remains the closeout step for durable extraction and task completion.
@@ -30,7 +30,7 @@ VM2-001 does not change the current `standard` preload result. It adds protocol 
 
 ```text
 client turn starts
-  -> session_start(mode = light | standard)
+  -> session_start(mode = L0 | L1 | L2 | L3 | light | standard)
       -> server applies preload budget policy
       -> returns bounded session context
   -> client works with returned bundle
@@ -64,11 +64,18 @@ Request fields:
 
 - `working_directory`: required absolute or relative workspace path
 - `task_hint`: optional free-text hint used for relevance shaping
-- `mode`: optional, `standard` or `light`, defaults to `standard`
+- `mode`: optional, `L0`, `L1`, `L2`, `L3`, `light`, or `standard`, defaults to `standard`
 
-#### `standard`
+Layer definitions:
 
-`standard` maps to the current behavior and current response shape:
+- `L0`: Identity preload. Preferences only. Target budget: about 50 tokens.
+- `L1`: Light preload. Equivalent to the current `light` mode.
+- `L2`: Standard preload. Equivalent to the current `standard` mode.
+- `L3`: Deep preload. `L2` plus an automatic `deep_recall` pull for original-text evidence.
+- `light`: backward-compatible alias for `L1`
+- `standard`: backward-compatible alias for `L2`
+
+`L2` maps to the current behavior and current response shape:
 
 ```json
 {
@@ -82,11 +89,17 @@ Request fields:
   "recent_unverified": "Memory[]",
   "conflicts": "Memory[]",
   "proactive_warnings": ["string"],
-  "token_estimate": 0
+  "token_estimate": 0,
+  "deep_recall": "DeepRecallResponse?"
 }
 ```
 
-#### `light`
+Notes:
+
+- `L0`, `L1`, and `L2` keep the current transport shape and leave unused sections empty.
+- `L3` adds the optional `deep_recall` field while preserving the existing hot-bundle fields.
+
+#### `L1` / `light`
 
 Canonical light-mode preload contents:
 
@@ -107,8 +120,8 @@ Canonical light-mode exclusions:
 Compatibility note:
 
 - VM2-001 keeps the existing transport response shape for runtime compatibility.
-- The current implementation accepts `mode: "light"` but still returns the existing `SessionStartResult` shape.
-- Until the light payload branch ships, clients should derive canonical `critical_conflicts` from the existing `conflicts` field.
+- `light` remains a backward-compatible alias for `L1`.
+- Until a narrower light-only transport is introduced, clients should derive canonical `critical_conflicts` from the existing `conflicts` field.
 
 ### 4.2 `recall`
 
@@ -270,6 +283,16 @@ Light mode rules:
 - task-specific relevance should be fetched with `recall(query)`
 - deep evidence should be fetched with `deep_recall(...)`
 
+### 5.3 Identity budget
+
+Identity mode target cap:
+
+- about `50` tokens
+
+Identity mode loading order:
+
+1. `preferences`
+
 ## 6. Error Codes
 
 Canonical protocol errors:
@@ -302,15 +325,16 @@ VM2-001 extends the `session_start` MCP tool schema with `mode`:
 {
   "working_directory": "string",
   "task_hint": "string?",
-  "mode": "\"light\" | \"standard\" = \"standard\""
+  "mode": "\"L0\" | \"L1\" | \"L2\" | \"L3\" | \"light\" | \"standard\" = \"standard\""
 }
 ```
 
 Rules:
 
 - omitted `mode` is treated as `standard`
-- `standard` preserves the current result behavior
-- `light` is accepted at the transport level in VM2-001 to make the contract real and forward-compatible
+- `standard` preserves the current result behavior as the `L2` alias
+- `light` is accepted at the transport level as the `L1` alias
+- `L3` may add the optional `deep_recall` field to the response
 
 `memory_recall` remains the MCP hot recall tool in VM2-001. No `deep_recall` MCP tool is introduced in this task.
 
@@ -325,6 +349,7 @@ Rules:
 ## 9. Migration Notes
 
 - Existing clients that omit `mode` stay on `standard`.
-- Clients may begin sending `mode: "light"` immediately without breaking the current runtime.
+- Existing clients that send `mode: "light"` or `mode: "standard"` keep the same behavior through the `L1` and `L2` aliases.
+- New clients may use `L0` for the smallest preload and `L3` for preload plus deep evidence.
 - Canonical light payload shaping can ship later without changing the request contract.
 - `deep_recall` is intentionally defined ahead of implementation so clients can code against the endpoint and error code now.

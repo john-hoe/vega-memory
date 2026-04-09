@@ -7,7 +7,14 @@ import test from "node:test";
 import type { VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { TopicService } from "../core/topic-service.js";
-import type { FactClaim, Memory, StoreParams, StoreResult } from "../core/types.js";
+import type {
+  FactClaim,
+  Memory,
+  SessionStartMode,
+  SessionStartResult,
+  StoreParams,
+  StoreResult
+} from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { createMCPServer } from "../mcp/server.js";
 import { CrossReferenceService } from "../wiki/cross-reference.js";
@@ -127,6 +134,12 @@ const createServerHarness = (
   overrides: Partial<VegaConfig> = {},
   services: {
     memoryStore?: (params: StoreParams) => Promise<StoreResult>;
+    sessionStart?: (
+      workingDirectory: string,
+      taskHint?: string,
+      tenantId?: string | null,
+      mode?: SessionStartMode
+    ) => Promise<SessionStartResult>;
   } = {}
 ) => {
   const repository = new Repository(":memory:");
@@ -157,19 +170,21 @@ const createServerHarness = (
       listMemories: () => []
     },
     sessionService: {
-      sessionStart: async () => ({
-        project: "vega",
-        active_tasks: [],
-        preferences: [],
-        context: [],
-        relevant: [],
-        relevant_wiki_pages: [],
-        wiki_drafts_pending: 0,
-        recent_unverified: [],
-        conflicts: [],
-        proactive_warnings: [],
-        token_estimate: 0
-      }),
+      sessionStart:
+        services.sessionStart ??
+        (async () => ({
+          project: "vega",
+          active_tasks: [],
+          preferences: [],
+          context: [],
+          relevant: [],
+          relevant_wiki_pages: [],
+          wiki_drafts_pending: 0,
+          recent_unverified: [],
+          conflicts: [],
+          proactive_warnings: [],
+          token_estimate: 0
+        })),
       sessionEnd: async () => {}
     },
     compactService: {
@@ -641,6 +656,72 @@ test("deep_recall MCP tool returns cold archive results", async () => {
     assert.equal(payload.injected_into_session, false);
   } finally {
     repository.close();
+    await server.close();
+  }
+});
+
+test("session_start MCP tool accepts L3 mode and returns deep recall payload", async () => {
+  let capturedMode: SessionStartMode | undefined;
+  const { server } = createServerHarness(
+    {},
+    {
+      sessionStart: async (_workingDirectory, _taskHint, _tenantId, mode) => {
+        capturedMode = mode;
+
+        return {
+          project: "vega",
+          active_tasks: [],
+          preferences: [],
+          context: [],
+          relevant: [],
+          relevant_wiki_pages: [],
+          wiki_drafts_pending: 0,
+          recent_unverified: [],
+          conflicts: [],
+          proactive_warnings: [],
+          token_estimate: 12,
+          deep_recall: {
+            results: [
+              {
+                archive_id: "archive-1",
+                memory_id: "memory-1",
+                project: "vega",
+                type: "decision",
+                archive_type: "tool_log",
+                title: "Backup tool log",
+                content: "Full archive content",
+                contains_raw: false
+              }
+            ],
+            next_cursor: null,
+            injected_into_session: true
+          }
+        };
+      }
+    }
+  );
+
+  try {
+    const result = await getRegisteredTools(server).session_start.handler(
+      {
+        working_directory: "/tmp/vega",
+        task_hint: "backup evidence",
+        mode: "L3"
+      },
+      {}
+    );
+    const payload = parseToolPayload<{
+      deep_recall?: {
+        injected_into_session: boolean;
+        results: Array<{ archive_type: string }>;
+      };
+    }>(result);
+
+    assert.equal(capturedMode, "L3");
+    assert.ok(payload.deep_recall);
+    assert.equal(payload.deep_recall.injected_into_session, true);
+    assert.equal(payload.deep_recall.results[0]?.archive_type, "tool_log");
+  } finally {
     await server.close();
   }
 });

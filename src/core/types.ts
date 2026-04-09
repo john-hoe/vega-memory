@@ -363,7 +363,28 @@ export interface SessionStartWikiPage {
   page_type: string;
 }
 
-export type SessionStartMode = "light" | "standard";
+export const SESSION_START_CANONICAL_MODES = ["L0", "L1", "L2", "L3"] as const;
+export type SessionStartCanonicalMode = (typeof SESSION_START_CANONICAL_MODES)[number];
+
+export const SESSION_START_MODE_VALUES = [
+  ...SESSION_START_CANONICAL_MODES,
+  "light",
+  "standard"
+] as const;
+export type SessionStartMode = (typeof SESSION_START_MODE_VALUES)[number];
+
+export const normalizeSessionStartMode = (
+  mode: SessionStartMode = "standard"
+): SessionStartCanonicalMode => {
+  switch (mode) {
+    case "light":
+      return "L1";
+    case "standard":
+      return "L2";
+    default:
+      return mode;
+  }
+};
 
 export interface SessionStartRequest {
   working_directory: string;
@@ -383,6 +404,7 @@ export interface SessionStartResult {
   conflicts: Memory[];
   proactive_warnings: string[];
   token_estimate: number;
+  deep_recall?: DeepRecallResponse;
 }
 
 export interface RegressionGuardThresholds {

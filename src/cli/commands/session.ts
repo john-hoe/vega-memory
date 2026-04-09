@@ -1,7 +1,13 @@
 import { Command } from "commander";
 
 import { SessionService } from "../../core/session.js";
-import type { AuditContext, Memory, SessionStartResult } from "../../core/types.js";
+import {
+  SESSION_START_MODE_VALUES,
+  type AuditContext,
+  type Memory,
+  type SessionStartMode,
+  type SessionStartResult
+} from "../../core/types.js";
 
 const CLI_AUDIT_CONTEXT: AuditContext = { actor: "cli", ip: null };
 
@@ -41,7 +47,8 @@ const serializeSessionStart = (result: SessionStartResult) => ({
   recent_unverified: result.recent_unverified.map(serializeMemory),
   conflicts: result.conflicts.map(serializeMemory),
   proactive_warnings: result.proactive_warnings,
-  token_estimate: result.token_estimate
+  token_estimate: result.token_estimate,
+  ...(result.deep_recall !== undefined ? { deep_recall: result.deep_recall } : {})
 });
 
 const printMemorySection = (label: string, memories: Memory[]): void => {
@@ -57,36 +64,53 @@ export function registerSessionCommands(program: Command, sessionService: Sessio
     .description("Start a session and load relevant memories")
     .option("--dir <path>", "working directory", process.cwd())
     .option("--hint <text>", "task hint")
+    .option("--mode <mode>", "session preload mode", "standard")
     .option("--json", "print JSON")
-    .action(async (options: { dir: string; hint?: string; json?: boolean }) => {
-      const result = await sessionService.sessionStart(options.dir, options.hint);
+    .action(
+      async (options: { dir: string; hint?: string; mode: SessionStartMode; json?: boolean }) => {
+        if (!SESSION_START_MODE_VALUES.includes(options.mode)) {
+          throw new Error(
+            `mode must be one of ${SESSION_START_MODE_VALUES.join(", ")}`
+          );
+        }
 
-      if (options.json) {
-        console.log(JSON.stringify(serializeSessionStart(result), null, 2));
-        return;
-      }
+        const result = await sessionService.sessionStart(
+          options.dir,
+          options.hint,
+          undefined,
+          options.mode
+        );
 
-      console.log(`project: ${result.project}`);
-      console.log(`token_estimate: ${Math.round(result.token_estimate)}`);
-      printMemorySection("active_tasks", result.active_tasks);
-      printMemorySection("preferences", result.preferences);
-      printMemorySection("context", result.context);
-      printMemorySection("relevant", result.relevant);
-      console.log(`wiki_drafts_pending: ${result.wiki_drafts_pending}`);
-      console.log(`relevant_wiki_pages: ${result.relevant_wiki_pages.length}`);
-      for (const page of result.relevant_wiki_pages) {
-        console.log(`- ${page.slug} ${page.title}`);
-      }
-      printMemorySection("recent_unverified", result.recent_unverified);
-      printMemorySection("conflicts", result.conflicts);
+        if (options.json) {
+          console.log(JSON.stringify(serializeSessionStart(result), null, 2));
+          return;
+        }
 
-      if (result.proactive_warnings.length > 0) {
-        console.log("proactive_warnings:");
-        for (const warning of result.proactive_warnings) {
-          console.log(`- ${warning}`);
+        console.log(`project: ${result.project}`);
+        console.log(`token_estimate: ${Math.round(result.token_estimate)}`);
+        printMemorySection("active_tasks", result.active_tasks);
+        printMemorySection("preferences", result.preferences);
+        printMemorySection("context", result.context);
+        printMemorySection("relevant", result.relevant);
+        console.log(`wiki_drafts_pending: ${result.wiki_drafts_pending}`);
+        console.log(`relevant_wiki_pages: ${result.relevant_wiki_pages.length}`);
+        for (const page of result.relevant_wiki_pages) {
+          console.log(`- ${page.slug} ${page.title}`);
+        }
+        printMemorySection("recent_unverified", result.recent_unverified);
+        printMemorySection("conflicts", result.conflicts);
+        if (result.deep_recall !== undefined) {
+          console.log(`deep_recall_results: ${result.deep_recall.results.length}`);
+        }
+
+        if (result.proactive_warnings.length > 0) {
+          console.log("proactive_warnings:");
+          for (const warning of result.proactive_warnings) {
+            console.log(`- ${warning}`);
+          }
         }
       }
-    });
+    );
 
   program
     .command("session-end")

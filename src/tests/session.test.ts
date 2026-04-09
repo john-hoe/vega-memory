@@ -7,6 +7,7 @@ import test from "node:test";
 import type Database from "better-sqlite3-multiple-ciphers";
 
 import type { VegaConfig } from "../config.js";
+import { ArchiveService } from "../core/archive-service.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
@@ -1002,6 +1003,165 @@ test("sessionStart light mode keeps token_estimate within a quarter of tokenBudg
     assert.equal(result.relevant.length, 0);
     assert.equal(result.recent_unverified.length, 0);
     assert.equal(result.token_estimate <= Math.floor(tokenBudget * 0.25), true);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("sessionStart L0 returns only preferences within the identity budget", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-l0-"));
+  const project = basename(tempDir);
+  const { repository, sessionService } = createSessionService();
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "pref-l0",
+        type: "preference",
+        project: "shared",
+        scope: "global",
+        verified: "verified",
+        importance: 0.95,
+        content: "Prefer concise summaries for coding tasks."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "task-l0",
+        type: "task_state",
+        project,
+        verified: "verified",
+        content: "Implement the recall tier feature."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "context-l0",
+        type: "project_context",
+        project,
+        verified: "verified",
+        content: "Project context should not load in L0."
+      })
+    );
+
+    const result = await sessionService.sessionStart(tempDir, undefined, undefined, "L0");
+
+    assert.deepEqual(
+      result.preferences.map((memory) => memory.id),
+      ["pref-l0"]
+    );
+    assert.deepEqual(result.active_tasks, []);
+    assert.deepEqual(result.context, []);
+    assert.deepEqual(result.relevant, []);
+    assert.deepEqual(result.recent_unverified, []);
+    assert.deepEqual(result.conflicts, []);
+    assert.equal(result.token_estimate <= 50, true);
+    assert.equal(result.deep_recall, undefined);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("sessionStart L1 and L2 preserve light and standard behavior", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-layer-aliases-"));
+  const project = basename(tempDir);
+  const { repository, sessionService } = createSessionService();
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "pref-layer",
+        type: "preference",
+        project: "shared",
+        scope: "global",
+        verified: "verified",
+        content: "Prefer WAL mode for SQLite."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "task-layer",
+        type: "task_state",
+        project,
+        verified: "verified",
+        content: "Add explicit recall tiers."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "context-layer",
+        type: "project_context",
+        project,
+        verified: "verified",
+        content: "Standard mode should still load project context."
+      })
+    );
+
+    const light = await sessionService.sessionStart(tempDir, "recall tiers", undefined, "light");
+    const l1 = await sessionService.sessionStart(tempDir, "recall tiers", undefined, "L1");
+    const standard = await sessionService.sessionStart(
+      tempDir,
+      "recall tiers",
+      undefined,
+      "standard"
+    );
+    const l2 = await sessionService.sessionStart(tempDir, "recall tiers", undefined, "L2");
+
+    assert.deepEqual(l1, light);
+    assert.deepEqual(l2, standard);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("sessionStart L3 adds deep recall evidence on top of the standard bundle", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-l3-"));
+  const project = basename(tempDir);
+  const { repository, sessionService } = createSessionService();
+  const archiveService = new ArchiveService(repository);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-l3",
+        type: "decision",
+        project,
+        title: "Backup validation",
+        content: "Hot summary for backup validation.",
+        verified: "verified"
+      })
+    );
+    archiveService.store(
+      "Full tool log with backup evidence and restore commands.",
+      "tool_log",
+      project,
+      {
+        source_memory_id: "memory-l3",
+        title: "Backup tool log"
+      }
+    );
+
+    const standard = await sessionService.sessionStart(
+      tempDir,
+      "backup evidence",
+      undefined,
+      "L2"
+    );
+    const deep = await sessionService.sessionStart(tempDir, "backup evidence", undefined, "L3");
+
+    assert.deepEqual(deep.preferences, standard.preferences);
+    assert.deepEqual(deep.active_tasks, standard.active_tasks);
+    assert.deepEqual(deep.context, standard.context);
+    assert.deepEqual(deep.relevant, standard.relevant);
+    assert.ok(deep.deep_recall);
+    assert.equal(deep.deep_recall.injected_into_session, true);
+    assert.equal(deep.deep_recall.results.length, 1);
+    assert.equal(deep.deep_recall.results[0]?.archive_type, "tool_log");
+    assert.match(deep.deep_recall.results[0]?.content ?? "", /restore commands/);
+    assert.equal(deep.token_estimate > standard.token_estimate, true);
   } finally {
     repository.close();
     rmSync(tempDir, { recursive: true, force: true });

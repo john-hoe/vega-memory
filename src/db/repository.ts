@@ -25,6 +25,7 @@ import type {
   RawArchiveType,
   RelationType,
   Session,
+  SessionStartMode,
   Topic,
   TopicRecallOptions
 } from "../core/types.js";
@@ -222,7 +223,7 @@ interface PerformanceLogRow {
   avg_similarity: number | null;
   result_types: string | null;
   bm25_result_count: number | null;
-  mode: "light" | "standard" | null;
+  mode: SessionStartMode | null;
   token_estimate: number | null;
   token_budget: number | null;
   token_budget_utilization: number | null;
@@ -3064,7 +3065,7 @@ export class Repository {
           number | null,
           string,
           number,
-          "light" | "standard" | null,
+          SessionStartMode | null,
           number | null,
           number | null,
           number | null,

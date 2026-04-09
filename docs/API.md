@@ -345,12 +345,16 @@ Request fields:
 
 - `working_directory` required string
 - `task_hint` optional string
-- `mode` optional `standard` or `light`, defaults to `standard`
+- `mode` optional `L0`, `L1`, `L2`, `L3`, `light`, or `standard`, defaults to `standard`
 
 Mode semantics:
 
-- `standard` maps to the current full session bundle behavior.
-- `light` is the protocol hint for the minimal safe preload bundle defined in [specs/vm2-001-recall-protocol.md](specs/vm2-001-recall-protocol.md). In the current implementation, the server accepts `mode: "light"` but preserves the existing response shape until the light-loading branch is implemented.
+- `L0` loads identity-only context: `preferences` only, with the other bundle sections empty.
+- `L1` loads the current light bundle.
+- `L2` loads the current standard bundle.
+- `L3` loads the `L2` bundle and adds an automatic `deep_recall` payload.
+- `light` is a backward-compatible alias for `L1`.
+- `standard` is a backward-compatible alias for `L2`.
 
 Example response:
 
@@ -366,11 +370,20 @@ Example response:
   "recent_unverified": [],
   "conflicts": [],
   "proactive_warnings": [],
-  "token_estimate": 0
+  "token_estimate": 0,
+  "deep_recall": {
+    "results": [],
+    "next_cursor": null,
+    "injected_into_session": true
+  }
 }
 ```
 
-The response shape above is the current transport shape for both omitted `mode` and `mode: "standard"`.
+Notes:
+
+- Omitted `mode`, `mode: "standard"`, and `mode: "L2"` keep the current transport shape.
+- `mode: "light"` and `mode: "L1"` preserve the same response shape while leaving unused sections empty.
+- `mode: "L3"` adds the optional `deep_recall` field.
 
 ## `POST /api/deep-recall`
 

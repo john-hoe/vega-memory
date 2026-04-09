@@ -3,10 +3,16 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { v4 as uuidv4 } from "uuid";
 
-import { isFactClaimsEnabled, isTopicRecallEnabled, type VegaConfig } from "../config.js";
+import {
+  isDeepRecallAvailable,
+  isFactClaimsEnabled,
+  isTopicRecallEnabled,
+  type VegaConfig
+} from "../config.js";
 import { Repository } from "../db/repository.js";
 import { isOllamaAvailable } from "../embedding/ollama.js";
 import { PageManager } from "../wiki/page-manager.js";
+import { ArchiveService } from "./archive-service.js";
 import { ExtractionService } from "./extraction.js";
 import { FactClaimService } from "./fact-claim-service.js";
 import { MemoryService } from "./memory.js";
@@ -18,8 +24,10 @@ import {
   estimateTextTokens,
   estimateWikiPageTokens
 } from "./token-estimate.js";
+import { normalizeSessionStartMode } from "./types.js";
 import type {
   AuditContext,
+  DeepRecallResponse,
   ExtractionCandidate,
   Memory,
   MemoryType,
@@ -51,6 +59,11 @@ const LIGHT_SESSION_BUDGET_RATIOS = {
   conflicts: 0.2,
   proactiveWarnings: 0.1
 } as const;
+const IDENTITY_SESSION_TOKEN_BUDGET = 50;
+const L3_DEEP_RECALL_LIMIT = 3;
+const L3_DEEP_RECALL_EVIDENCE_LIMIT = 1;
+const L3_DEEP_RECALL_DISABLED_WARNING =
+  "L3 requested deep recall, but the deep_recall feature is disabled; returning the L2 bundle only.";
 const SESSION_SYNTHESIS_WARNING_PREFIX = "session-synthesis-warning:";
 const SNAPSHOT_EXPORT_DEBOUNCE_MS = 60_000;
 const OLLAMA_AVAILABILITY_TTL_MS = 60_000;
@@ -78,6 +91,27 @@ const estimateWikiTokens = (pages: SessionStartWikiPage[]): number =>
 
 const estimateWarningTokens = (warnings: string[]): number =>
   warnings.reduce((total, warning) => total + estimateTextTokens(warning), 0);
+
+const estimateDeepRecallTokens = (response: DeepRecallResponse): number =>
+  response.results.reduce((total, result) => {
+    const fields = [
+      result.title,
+      result.content,
+      result.summary,
+      result.source_uri,
+      result.captured_at,
+      result.created_at,
+      result.updated_at
+    ].filter((value): value is string => typeof value === "string" && value.length > 0);
+    const metadataText =
+      result.metadata === undefined ? "" : JSON.stringify(result.metadata);
+
+    return (
+      total +
+      fields.reduce((fieldTotal, field) => fieldTotal + estimateTextTokens(field), 0) +
+      (metadataText ? estimateTextTokens(metadataText) : 0)
+    );
+  }, 0) + estimateWarningTokens(response.warnings ?? []);
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
 
@@ -210,7 +244,8 @@ const countSessionResultItems = (result: SessionStartResult): number =>
   result.relevant.length +
   result.relevant_wiki_pages.length +
   result.recent_unverified.length +
-  result.conflicts.length;
+  result.conflicts.length +
+  (result.deep_recall?.results.length ?? 0);
 
 const appendWarnings = (warnings: string[], nextWarnings: string[]): string[] =>
   [...new Set([...warnings, ...nextWarnings])];
@@ -226,6 +261,7 @@ export class SessionService {
   private readonly sessionStartTimes = new Map<string, string>();
   private readonly extractionService: ExtractionService;
   private readonly regressionGuard: RegressionGuard;
+  private readonly archiveService: ArchiveService;
   private readonly inferredProjects = new Map<string, string>();
   private readonly snapshotExportTimes = new Map<string, number>();
   private readonly sessionStartCache = new Map<
@@ -252,6 +288,7 @@ export class SessionService {
     regressionGuard?: RegressionGuard,
     private readonly factClaimService = new FactClaimService(repository, config)
   ) {
+    this.archiveService = new ArchiveService(repository, config);
     this.extractionService = new ExtractionService(config);
     this.regressionGuard = regressionGuard ?? new RegressionGuard(repository, config);
   }
@@ -264,10 +301,11 @@ export class SessionService {
   ): Promise<SessionStartResult> {
     const startedAt = Date.now();
     const project = this.inferProject(workingDirectory);
+    const canonicalMode = normalizeSessionStartMode(mode);
     this.sessionStartTimes.set(project, now());
     const normalizedTaskHint = taskHint?.trim() ?? "";
     const taskHintKeywords = normalizedTaskHint ? extractTaskHintKeywords(normalizedTaskHint) : [];
-    const cacheKey = `${resolve(workingDirectory)}\u0000${tenantId ?? ""}\u0000${normalizedTaskHint}\u0000${mode}`;
+    const cacheKey = `${resolve(workingDirectory)}\u0000${tenantId ?? ""}\u0000${normalizedTaskHint}\u0000${canonicalMode}`;
     const cached = this.sessionStartCache.get(cacheKey);
 
     if (cached && Date.now() - cached.cachedAt < SESSION_START_CACHE_TTL_MS) {
@@ -291,15 +329,13 @@ export class SessionService {
       return result;
     }
 
-    const result =
-      mode === "light"
-        ? this.buildLightSessionStartResult(project, taskHintKeywords, tenantId)
-        : await this.buildStandardSessionStartResult(
-            project,
-            normalizedTaskHint,
-            taskHintKeywords,
-            tenantId
-          );
+    const result = await this.buildSessionStartResult(
+      canonicalMode,
+      project,
+      normalizedTaskHint,
+      taskHintKeywords,
+      tenantId
+    );
     const violations = this.regressionGuard.recordSessionStart(
       mode,
       result.token_estimate,
@@ -323,6 +359,36 @@ export class SessionService {
     });
 
     return structuredClone(result) as SessionStartResult;
+  }
+
+  private async buildSessionStartResult(
+    mode: ReturnType<typeof normalizeSessionStartMode>,
+    project: string,
+    normalizedTaskHint: string,
+    taskHintKeywords: string[],
+    tenantId?: string | null
+  ): Promise<SessionStartResult> {
+    switch (mode) {
+      case "L0":
+        return this.buildIdentitySessionStartResult(project, tenantId);
+      case "L1":
+        return this.buildLightSessionStartResult(project, taskHintKeywords, tenantId);
+      case "L3":
+        return this.buildDeepSessionStartResult(
+          project,
+          normalizedTaskHint,
+          taskHintKeywords,
+          tenantId
+        );
+      case "L2":
+      default:
+        return this.buildStandardSessionStartResult(
+          project,
+          normalizedTaskHint,
+          taskHintKeywords,
+          tenantId
+        );
+    }
   }
 
   async sessionEnd(
@@ -644,6 +710,34 @@ export class SessionService {
     };
   }
 
+  private buildIdentitySessionStartResult(
+    project: string,
+    tenantId?: string | null
+  ): SessionStartResult {
+    const preferences = this.filterFactClaimExpiredMemories(
+      this.loadSessionPreferences(tenantId),
+      tenantId
+    );
+    const trimmedPreferences = takeMemoriesWithinBudget(
+      preferences,
+      IDENTITY_SESSION_TOKEN_BUDGET
+    );
+
+    return {
+      project,
+      active_tasks: [],
+      preferences: trimmedPreferences.map(toSessionMemory),
+      context: [],
+      relevant: [],
+      relevant_wiki_pages: [],
+      wiki_drafts_pending: 0,
+      recent_unverified: [],
+      conflicts: [],
+      proactive_warnings: [],
+      token_estimate: estimateTokens(trimmedPreferences)
+    };
+  }
+
   private buildLightSessionStartResult(
     project: string,
     taskHintKeywords: string[],
@@ -714,6 +808,95 @@ export class SessionService {
       proactive_warnings: trimmedWarnings,
       token_estimate
     };
+  }
+
+  private async buildDeepSessionStartResult(
+    project: string,
+    normalizedTaskHint: string,
+    taskHintKeywords: string[],
+    tenantId?: string | null
+  ): Promise<SessionStartResult> {
+    const standardResult = await this.buildStandardSessionStartResult(
+      project,
+      normalizedTaskHint,
+      taskHintKeywords,
+      tenantId
+    );
+
+    if (!isDeepRecallAvailable(this.config)) {
+      return {
+        ...standardResult,
+        proactive_warnings: appendWarnings(standardResult.proactive_warnings, [
+          L3_DEEP_RECALL_DISABLED_WARNING
+        ])
+      };
+    }
+
+    const deepRecall = this.archiveService.deepRecall(
+      {
+        query: this.buildDeepRecallQuery(project, normalizedTaskHint, standardResult),
+        project,
+        limit: L3_DEEP_RECALL_LIMIT,
+        evidence_limit: L3_DEEP_RECALL_EVIDENCE_LIMIT,
+        include_content: true,
+        include_metadata: false,
+        inject_into_session: true
+      },
+      tenantId
+    );
+
+    return {
+      ...standardResult,
+      token_estimate: standardResult.token_estimate + estimateDeepRecallTokens(deepRecall),
+      deep_recall: deepRecall
+    };
+  }
+
+  private buildDeepRecallQuery(
+    project: string,
+    normalizedTaskHint: string,
+    result: SessionStartResult
+  ): string {
+    const queryTerms = normalizedTaskHint.trim()
+      ? [normalizedTaskHint.trim()]
+      : [];
+
+    if (queryTerms.length === 0) {
+      const candidateMemories = [
+        ...result.relevant,
+        ...result.active_tasks,
+        ...result.conflicts,
+        ...result.recent_unverified,
+        ...result.context
+      ];
+      const seenTerms = new Set<string>();
+
+      for (const memory of candidateMemories) {
+        const fragments = [memory.title, ...memory.tags, memory.content]
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+          .slice(0, 2);
+
+        for (const fragment of fragments) {
+          if (seenTerms.has(fragment)) {
+            continue;
+          }
+
+          seenTerms.add(fragment);
+          queryTerms.push(fragment);
+
+          if (queryTerms.length >= 4) {
+            break;
+          }
+        }
+
+        if (queryTerms.length >= 4) {
+          break;
+        }
+      }
+    }
+
+    return queryTerms.length > 0 ? queryTerms.join(" ") : project;
   }
 
   private loadSessionPreferences(tenantId?: string | null): Memory[] {

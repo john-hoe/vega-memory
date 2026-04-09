@@ -12,6 +12,7 @@ import type {
   SearchResult,
   SessionStartMode
 } from "./types.js";
+import { SESSION_START_MODE_VALUES } from "./types.js";
 
 const REPORT_LIMIT = 500;
 
@@ -243,10 +244,9 @@ export class RegressionGuard {
       violations: this.checkThresholds(tenantId),
       token: {
         session_start_token_estimate: summarize(sessionTokenEstimates),
-        session_start_token_by_mode: {
-          light: summarizeSessionMode("light"),
-          standard: summarizeSessionMode("standard")
-        },
+        session_start_token_by_mode: Object.fromEntries(
+          SESSION_START_MODE_VALUES.map((mode) => [mode, summarizeSessionMode(mode)])
+        ) as Record<SessionStartMode, RegressionMetricSummary>,
         recall_result_token_estimate: summarize(recallTokenEstimates),
         token_budget_utilization: {
           session_start: summarize(sessionBudgetUtilization),

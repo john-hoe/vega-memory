@@ -236,6 +236,7 @@ export class ArchiveService {
     const limit = request.limit ?? 5;
     const includeContent = request.include_content ?? true;
     const includeMetadata = request.include_metadata ?? false;
+    const injectIntoSession = request.inject_into_session ?? false;
     const matches = this.search(request.query, request.project, limit, tenantId);
     const hasRawContent = includeContent
       ? matches.some(({ archive }) => archive.metadata.contains_raw === true)
@@ -286,7 +287,7 @@ export class ArchiveService {
         };
       }),
       next_cursor: null,
-      injected_into_session: false,
+      injected_into_session: injectIntoSession,
       ...(hasRawContent ? { warnings: [DEEP_RECALL_RAW_WARNING] } : {})
     };
   }

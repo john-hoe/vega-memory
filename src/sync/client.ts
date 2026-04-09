@@ -2,21 +2,22 @@ import { basename, resolve } from "node:path";
 import { v4 as uuidv4 } from "uuid";
 
 import { Repository } from "../db/repository.js";
-import type {
-  CompactResult,
-  DeepRecallRequest,
-  DeepRecallResponse,
-  HealthInfo,
-  HealthReport,
-  Memory,
-  MemoryListFilters,
-  MemoryUpdateParams,
-  SearchOptions,
-  SearchResult,
-  SessionStartMode,
-  SessionStartResult,
-  StoreParams,
-  StoreResult
+import {
+  normalizeSessionStartMode,
+  type CompactResult,
+  type DeepRecallRequest,
+  type DeepRecallResponse,
+  type HealthInfo,
+  type HealthReport,
+  type Memory,
+  type MemoryListFilters,
+  type MemoryUpdateParams,
+  type SearchOptions,
+  type SearchResult,
+  type SessionStartMode,
+  type SessionStartResult,
+  type StoreParams,
+  type StoreResult
 } from "../core/types.js";
 import type { PendingOperation } from "./queue.js";
 import { PendingQueue } from "./queue.js";
@@ -317,7 +318,8 @@ export class VegaSyncClient {
         relevant_wiki_pages: result.relevant_wiki_pages ?? [],
         wiki_drafts_pending: result.wiki_drafts_pending ?? 0,
         recent_unverified: result.recent_unverified.map((memory) => this.toMemory(memory)),
-        conflicts: result.conflicts.map((memory) => this.toMemory(memory))
+        conflicts: result.conflicts.map((memory) => this.toMemory(memory)),
+        deep_recall: result.deep_recall as DeepRecallResponse | undefined
       };
     } catch (error) {
       if (!isNetworkError(error)) {
@@ -632,13 +634,14 @@ export class VegaSyncClient {
   private loadSessionFromCache(
     workingDirectory: string,
     taskHint?: string,
-    _mode: SessionStartMode = "standard"
+    mode: SessionStartMode = "standard"
   ): SessionStartResult {
     if (!this.cacheRepo) {
       return emptySessionResult(workingDirectory);
     }
 
     const project = getProjectFromWorkingDirectory(workingDirectory);
+    const resolvedMode = normalizeSessionStartMode(mode);
     const preferences = this.cacheRepo.listMemories({
       type: "preference",
       status: "active",
@@ -665,6 +668,38 @@ export class VegaSyncClient {
           minSimilarity: 0.3
         }).map((result) => result.memory)
       : [];
+
+    if (resolvedMode === "L0") {
+      return {
+        project,
+        active_tasks: [],
+        preferences,
+        context: [],
+        relevant: [],
+        relevant_wiki_pages: [],
+        wiki_drafts_pending: 0,
+        recent_unverified: [],
+        conflicts: [],
+        proactive_warnings: [],
+        token_estimate: estimateTokens(preferences)
+      };
+    }
+
+    if (resolvedMode === "L1") {
+      return {
+        project,
+        active_tasks,
+        preferences,
+        context: [],
+        relevant: [],
+        relevant_wiki_pages: [],
+        wiki_drafts_pending: 0,
+        recent_unverified: [],
+        conflicts: [],
+        proactive_warnings: [],
+        token_estimate: estimateTokens([...preferences, ...active_tasks])
+      };
+    }
 
     return {
       project,

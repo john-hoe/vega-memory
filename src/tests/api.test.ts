@@ -14,6 +14,7 @@ import {
   revokeDashboardSession
 } from "../api/auth.js";
 import type { VegaConfig } from "../config.js";
+import { ArchiveService } from "../core/archive-service.js";
 import { BillingService } from "../core/billing.js";
 import { CompactService } from "../core/compact.js";
 import { MemoryService } from "../core/memory.js";
@@ -404,6 +405,128 @@ test("POST /api/session/start accepts light mode without changing current shape"
     assert.equal(body.project.length > 0, true);
     assert.equal(Array.isArray(body.preferences), true);
     assert.equal(typeof body.token_estimate, "number");
+  } finally {
+    rmSync(workingDirectory, { recursive: true, force: true });
+    await harness.cleanup();
+  }
+});
+
+test("POST /api/session/start accepts L0 mode and returns only identity preferences", async () => {
+  const harness = await createHarness();
+  const workingDirectory = mkdtempSync(join(tmpdir(), "vega-api-session-start-l0-"));
+
+  try {
+    harness.repository.createMemory({
+      id: "pref-api-l0",
+      tenant_id: null,
+      type: "preference",
+      project: "shared",
+      title: "Preference",
+      content: "Prefer concise summaries.",
+      summary: null,
+      embedding: null,
+      importance: 0.95,
+      source: "explicit",
+      tags: [],
+      created_at: "2026-04-08T00:00:00.000Z",
+      updated_at: "2026-04-08T00:00:00.000Z",
+      accessed_at: "2026-04-08T00:00:00.000Z",
+      status: "active",
+      verified: "verified",
+      scope: "global",
+      accessed_projects: ["vega"]
+    });
+
+    const response = await harness.request("/api/session/start", {
+      method: "POST",
+      body: JSON.stringify({
+        working_directory: workingDirectory,
+        mode: "L0"
+      })
+    });
+    const body = await readJson<{
+      preferences: Array<{ id: string }>;
+      active_tasks: unknown[];
+      context: unknown[];
+      relevant: unknown[];
+      conflicts: unknown[];
+      deep_recall?: unknown;
+    }>(response);
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      body.preferences.map((memory) => memory.id),
+      ["pref-api-l0"]
+    );
+    assert.deepEqual(body.active_tasks, []);
+    assert.deepEqual(body.context, []);
+    assert.deepEqual(body.relevant, []);
+    assert.deepEqual(body.conflicts, []);
+    assert.equal(body.deep_recall, undefined);
+  } finally {
+    rmSync(workingDirectory, { recursive: true, force: true });
+    await harness.cleanup();
+  }
+});
+
+test("POST /api/session/start returns deep_recall payload for L3", async () => {
+  const harness = await createHarness();
+  const workingDirectory = mkdtempSync(join(tmpdir(), "vega-api-session-start-l3-"));
+  const project = basename(workingDirectory);
+  const archiveService = new ArchiveService(harness.repository);
+
+  try {
+    harness.repository.createMemory({
+      id: "memory-api-l3",
+      tenant_id: null,
+      type: "decision",
+      project,
+      title: "Backup validation",
+      content: "Hot summary for backup validation.",
+      summary: null,
+      embedding: null,
+      importance: 0.8,
+      source: "explicit",
+      tags: ["backup"],
+      created_at: "2026-04-08T00:00:00.000Z",
+      updated_at: "2026-04-08T00:00:00.000Z",
+      accessed_at: "2026-04-08T00:00:00.000Z",
+      status: "active",
+      verified: "verified",
+      scope: "project",
+      accessed_projects: [project]
+    });
+    archiveService.store(
+      "Full tool log with backup evidence and restore commands.",
+      "tool_log",
+      project,
+      {
+        source_memory_id: "memory-api-l3",
+        title: "Backup tool log"
+      }
+    );
+
+    const response = await harness.request("/api/session/start", {
+      method: "POST",
+      body: JSON.stringify({
+        working_directory: workingDirectory,
+        task_hint: "backup evidence",
+        mode: "L3"
+      })
+    });
+    const body = await readJson<{
+      deep_recall?: {
+        injected_into_session: boolean;
+        results: Array<{ archive_type: string; content?: string }>;
+      };
+    }>(response);
+
+    assert.equal(response.status, 200);
+    assert.ok(body.deep_recall);
+    assert.equal(body.deep_recall.injected_into_session, true);
+    assert.equal(body.deep_recall.results.length, 1);
+    assert.equal(body.deep_recall.results[0]?.archive_type, "tool_log");
+    assert.match(body.deep_recall.results[0]?.content ?? "", /restore commands/);
   } finally {
     rmSync(workingDirectory, { recursive: true, force: true });
     await harness.cleanup();

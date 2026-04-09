@@ -22,6 +22,7 @@ import { PageManager } from "../wiki/page-manager.js";
 import { reviewWikiPage, WIKI_REVIEW_ACTIONS } from "../wiki/review.js";
 import { searchWikiPages } from "../wiki/search.js";
 import { SynthesisEngine } from "../wiki/synthesis.js";
+import { SESSION_START_MODE_VALUES } from "../core/types.js";
 import type {
   AuditContext,
   AsOfQueryOptions,
@@ -59,7 +60,7 @@ const MEMORY_TYPES = [
 ] as const satisfies readonly MemoryType[];
 
 const MEMORY_SOURCES = ["auto", "explicit"] as const satisfies readonly MemorySource[];
-const SESSION_START_MODES = ["light", "standard"] as const satisfies readonly SessionStartMode[];
+const SESSION_START_MODES = SESSION_START_MODE_VALUES;
 const FACT_CLAIM_STATUSES = [
   "active",
   "expired",
@@ -116,7 +117,8 @@ const serializeSessionStartResult = (result: SessionStartResult) => ({
   recent_unverified: result.recent_unverified.map(serializeMemory),
   conflicts: result.conflicts.map(serializeMemory),
   proactive_warnings: result.proactive_warnings,
-  token_estimate: result.token_estimate
+  token_estimate: result.token_estimate,
+  ...(result.deep_recall !== undefined ? { deep_recall: result.deep_recall } : {})
 });
 
 const serializeFactClaim = (claim: FactClaim) => ({
@@ -210,7 +212,8 @@ const resultCountForSessionStart = (result: SessionStartResult): number =>
   result.relevant.length +
   result.relevant_wiki_pages.length +
   result.recent_unverified.length +
-  result.conflicts.length;
+  result.conflicts.length +
+  (result.deep_recall?.results.length ?? 0);
 
 const dbg = (msg: string) => {
   appendFileSync("/tmp/vega-mcp-debug.log", `${new Date().toISOString()} [server] ${msg}\n`);
