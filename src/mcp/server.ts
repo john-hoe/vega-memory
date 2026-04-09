@@ -6,9 +6,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { isDeepRecallAvailable, type VegaConfig } from "../config.js";
+import { isDeepRecallAvailable, isFactClaimsEnabled, type VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { DiagnoseService } from "../core/diagnose.js";
+import { FactClaimService } from "../core/fact-claim-service.js";
 import { getHealthReport } from "../core/health.js";
 import { TopicService } from "../core/topic-service.js";
 import { Repository } from "../db/repository.js";
@@ -23,9 +24,12 @@ import { searchWikiPages } from "../wiki/search.js";
 import { SynthesisEngine } from "../wiki/synthesis.js";
 import type {
   AuditContext,
+  AsOfQueryOptions,
   CompactResult,
   DeepRecallRequest,
   DeepRecallResponse,
+  FactClaim,
+  FactClaimStatus,
   GraphQueryResult,
   HealthInfo,
   Memory,
@@ -54,6 +58,12 @@ const MEMORY_TYPES = [
 
 const MEMORY_SOURCES = ["auto", "explicit"] as const satisfies readonly MemorySource[];
 const SESSION_START_MODES = ["light", "standard"] as const satisfies readonly SessionStartMode[];
+const FACT_CLAIM_STATUSES = [
+  "active",
+  "expired",
+  "suspected_expired",
+  "conflict"
+] as const satisfies readonly FactClaimStatus[];
 const MCP_AUDIT_CONTEXT: AuditContext = { actor: "mcp", ip: null };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -105,6 +115,28 @@ const serializeSessionStartResult = (result: SessionStartResult) => ({
   conflicts: result.conflicts.map(serializeMemory),
   proactive_warnings: result.proactive_warnings,
   token_estimate: result.token_estimate
+});
+
+const serializeFactClaim = (claim: FactClaim) => ({
+  id: claim.id,
+  tenant_id: claim.tenant_id ?? null,
+  project: claim.project,
+  source_memory_id: claim.source_memory_id,
+  evidence_archive_id: claim.evidence_archive_id,
+  canonical_key: claim.canonical_key,
+  subject: claim.subject,
+  predicate: claim.predicate,
+  claim_value: claim.claim_value,
+  claim_text: claim.claim_text,
+  source: claim.source,
+  status: claim.status,
+  confidence: claim.confidence,
+  valid_from: claim.valid_from,
+  valid_to: claim.valid_to,
+  temporal_precision: claim.temporal_precision,
+  invalidation_reason: claim.invalidation_reason,
+  created_at: claim.created_at,
+  updated_at: claim.updated_at
 });
 
 const serializeGraphQueryResult = (result: GraphQueryResult) => ({
@@ -290,6 +322,27 @@ export interface CreateMCPServerOptions {
       tenantId?: string | null
     ): DeepRecallResponse | Promise<DeepRecallResponse>;
   };
+  factClaimService?: {
+    listClaims(
+      project: string,
+      status?: FactClaimStatus | FactClaimStatus[],
+      asOf?: string | AsOfQueryOptions,
+      tenantId?: string | null
+    ): FactClaim[] | Promise<FactClaim[]>;
+    resolveClaim(
+      id: string,
+      newStatus: FactClaimStatus,
+      reason?: string
+    ): FactClaim | Promise<FactClaim>;
+    asOfQuery(
+      project: string,
+      timestamp: string,
+      subject?: string,
+      predicate?: string,
+      options?: Pick<AsOfQueryOptions, "include_suspected_expired" | "include_conflicts">,
+      tenantId?: string | null
+    ): FactClaim[] | Promise<FactClaim[]>;
+  };
   compressionService?: {
     compressMemory(memoryId: string): Promise<{
       original_length: number;
@@ -322,6 +375,7 @@ export function createMCPServer({
   sessionService,
   compactService,
   archiveService,
+  factClaimService,
   compressionService,
   observerService,
   config,
@@ -334,6 +388,7 @@ export function createMCPServer({
   const diagnoseService = new DiagnoseService(repository, config);
   const topicService = new TopicService(repository, config);
   const rawArchiveService = archiveService ?? new ArchiveService(repository, config);
+  const claimsService = factClaimService ?? new FactClaimService(repository, config);
   const observer = {
     enabled: config.observerEnabled,
     service: observerService
@@ -471,6 +526,123 @@ export function createMCPServer({
         return {
           result,
           resultCount: result.results.length
+        };
+      });
+    }
+  );
+
+  server.tool(
+    "fact_claim_list",
+    "List fact claims, optionally filtered by status or as_of timestamp.",
+    {
+      project: z.string().trim().min(1),
+      status: z.enum(FACT_CLAIM_STATUSES).optional(),
+      as_of: z.string().trim().min(1).optional(),
+      include_suspected_expired: z.boolean().default(false),
+      include_conflicts: z.boolean().default(false)
+    },
+    async (args) => {
+      if (!isFactClaimsEnabled(config)) {
+        return toTextResult(
+          {
+            error: "fact_claims feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(repository, "fact_claim_list", args, observer, async () => {
+        const result = await Promise.resolve(
+          claimsService.listClaims(
+            args.project,
+            args.status,
+            args.as_of
+              ? {
+                  as_of: args.as_of,
+                  include_suspected_expired: args.include_suspected_expired,
+                  include_conflicts: args.include_conflicts
+                }
+              : undefined
+          )
+        );
+
+        return {
+          result: result.map(serializeFactClaim),
+          resultCount: result.length
+        };
+      });
+    }
+  );
+
+  server.tool(
+    "fact_claim_update",
+    "Update a fact claim status through the user-facing VM2 state machine.",
+    {
+      id: z.string().trim().min(1),
+      status: z.enum(FACT_CLAIM_STATUSES),
+      reason: z.string().trim().min(1).optional()
+    },
+    async (args) => {
+      if (!isFactClaimsEnabled(config)) {
+        return toTextResult(
+          {
+            error: "fact_claims feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(repository, "fact_claim_update", args, observer, async () => {
+        const result = await Promise.resolve(
+          claimsService.resolveClaim(args.id, args.status, args.reason)
+        );
+
+        return {
+          result: serializeFactClaim(result),
+          resultCount: 1
+        };
+      });
+    }
+  );
+
+  server.tool(
+    "fact_claim_query",
+    "Run an as_of query against temporal fact claims.",
+    {
+      project: z.string().trim().min(1),
+      as_of: z.string().trim().min(1),
+      subject: z.string().trim().min(1).optional(),
+      predicate: z.string().trim().min(1).optional(),
+      include_suspected_expired: z.boolean().default(false),
+      include_conflicts: z.boolean().default(false)
+    },
+    async (args) => {
+      if (!isFactClaimsEnabled(config)) {
+        return toTextResult(
+          {
+            error: "fact_claims feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(repository, "fact_claim_query", args, observer, async () => {
+        const result = await Promise.resolve(
+          claimsService.asOfQuery(
+            args.project,
+            args.as_of,
+            args.subject,
+            args.predicate,
+            {
+              include_suspected_expired: args.include_suspected_expired,
+              include_conflicts: args.include_conflicts
+            }
+          )
+        );
+
+        return {
+          result: result.map(serializeFactClaim),
+          resultCount: result.length
         };
       });
     }

@@ -7,7 +7,7 @@ import test from "node:test";
 import type { VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { TopicService } from "../core/topic-service.js";
-import type { Memory, StoreParams, StoreResult } from "../core/types.js";
+import type { FactClaim, Memory, StoreParams, StoreResult } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { createMCPServer } from "../mcp/server.js";
 import { CrossReferenceService } from "../wiki/cross-reference.js";
@@ -55,6 +55,29 @@ const createStoredMemory = (
   verified: "unverified",
   scope: "project",
   accessed_projects: ["vega"],
+  ...overrides
+});
+
+const createFactClaim = (overrides: Partial<FactClaim> = {}): FactClaim => ({
+  id: "fact-1",
+  tenant_id: null,
+  project: "vega",
+  source_memory_id: "memory-1",
+  evidence_archive_id: null,
+  canonical_key: "vega-memory|database|sqlite",
+  subject: "vega-memory",
+  predicate: "database",
+  claim_value: "sqlite",
+  claim_text: "Vega Memory uses SQLite.",
+  source: "hot_memory",
+  status: "active",
+  confidence: 0.8,
+  valid_from: "2026-04-01T00:00:00.000Z",
+  valid_to: null,
+  temporal_precision: "day",
+  invalidation_reason: null,
+  created_at: "2026-04-06T00:00:00.000Z",
+  updated_at: "2026-04-06T00:00:00.000Z",
   ...overrides
 });
 
@@ -683,6 +706,103 @@ test("wiki_publish MCP tool publishes a page to Obsidian", async () => {
     }
 
     rmSync(vaultDir, { recursive: true, force: true });
+    repository.close();
+    await server.close();
+  }
+});
+
+test("fact claim MCP tools list, query, and update claims", async () => {
+  const { repository, server } = createServerHarness({
+    features: {
+      factClaims: true
+    }
+  });
+
+  try {
+    repository.createMemory(createStoredMemory());
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-2",
+        title: "Suspected fact source"
+      })
+    );
+    repository.createFactClaim(createFactClaim());
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-2",
+        source_memory_id: "memory-2",
+        predicate: "deployment",
+        canonical_key: "vega-memory|deployment|legacy-host",
+        claim_value: "legacy-host",
+        claim_text: "Vega Memory uses the legacy host.",
+        status: "suspected_expired"
+      })
+    );
+
+    const listed = await getRegisteredTools(server).fact_claim_list.handler(
+      {
+        project: "vega",
+        as_of: "2026-04-09T00:00:00.000Z",
+        include_suspected_expired: true
+      },
+      {}
+    );
+    const queried = await getRegisteredTools(server).fact_claim_query.handler(
+      {
+        project: "vega",
+        as_of: "2026-04-09T00:00:00.000Z"
+      },
+      {}
+    );
+    const updated = await getRegisteredTools(server).fact_claim_update.handler(
+      {
+        id: "fact-2",
+        status: "active"
+      },
+      {}
+    );
+
+    const listedPayload = parseToolPayload<Array<{ id: string }>>(listed);
+    const queriedPayload = parseToolPayload<Array<{ id: string }>>(queried);
+    const updatedPayload = parseToolPayload<{ id: string; status: string }>(updated);
+
+    assert.deepEqual(
+      listedPayload.map((claim) => claim.id).sort(),
+      ["fact-1", "fact-2"]
+    );
+    assert.deepEqual(
+      queriedPayload.map((claim) => claim.id).sort(),
+      ["fact-1"]
+    );
+    assert.equal(updatedPayload.id, "fact-2");
+    assert.equal(updatedPayload.status, "active");
+    assert.equal(repository.getFactClaim("fact-2")?.status, "active");
+  } finally {
+    repository.close();
+    await server.close();
+  }
+});
+
+test("fact claim MCP tools return an error when the feature is disabled", async () => {
+  const { repository, server } = createServerHarness({
+    features: {
+      factClaims: false
+    }
+  });
+
+  try {
+    const result = await getRegisteredTools(server).fact_claim_query.handler(
+      {
+        project: "vega",
+        as_of: "2026-04-09T00:00:00.000Z"
+      },
+      {}
+    );
+    const payload = parseToolPayload<{ error: string }>(result);
+
+    assert.equal(result.isError, true);
+    assert.equal(payload.error, "fact_claims feature is disabled");
+  } finally {
     repository.close();
     await server.close();
   }

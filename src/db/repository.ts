@@ -2,11 +2,14 @@ import { v4 as uuidv4 } from "uuid";
 
 import type {
   ArchiveStats,
+  AsOfQueryOptions,
   AuditContext,
   AuditEntry,
   AuditQueryFilters,
   Entity,
   EntityRelation,
+  FactClaim,
+  FactClaimStatus,
   GraphTraversal,
   Memory,
   MemoryListFilters,
@@ -82,6 +85,28 @@ interface RawArchiveRow {
   embedding: Buffer | null;
   metadata: string;
   captured_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface FactClaimRow {
+  id: string;
+  tenant_id: string | null;
+  project: string;
+  source_memory_id: string | null;
+  evidence_archive_id: string | null;
+  canonical_key: string;
+  subject: string;
+  predicate: string;
+  claim_value: string;
+  claim_text: string;
+  source: FactClaim["source"];
+  status: FactClaimStatus;
+  confidence: number;
+  valid_from: string;
+  valid_to: string | null;
+  temporal_precision: FactClaim["temporal_precision"];
+  invalidation_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -326,6 +351,17 @@ function mapRawArchive(row: RawArchiveRow): RawArchive {
   };
 }
 
+function mapFactClaim(row: FactClaimRow): FactClaim {
+  return {
+    ...row,
+    tenant_id: row.tenant_id,
+    source_memory_id: row.source_memory_id,
+    evidence_archive_id: row.evidence_archive_id,
+    valid_to: row.valid_to,
+    invalidation_reason: row.invalidation_reason
+  };
+}
+
 function mapTopic(row: TopicRow): Topic {
   return row;
 }
@@ -548,6 +584,33 @@ function normalizeWikiCommentSort(sort?: string): string {
 function timestamp(): string {
   return new Date().toISOString();
 }
+
+const FACT_CLAIM_TRANSITIONS = new Set<string>([
+  "active->expired:system",
+  "active->expired:user",
+  "active->suspected_expired:system",
+  "active->suspected_expired:user",
+  "active->conflict:system",
+  "active->conflict:user",
+  "suspected_expired->active:user",
+  "suspected_expired->expired:user",
+  "conflict->active:user",
+  "conflict->expired:user"
+]);
+
+const validateFactClaimTransition = (
+  from: FactClaimStatus,
+  to: FactClaimStatus,
+  actor: "system" | "user"
+): void => {
+  if (from === to) {
+    return;
+  }
+
+  if (!FACT_CLAIM_TRANSITIONS.has(`${from}->${to}:${actor}`)) {
+    throw new Error(`Illegal fact claim transition: ${from} -> ${to} (${actor})`);
+  }
+};
 
 const resolveAuditContext = (auditContext?: AuditContext): AuditContext => ({
   actor: auditContext?.actor ?? "system",
@@ -1216,6 +1279,238 @@ export class Repository {
       .all(...params);
 
     return rows.map((row) => row.memory_id);
+  }
+
+  createFactClaim(claim: FactClaim): void {
+    this.db
+      .prepare<
+        [
+          string,
+          string | null,
+          string,
+          string | null,
+          string | null,
+          string,
+          string,
+          string,
+          string,
+          string,
+          FactClaim["source"],
+          FactClaimStatus,
+          number,
+          string,
+          string | null,
+          FactClaim["temporal_precision"],
+          string | null,
+          string,
+          string
+        ]
+      >(
+        `INSERT INTO fact_claims (
+           id,
+           tenant_id,
+           project,
+           source_memory_id,
+           evidence_archive_id,
+           canonical_key,
+           subject,
+           predicate,
+           claim_value,
+           claim_text,
+           source,
+           status,
+           confidence,
+           valid_from,
+           valid_to,
+           temporal_precision,
+           invalidation_reason,
+           created_at,
+           updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        claim.id,
+        claim.tenant_id ?? null,
+        claim.project,
+        claim.source_memory_id,
+        claim.evidence_archive_id,
+        claim.canonical_key,
+        claim.subject,
+        claim.predicate,
+        claim.claim_value,
+        claim.claim_text,
+        claim.source,
+        claim.status,
+        claim.confidence,
+        claim.valid_from,
+        claim.valid_to,
+        claim.temporal_precision,
+        claim.invalidation_reason,
+        claim.created_at,
+        claim.updated_at
+      );
+  }
+
+  getFactClaim(id: string): FactClaim | null {
+    const row = this.db
+      .prepare<[string], FactClaimRow>("SELECT * FROM fact_claims WHERE id = ?")
+      .get(id);
+
+    return row ? mapFactClaim(row) : null;
+  }
+
+  listFactClaims(
+    project?: string,
+    status?: FactClaimStatus | FactClaimStatus[],
+    asOf?: string | AsOfQueryOptions,
+    tenantId?: string | null
+  ): FactClaim[] {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    const statuses = Array.isArray(status) ? status : status ? [status] : [];
+    const asOfOptions =
+      typeof asOf === "string"
+        ? ({ as_of: asOf } satisfies AsOfQueryOptions)
+        : asOf;
+
+    if (project) {
+      clauses.push("project = ?");
+      params.push(project);
+    }
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    if (asOfOptions) {
+      const effectiveStatuses =
+        statuses.length > 0
+          ? statuses
+          : [
+              "active",
+              ...(asOfOptions.include_suspected_expired ? (["suspected_expired"] as const) : []),
+              ...(asOfOptions.include_conflicts ? (["conflict"] as const) : [])
+            ];
+
+      clauses.push(`status IN (${effectiveStatuses.map(() => "?").join(", ")})`);
+      params.push(...effectiveStatuses);
+      clauses.push("valid_from <= ?");
+      clauses.push("(valid_to IS NULL OR ? < valid_to)");
+      params.push(asOfOptions.as_of, asOfOptions.as_of);
+    } else if (statuses.length > 0) {
+      clauses.push(`status IN (${statuses.map(() => "?").join(", ")})`);
+      params.push(...statuses);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], FactClaimRow>(
+        `SELECT *
+         FROM fact_claims
+         ${clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : ""}
+         ORDER BY subject ASC, predicate ASC, valid_from DESC, created_at DESC`
+      )
+      .all(...params);
+
+    return rows.map(mapFactClaim);
+  }
+
+  updateFactClaimStatus(
+    id: string,
+    status: FactClaimStatus,
+    reason?: string | null,
+    validTo?: string | null,
+    actor: "system" | "user" = "system"
+  ): FactClaim {
+    const existing = this.getFactClaim(id);
+
+    if (existing === null) {
+      throw new Error(`Fact claim not found: ${id}`);
+    }
+
+    validateFactClaimTransition(existing.status, status, actor);
+
+    if (existing.status === status && reason === undefined && validTo === undefined) {
+      return existing;
+    }
+
+    const updatedAt = timestamp();
+    const nextValidTo =
+      status === "expired"
+        ? validTo ?? existing.valid_to ?? updatedAt
+        : status === "active"
+          ? null
+          : existing.valid_to;
+    const nextReason =
+      status === "active"
+        ? null
+        : reason === undefined
+          ? existing.invalidation_reason
+          : reason;
+
+    this.db
+      .prepare<[FactClaimStatus, string | null, string | null, string, string]>(
+        `UPDATE fact_claims
+         SET status = ?,
+             invalidation_reason = ?,
+             valid_to = ?,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(status, nextReason, nextValidTo, updatedAt, id);
+
+    const updated = this.getFactClaim(id);
+
+    if (updated === null) {
+      throw new Error(`Fact claim not found after update: ${id}`);
+    }
+
+    return updated;
+  }
+
+  findConflictingClaims(
+    project: string,
+    subject: string,
+    predicate: string,
+    tenantId?: string | null
+  ): FactClaim[] {
+    if (project.trim().length === 0 || subject.trim().length === 0 || predicate.trim().length === 0) {
+      return [];
+    }
+
+    const clauses = [
+      "project = ?",
+      "subject = ?",
+      "predicate = ?",
+      "status IN ('active', 'suspected_expired', 'conflict')"
+    ];
+    const params: unknown[] = [project, subject, predicate];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], FactClaimRow>(
+        `SELECT *
+         FROM fact_claims
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY created_at ASC`
+      )
+      .all(...params)
+      .map(mapFactClaim);
+
+    return rows.filter((claim) =>
+      rows.some(
+        (other) =>
+          other.id !== claim.id &&
+          other.claim_value !== claim.claim_value &&
+          (claim.valid_to === null || other.valid_from < claim.valid_to) &&
+          (other.valid_to === null || claim.valid_from < other.valid_to)
+      )
+    );
   }
 
   createRawArchive(archive: RawArchive): void {

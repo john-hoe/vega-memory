@@ -180,6 +180,12 @@
   },
   "hotPaths": [
     {
+      "path": "src/core/fact-claim-service.ts",
+      "accessCount": 8,
+      "lastAccessed": 1775737109750,
+      "type": "directory"
+    },
+    {
       "path": "scripts/task-done.sh",
       "accessCount": 6,
       "lastAccessed": 1775717591258,

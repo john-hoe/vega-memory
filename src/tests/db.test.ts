@@ -17,7 +17,7 @@ import Database from "better-sqlite3-multiple-ciphers";
 import { cleanOldBackups, createBackup, restoreFromBackup, shouldBackup } from "../db/backup.js";
 import { Repository } from "../db/repository.js";
 import { initializeDatabase } from "../db/schema.js";
-import type { Memory, RawArchive, Session } from "../core/types.js";
+import type { FactClaim, Memory, RawArchive, Session } from "../core/types.js";
 import { generateKey } from "../security/encryption.js";
 
 const now = "2026-04-03T12:00:00.000Z";
@@ -74,6 +74,31 @@ function createRawArchive(overrides: Partial<RawArchive> = {}): RawArchive {
     content_hash: "hash-1",
     metadata: {},
     captured_at: null,
+    created_at: now,
+    updated_at: now,
+    ...overrides
+  };
+}
+
+function createFactClaim(overrides: Partial<FactClaim> = {}): FactClaim {
+  return {
+    id: "fact-1",
+    tenant_id: null,
+    project: "vega",
+    source_memory_id: "mem-fact-source",
+    evidence_archive_id: null,
+    canonical_key: "vega-memory|database|sqlite",
+    subject: "vega-memory",
+    predicate: "database",
+    claim_value: "sqlite",
+    claim_text: "Vega Memory uses SQLite.",
+    source: "hot_memory",
+    status: "active",
+    confidence: 0.8,
+    valid_from: "2026-04-01T00:00:00.000Z",
+    valid_to: null,
+    temporal_precision: "day",
+    invalidation_reason: null,
     created_at: now,
     updated_at: now,
     ...overrides
@@ -161,6 +186,146 @@ test("CRUD operations on memories", () => {
   }
 });
 
+test("fact claim repository supports as_of filters and legal transitions", () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "mem-fact-source",
+        content: "Vega Memory uses SQLite."
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "mem-fact-source-2",
+        content: "Older evidence about a prior database."
+      })
+    );
+
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-active",
+        source_memory_id: "mem-fact-source",
+        claim_value: "sqlite",
+        valid_from: "2026-04-01T00:00:00.000Z",
+        valid_to: null,
+        status: "active"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-expired",
+        source_memory_id: "mem-fact-source-2",
+        claim_value: "postgres",
+        valid_from: "2026-03-01T00:00:00.000Z",
+        valid_to: "2026-04-01T00:00:00.000Z",
+        status: "expired",
+        invalidation_reason: "Replaced by SQLite."
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-suspected",
+        source_memory_id: "mem-fact-source-2",
+        claim_value: "sqlite",
+        valid_from: "2026-05-01T00:00:00.000Z",
+        valid_to: null,
+        status: "suspected_expired",
+        invalidation_reason: "May be stale."
+      })
+    );
+
+    const defaultAsOf = repository.listFactClaims("vega", undefined, {
+      as_of: "2026-05-15T00:00:00.000Z"
+    });
+    const widenedAsOf = repository.listFactClaims("vega", undefined, {
+      as_of: "2026-05-15T00:00:00.000Z",
+      include_suspected_expired: true
+    });
+
+    assert.deepEqual(defaultAsOf.map((claim) => claim.id), ["fact-active"]);
+    assert.deepEqual(
+      widenedAsOf.map((claim) => claim.id).sort(),
+      ["fact-active", "fact-suspected"].sort()
+    );
+
+    const expired = repository.updateFactClaimStatus(
+      "fact-active",
+      "expired",
+      "Confirmed end of validity."
+    );
+
+    assert.equal(expired.status, "expired");
+    assert.equal(expired.invalidation_reason, "Confirmed end of validity.");
+    assert.ok(expired.valid_to);
+
+    assert.throws(
+      () => repository.updateFactClaimStatus("fact-expired", "active", undefined, undefined, "user"),
+      /Illegal fact claim transition/
+    );
+  } finally {
+    repository.close();
+  }
+});
+
+test("fact claim repository finds overlapping conflicting claims", () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "mem-conflict-1",
+        content: "Vega Memory uses SQLite."
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "mem-conflict-2",
+        content: "Vega Memory uses PostgreSQL."
+      })
+    );
+
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-conflict-1",
+        source_memory_id: "mem-conflict-1",
+        claim_value: "sqlite",
+        valid_from: "2026-04-01T00:00:00.000Z",
+        status: "active"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-conflict-2",
+        source_memory_id: "mem-conflict-2",
+        claim_value: "postgres",
+        valid_from: "2026-04-05T00:00:00.000Z",
+        status: "conflict"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-non-overlap",
+        source_memory_id: "mem-conflict-2",
+        claim_value: "mysql",
+        valid_from: "2026-01-01T00:00:00.000Z",
+        valid_to: "2026-02-01T00:00:00.000Z",
+        status: "active"
+      })
+    );
+
+    const conflicts = repository.findConflictingClaims("vega", "vega-memory", "database");
+
+    assert.deepEqual(
+      conflicts.map((claim) => claim.id).sort(),
+      ["fact-conflict-1", "fact-conflict-2"].sort()
+    );
+  } finally {
+    repository.close();
+  }
+});
+
 test("FTS5 search returns results with rank", () => {
   const repository = new Repository(":memory:");
 
@@ -237,6 +402,90 @@ test("raw archive repository CRUD and FTS search work", () => {
     );
     assert.equal(searched.length, 1);
     assert.equal(searched[0]?.archive.id, "archive-fts-1");
+  } finally {
+    repository.close();
+  }
+});
+
+test("fact claim repository CRUD, as_of filtering, conflict lookup, and status updates work", () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "mem-fact-source",
+        project: "vega",
+        title: "Database fact source"
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "mem-fact-source-2",
+        project: "vega",
+        title: "Second database fact source"
+      })
+    );
+
+    repository.createFactClaim(createFactClaim());
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-2",
+        source_memory_id: "mem-fact-source-2",
+        canonical_key: "vega-memory|database|postgres",
+        claim_value: "postgres",
+        claim_text: "Vega Memory uses Postgres.",
+        status: "conflict"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-3",
+        canonical_key: "vega-memory|deployment|local",
+        predicate: "deployment",
+        claim_value: "local",
+        claim_text: "Vega Memory is deployed locally.",
+        status: "suspected_expired"
+      })
+    );
+
+    const stored = repository.getFactClaim("fact-1");
+    const activeAsOf = repository.listFactClaims("vega", undefined, {
+      as_of: "2026-04-09T00:00:00.000Z"
+    });
+    const suspectedAsOf = repository.listFactClaims("vega", undefined, {
+      as_of: "2026-04-09T00:00:00.000Z",
+      include_suspected_expired: true
+    });
+    const conflicts = repository.findConflictingClaims("vega", "vega-memory", "database");
+
+    assert.ok(stored);
+    assert.equal(stored.claim_value, "sqlite");
+    assert.deepEqual(
+      activeAsOf.map((claim) => claim.id).sort(),
+      ["fact-1"]
+    );
+    assert.deepEqual(
+      suspectedAsOf.map((claim) => claim.id).sort(),
+      ["fact-1", "fact-3"]
+    );
+    assert.deepEqual(
+      conflicts.map((claim) => claim.id).sort(),
+      ["fact-1", "fact-2"]
+    );
+
+    repository.updateFactClaimStatus(
+      "fact-1",
+      "expired",
+      "Superseded by a newer decision.",
+      "2026-04-10T00:00:00.000Z"
+    );
+
+    const expired = repository.getFactClaim("fact-1");
+
+    assert.ok(expired);
+    assert.equal(expired.status, "expired");
+    assert.equal(expired.invalidation_reason, "Superseded by a newer decision.");
+    assert.equal(expired.valid_to, "2026-04-10T00:00:00.000Z");
   } finally {
     repository.close();
   }

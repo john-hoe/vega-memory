@@ -10,7 +10,7 @@ import type { VegaConfig } from "../config.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
-import type { Memory } from "../core/types.js";
+import type { FactClaim, Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { embeddingCache } from "../embedding/cache.js";
 import { SearchEngine } from "../search/engine.js";
@@ -60,6 +60,29 @@ const createStoredMemory = (
     summary
   };
 };
+
+const createFactClaim = (overrides: Partial<FactClaim> = {}): FactClaim => ({
+  id: "fact-1",
+  tenant_id: null,
+  project: "vega",
+  source_memory_id: "memory-1",
+  evidence_archive_id: null,
+  canonical_key: "vega-memory|database|sqlite",
+  subject: "vega-memory",
+  predicate: "database",
+  claim_value: "sqlite",
+  claim_text: "Vega Memory uses SQLite.",
+  source: "hot_memory",
+  status: "active",
+  confidence: 0.8,
+  valid_from: "2026-04-01T00:00:00.000Z",
+  valid_to: null,
+  temporal_precision: "day",
+  invalidation_reason: null,
+  created_at: "2026-04-03T00:00:00.000Z",
+  updated_at: "2026-04-03T00:00:00.000Z",
+  ...overrides
+});
 
 const installEmbeddingMock = (vector: number[]): (() => void) => {
   const originalFetch = globalThis.fetch;
@@ -317,6 +340,96 @@ test("sessionStart stays on hot-memory path when VM2 sidecars are disabled", asy
     );
     assert.deepEqual(result.preferences, []);
     assert.deepEqual(result.context, []);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("sessionStart excludes memories backed only by expired fact claims and warns on fact conflicts", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-fact-claims-"));
+  const project = basename(tempDir);
+  const { repository, sessionService } = createSessionService({
+    ...baseConfig,
+    features: {
+      factClaims: true
+    }
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "task-visible",
+        type: "task_state",
+        project,
+        title: "Visible task"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "task-hidden",
+        type: "task_state",
+        project,
+        title: "Hidden task"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "context-conflict-source",
+        type: "project_context",
+        project,
+        title: "Conflict source"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-hidden",
+        project,
+        source_memory_id: "task-hidden",
+        subject: "vega-memory",
+        predicate: "deployment",
+        claim_value: "legacy-host",
+        claim_text: "Vega Memory uses the legacy host.",
+        status: "suspected_expired",
+        canonical_key: "vega-memory|deployment|legacy-host"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-conflict-a",
+        project,
+        source_memory_id: "context-conflict-source",
+        subject: "vega-memory",
+        predicate: "database",
+        claim_value: "sqlite",
+        claim_text: "Vega Memory uses SQLite.",
+        status: "conflict",
+        canonical_key: "vega-memory|database|sqlite"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-conflict-b",
+        project,
+        source_memory_id: "task-visible",
+        subject: "vega-memory",
+        predicate: "database",
+        claim_value: "postgres",
+        claim_text: "Vega Memory uses Postgres.",
+        status: "conflict",
+        canonical_key: "vega-memory|database|postgres"
+      })
+    );
+
+    const result = await sessionService.sessionStart(tempDir);
+
+    assert.deepEqual(
+      result.active_tasks.map((memory) => memory.id),
+      ["task-visible"]
+    );
+    assert.deepEqual(result.proactive_warnings, [
+      "fact claim conflict: vega-memory database -> postgres | sqlite"
+    ]);
   } finally {
     repository.close();
     rmSync(tempDir, { recursive: true, force: true });

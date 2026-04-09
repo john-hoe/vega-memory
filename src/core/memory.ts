@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 
 import {
   isRawArchiveEnabled,
+  isFactClaimsEnabled,
   shouldPreserveRawArchive,
   type VegaConfig
 } from "../config.js";
@@ -15,6 +16,7 @@ import type {
   StoreResult
 } from "./types.js";
 import { ArchiveService } from "./archive-service.js";
+import { FactClaimService } from "./fact-claim-service.js";
 import { Repository } from "../db/repository.js";
 import { generateEmbedding, cosineSimilarity } from "../embedding/ollama.js";
 import { shouldExclude } from "../security/exclusion.js";
@@ -164,7 +166,8 @@ export class MemoryService {
     private readonly repository: Repository,
     private readonly config: VegaConfig,
     private readonly knowledgeGraphService = new KnowledgeGraphService(repository),
-    private readonly archiveService = new ArchiveService(repository, config)
+    private readonly archiveService = new ArchiveService(repository, config),
+    private readonly factClaimService = new FactClaimService(repository, config)
   ) {}
 
   private shouldPreserveRaw(preserveRaw?: boolean): boolean {
@@ -221,6 +224,26 @@ export class MemoryService {
   private linkKnowledgeGraph(memoryId: string, content: string, tags: string[]): void {
     const entities = this.knowledgeGraphService.extractEntities(content, tags);
     this.knowledgeGraphService.linkMemory(memoryId, entities);
+  }
+
+  private async syncFactClaims(memoryId: string, auditContext: AuditContext): Promise<void> {
+    if (!isFactClaimsEnabled(this.config)) {
+      return;
+    }
+
+    try {
+      await this.factClaimService.extractClaims(memoryId);
+    } catch (error) {
+      this.repository.logAudit({
+        timestamp: now(),
+        actor: auditContext.actor,
+        action: "fact_claim_extract_failed",
+        memory_id: memoryId,
+        detail: error instanceof Error ? error.message : String(error),
+        ip: auditContext.ip,
+        tenant_id: auditContext.tenant_id ?? null
+      });
+    }
   }
 
   private findMatch(
@@ -400,6 +423,7 @@ export class MemoryService {
         title,
         auditContext
       );
+      await this.syncFactClaims(id, auditContext);
 
       return { id, action: "conflict", title };
     }
@@ -475,6 +499,7 @@ export class MemoryService {
         nextTitle,
         auditContext
       );
+      await this.syncFactClaims(matched.memory.id, auditContext);
 
       return { id: matched.memory.id, action: "updated", title: nextTitle };
     }
@@ -531,6 +556,7 @@ export class MemoryService {
       title,
       auditContext
     );
+    await this.syncFactClaims(id, auditContext);
 
     return { id, action: "created", title };
   }
@@ -592,6 +618,9 @@ export class MemoryService {
     const refreshed = this.repository.getMemory(id);
     if (refreshed) {
       this.linkKnowledgeGraph(id, refreshed.content, refreshed.tags);
+    }
+    if (updates.content !== undefined) {
+      await this.syncFactClaims(id, resolveAuditContext(auditContext));
     }
   }
 

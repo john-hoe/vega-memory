@@ -8,6 +8,7 @@ import { Repository } from "../db/repository.js";
 import { isOllamaAvailable } from "../embedding/ollama.js";
 import { PageManager } from "../wiki/page-manager.js";
 import { ExtractionService } from "./extraction.js";
+import { FactClaimService } from "./fact-claim-service.js";
 import { MemoryService } from "./memory.js";
 import { RecallService } from "./recall.js";
 import { RegressionGuard } from "./regression-guard.js";
@@ -248,7 +249,8 @@ export class SessionService {
     private readonly recallService: RecallService,
     private readonly config: VegaConfig,
     private readonly pageManager?: PageManager | null,
-    regressionGuard?: RegressionGuard
+    regressionGuard?: RegressionGuard,
+    private readonly factClaimService = new FactClaimService(repository, config)
   ) {
     this.extractionService = new ExtractionService(config);
     this.regressionGuard = regressionGuard ?? new RegressionGuard(repository, config);
@@ -477,8 +479,12 @@ export class SessionService {
     taskHintKeywords: string[],
     tenantId?: string | null
   ): Promise<SessionStartResult> {
-    const preferences = this.loadSessionPreferences(tenantId);
-    const globalRelevant = [
+    const preferences = this.filterFactClaimExpiredMemories(
+      this.loadSessionPreferences(tenantId),
+      tenantId
+    );
+    const globalRelevant = this.filterFactClaimExpiredMemories(
+      [
       ...this.repository.listMemories({
         scope: "global",
         type: "pitfall",
@@ -503,30 +509,43 @@ export class SessionService {
         limit: 10,
         sort: "importance DESC"
       })
-    ].filter(isSessionVisible);
-    const active_tasks = this.loadActiveTasks(project, tenantId);
-    const context = this.repository
-      .listMemories({
-        type: "project_context",
-        status: "active",
-        project,
-        tenant_id: tenantId ?? undefined,
-        limit: 10_000
-      })
-      .filter(isSessionVisible);
+    ].filter(isSessionVisible),
+      tenantId
+    );
+    const active_tasks = this.filterFactClaimExpiredMemories(
+      this.loadActiveTasks(project, tenantId),
+      tenantId
+    );
+    const context = this.filterFactClaimExpiredMemories(
+      this.repository
+        .listMemories({
+          type: "project_context",
+          status: "active",
+          project,
+          tenant_id: tenantId ?? undefined,
+          limit: 10_000
+        })
+        .filter(isSessionVisible),
+      tenantId
+    );
     const relevantResults =
       taskHintKeywords.length > 0
-        ? (await this.recallService.recall(
-            normalizedTaskHint,
-            this.buildSessionRecallOptions(tenantId)
-          )).map((result) => ({
-            ...result,
-            finalScore:
-              result.memory.project === project ? result.finalScore : result.finalScore * 0.5
-          }))
-            .filter(
-              (result) => isRelevantMemoryType(result.memory) && result.memory.verified !== "conflict"
-            )
+        ? this.filterFactClaimExpiredResults(
+            (await this.recallService.recall(
+              normalizedTaskHint,
+              this.buildSessionRecallOptions(tenantId)
+            ))
+              .map((result) => ({
+                ...result,
+                finalScore:
+                  result.memory.project === project ? result.finalScore : result.finalScore * 0.5
+              }))
+              .filter(
+                (result) =>
+                  isRelevantMemoryType(result.memory) && result.memory.verified !== "conflict"
+              ),
+            tenantId
+          )
         : [];
     const excludedIds = new Set([
       ...preferences.map((memory) => memory.id),
@@ -537,12 +556,15 @@ export class SessionService {
       ...globalRelevant.map((memory) => toRelevantResult(memory, memory.importance)),
       ...relevantResults
     ]).filter((result) => !excludedIds.has(result.memory.id));
-    const allMemories = this.repository.listMemories({
-      status: "active",
-      tenant_id: tenantId ?? undefined,
-      limit: 10_000,
-      sort: "created_at DESC"
-    });
+    const allMemories = this.filterFactClaimExpiredMemories(
+      this.repository.listMemories({
+        status: "active",
+        tenant_id: tenantId ?? undefined,
+        limit: 10_000,
+        sort: "created_at DESC"
+      }),
+      tenantId
+    );
     const relevant_wiki_pages = this.pageManager
       ? this.loadRelevantWikiPages(project, taskHintKeywords)
       : [];
@@ -628,27 +650,36 @@ export class SessionService {
     tenantId?: string | null
   ): SessionStartResult {
     const lightTokenBudget = Math.floor(this.config.tokenBudget * LIGHT_SESSION_BUDGET_RATIO);
-    const preferences = this.loadSessionPreferences(tenantId);
-    const active_tasks = this.loadActiveTasks(project, tenantId);
-    const conflicts = sortByCreatedAtDesc(
-      dedupeMemoriesById([
-        ...this.repository.listMemories({
-          project,
-          status: "active",
-          verified: "conflict",
-          tenant_id: tenantId ?? undefined,
-          limit: 10_000,
-          sort: "created_at DESC"
-        }),
-        ...this.repository.listMemories({
-          scope: "global",
-          status: "active",
-          verified: "conflict",
-          tenant_id: tenantId ?? undefined,
-          limit: 10_000,
-          sort: "created_at DESC"
-        })
-      ])
+    const preferences = this.filterFactClaimExpiredMemories(
+      this.loadSessionPreferences(tenantId),
+      tenantId
+    );
+    const active_tasks = this.filterFactClaimExpiredMemories(
+      this.loadActiveTasks(project, tenantId),
+      tenantId
+    );
+    const conflicts = this.filterFactClaimExpiredMemories(
+      sortByCreatedAtDesc(
+        dedupeMemoriesById([
+          ...this.repository.listMemories({
+            project,
+            status: "active",
+            verified: "conflict",
+            tenant_id: tenantId ?? undefined,
+            limit: 10_000,
+            sort: "created_at DESC"
+          }),
+          ...this.repository.listMemories({
+            scope: "global",
+            status: "active",
+            verified: "conflict",
+            tenant_id: tenantId ?? undefined,
+            limit: 10_000,
+            sort: "created_at DESC"
+          })
+        ])
+      ),
+      tenantId
     );
     const proactive_warnings = this.loadProactiveWarnings(project, taskHintKeywords, tenantId);
 
@@ -710,6 +741,122 @@ export class SessionService {
       .filter(isSessionVisible);
   }
 
+  private getFactClaimExcludedMemoryIds(
+    memories: Memory[],
+    tenantId?: string | null
+  ): Set<string> {
+    if (!isFactClaimsEnabled(this.config) || memories.length === 0) {
+      return new Set<string>();
+    }
+
+    try {
+      const candidateIds = new Set(memories.map((memory) => memory.id));
+      const projects = [...new Set(memories.map((memory) => memory.project))];
+      const hiddenMemoryIds = new Set<string>();
+
+      for (const project of projects) {
+        const claims = this.factClaimService.listClaims(
+          project,
+          ["active", "conflict", "expired", "suspected_expired"],
+          undefined,
+          tenantId
+        );
+        const memoryStates = new Map<
+          string,
+          { hasExpiredOrSuspected: boolean; hasActiveOrConflict: boolean }
+        >();
+
+        for (const claim of claims) {
+          if (claim.source_memory_id === null || !candidateIds.has(claim.source_memory_id)) {
+            continue;
+          }
+
+          const current = memoryStates.get(claim.source_memory_id) ?? {
+            hasExpiredOrSuspected: false,
+            hasActiveOrConflict: false
+          };
+
+          if (claim.status === "expired" || claim.status === "suspected_expired") {
+            current.hasExpiredOrSuspected = true;
+          }
+
+          if (claim.status === "active" || claim.status === "conflict") {
+            current.hasActiveOrConflict = true;
+          }
+
+          memoryStates.set(claim.source_memory_id, current);
+        }
+
+        for (const [memoryId, state] of memoryStates.entries()) {
+          if (state.hasExpiredOrSuspected && !state.hasActiveOrConflict) {
+            hiddenMemoryIds.add(memoryId);
+          }
+        }
+      }
+
+      return hiddenMemoryIds;
+    } catch {
+      return new Set<string>();
+    }
+  }
+
+  private filterFactClaimExpiredMemories(memories: Memory[], tenantId?: string | null): Memory[] {
+    const hiddenMemoryIds = this.getFactClaimExcludedMemoryIds(memories, tenantId);
+
+    if (hiddenMemoryIds.size === 0) {
+      return memories;
+    }
+
+    return memories.filter((memory) => !hiddenMemoryIds.has(memory.id));
+  }
+
+  private filterFactClaimExpiredResults(
+    results: SearchResult[],
+    tenantId?: string | null
+  ): SearchResult[] {
+    const hiddenMemoryIds = this.getFactClaimExcludedMemoryIds(
+      results.map((result) => result.memory),
+      tenantId
+    );
+
+    if (hiddenMemoryIds.size === 0) {
+      return results;
+    }
+
+    return results.filter((result) => !hiddenMemoryIds.has(result.memory.id));
+  }
+
+  private loadFactClaimWarnings(project: string, tenantId?: string | null): string[] {
+    if (!isFactClaimsEnabled(this.config)) {
+      return [];
+    }
+
+    try {
+      const grouped = new Map<string, { subject: string; predicate: string; values: Set<string> }>();
+
+      for (const claim of this.factClaimService.listClaims(project, "conflict", undefined, tenantId)) {
+        const key = `${claim.subject}\u0000${claim.predicate}`;
+        const current = grouped.get(key) ?? {
+          subject: claim.subject,
+          predicate: claim.predicate,
+          values: new Set<string>()
+        };
+
+        current.values.add(claim.claim_value);
+        grouped.set(key, current);
+      }
+
+      return [...grouped.values()]
+        .filter((entry) => entry.values.size > 0)
+        .map(
+          (entry) =>
+            `fact claim conflict: ${entry.subject} ${entry.predicate} -> ${[...entry.values].sort().join(" | ")}`
+        );
+    } catch {
+      return [];
+    }
+  }
+
   private loadProactiveWarnings(
     project: string,
     taskHintKeywords: string[],
@@ -717,24 +864,27 @@ export class SessionService {
   ): string[] {
     return [
       ...(taskHintKeywords.length > 0
-        ? this.repository
-            .listMemories({
-              type: "insight",
-              status: "active",
-              tenant_id: tenantId ?? undefined,
-              limit: 10_000,
-              sort: "importance DESC"
-            })
+        ? this.filterFactClaimExpiredMemories(
+            this.repository
+              .listMemories({
+                type: "insight",
+                status: "active",
+                tenant_id: tenantId ?? undefined,
+                limit: 10_000,
+                sort: "importance DESC"
+              })
+              .filter(
+                (memory) => isInProjectScope(memory, project) && isSessionVisible(memory)
+              ),
+            tenantId
+          )
             .filter((memory) => {
-              if (!isInProjectScope(memory, project) || !isSessionVisible(memory)) {
-                return false;
-              }
-
               const tags = memory.tags.map((tag) => tag.toLowerCase());
               return taskHintKeywords.some((keyword) => tags.includes(keyword));
             })
             .map((memory) => memory.content)
         : []),
+      ...this.loadFactClaimWarnings(project, tenantId),
       ...this.consumePendingSynthesisWarnings(project)
     ];
   }
