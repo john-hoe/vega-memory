@@ -31,6 +31,7 @@ import type {
   MemoryUpdateParams,
   SearchOptions,
   SearchResult,
+  SessionStartMode,
   SessionStartResult,
   StoreParams,
   StoreResult
@@ -47,6 +48,7 @@ const MEMORY_TYPES = [
 ] as const satisfies readonly MemoryType[];
 
 const MEMORY_SOURCES = ["auto", "explicit"] as const satisfies readonly MemorySource[];
+const SESSION_START_MODES = ["light", "standard"] as const satisfies readonly SessionStartMode[];
 const MCP_AUDIT_CONTEXT: AuditContext = { actor: "mcp", ip: null };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -247,7 +249,9 @@ export interface CreateMCPServerOptions {
   sessionService: {
     sessionStart(
       workingDirectory: string,
-      taskHint?: string
+      taskHint?: string,
+      tenantId?: string | null,
+      mode?: SessionStartMode
     ): Promise<SessionStartResult>;
     sessionEnd(
       project: string,
@@ -479,13 +483,16 @@ export function createMCPServer({
     "Start a Vega Memory session for a working directory.",
     {
       working_directory: z.string().trim().min(1),
-      task_hint: z.string().trim().min(1).optional()
+      task_hint: z.string().trim().min(1).optional(),
+      mode: z.enum(SESSION_START_MODES).default("standard")
     },
     async (args) =>
       runTool(repository, "session_start", args, observer, async () => {
         const result = await sessionService.sessionStart(
           args.working_directory,
-          args.task_hint
+          args.task_hint,
+          undefined,
+          args.mode
         );
 
         return {

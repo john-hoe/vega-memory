@@ -23,6 +23,22 @@ export type VerifiedStatus = "verified" | "unverified" | "rejected" | "conflict"
 
 export type MemoryScope = "project" | "global";
 
+export type FactClaimStatus = "active" | "expired" | "suspected_expired" | "conflict";
+
+export type FactClaimSource = "hot_memory" | "raw_archive" | "manual" | "mixed";
+
+export type RawArchiveType =
+  | "transcript"
+  | "discussion"
+  | "design_debate"
+  | "chat_export"
+  | "tool_log"
+  | "document";
+
+export type TopicKind = "topic" | "room";
+
+export type TopicState = "active" | "superseded";
+
 export interface Memory {
   id: string;
   tenant_id?: string | null;
@@ -43,6 +59,69 @@ export interface Memory {
   verified: VerifiedStatus;
   scope: MemoryScope;
   accessed_projects: string[];
+}
+
+export interface FactClaim {
+  id: string;
+  tenant_id?: string | null;
+  project: string;
+  source_memory_id: string | null;
+  evidence_archive_id: string | null;
+  canonical_key: string;
+  subject: string;
+  predicate: string;
+  claim_value: string;
+  claim_text: string;
+  source: FactClaimSource;
+  status: FactClaimStatus;
+  confidence: number;
+  valid_from: string;
+  valid_to: string | null;
+  invalidation_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RawArchive {
+  id: string;
+  tenant_id?: string | null;
+  project: string;
+  source_memory_id: string | null;
+  archive_type: RawArchiveType;
+  title: string;
+  source_uri: string | null;
+  content: string;
+  content_hash: string;
+  metadata: Record<string, unknown>;
+  captured_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Topic {
+  id: string;
+  tenant_id?: string | null;
+  project: string;
+  topic_key: string;
+  version: number;
+  label: string;
+  kind: TopicKind;
+  description: string | null;
+  source: MemorySource;
+  state: TopicState;
+  supersedes_topic_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryTopic {
+  memory_id: string;
+  topic_id: string;
+  source: MemorySource;
+  confidence: number | null;
+  status: TopicState;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Entity {
@@ -153,6 +232,14 @@ export interface SessionStartWikiPage {
   page_type: string;
 }
 
+export type SessionStartMode = "light" | "standard";
+
+export interface SessionStartRequest {
+  working_directory: string;
+  task_hint?: string;
+  mode?: SessionStartMode;
+}
+
 export interface SessionStartResult {
   project: string;
   active_tasks: Memory[];
@@ -235,6 +322,49 @@ export interface SearchOptions {
   tenant_id?: string | null;
   limit: number;
   minSimilarity: number;
+}
+
+export interface DeepRecallRequest {
+  query: string;
+  project?: string;
+  limit?: number;
+  evidence_limit?: number;
+  include_content?: boolean;
+  include_metadata?: boolean;
+  inject_into_session?: boolean;
+}
+
+export interface DeepRecallResult {
+  memory_id: string;
+  project: string;
+  type: MemoryType;
+  title: string;
+  content?: string;
+  summary?: string | null;
+  verified?: VerifiedStatus;
+  created_at?: string;
+  updated_at?: string;
+  evidence_score?: number;
+}
+
+export interface DeepRecallResponse {
+  results: DeepRecallResult[];
+  next_cursor: string | null;
+  injected_into_session: boolean;
+}
+
+export type RecallProtocolErrorCode =
+  | "INVALID_RECALL_MODE"
+  | "INVALID_RECALL_REQUEST"
+  | "DEEP_RECALL_NOT_IMPLEMENTED"
+  | "TOKEN_BUDGET_EXCEEDED";
+
+export interface RecallProtocolError {
+  status: 400 | 422 | 429 | 501;
+  code: RecallProtocolErrorCode;
+  message: string;
+  retryable: boolean;
+  details?: Record<string, unknown>;
 }
 
 export interface MergeResult {

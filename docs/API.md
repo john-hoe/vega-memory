@@ -43,7 +43,21 @@ Common status codes:
 
 - `400` invalid JSON, invalid request body, or invalid query parameter
 - `401` missing or invalid bearer token
+- `501` reserved endpoint or protocol branch that is not implemented yet
 - `500` internal server error
+
+Recall-protocol placeholders may return a structured error payload:
+
+```json
+{
+  "error": {
+    "status": 501,
+    "code": "DEEP_RECALL_NOT_IMPLEMENTED",
+    "message": "deep_recall is reserved for VM2-006 and is not implemented yet",
+    "retryable": false
+  }
+}
+```
 
 ## `GET /`
 
@@ -148,7 +162,7 @@ Example response:
 
 ## `POST /api/recall`
 
-Recall relevant memories.
+Recall relevant memories from the hot semantic layer.
 
 Example request:
 
@@ -175,6 +189,12 @@ Request fields:
 - `type` optional memory type
 - `limit` optional positive integer, defaults to `5`
 - `min_similarity` optional number from `0` to `1`, defaults to `0.3`
+
+Notes:
+
+- This is the stage-two hot recall call in the VM2 recall protocol.
+- The HTTP route also accepts `minSimilarity` as a camelCase alias.
+- The response is richer than the current MCP `memory_recall` tool response.
 
 Example response:
 
@@ -316,9 +336,21 @@ Authorization: Bearer change-me
 ```json
 {
   "working_directory": "/Users/me/workspace/vega-memory",
-  "task_hint": "dashboard auth flow"
+  "task_hint": "dashboard auth flow",
+  "mode": "standard"
 }
 ```
+
+Request fields:
+
+- `working_directory` required string
+- `task_hint` optional string
+- `mode` optional `standard` or `light`, defaults to `standard`
+
+Mode semantics:
+
+- `standard` maps to the current full session bundle behavior.
+- `light` is the protocol hint for the minimal safe preload bundle defined in [specs/vm2-001-recall-protocol.md](specs/vm2-001-recall-protocol.md). In the current implementation, the server accepts `mode: "light"` but preserves the existing response shape until the light-loading branch is implemented.
 
 Example response:
 
@@ -329,12 +361,69 @@ Example response:
   "preferences": [],
   "context": [],
   "relevant": [],
+  "relevant_wiki_pages": [],
+  "wiki_drafts_pending": 0,
   "recent_unverified": [],
   "conflicts": [],
   "proactive_warnings": [],
   "token_estimate": 0
 }
 ```
+
+The response shape above is the current transport shape for both omitted `mode` and `mode: "standard"`.
+
+## `POST /api/deep-recall`
+
+Reserved cold-layer recall endpoint for evidence retrieval.
+
+Example request:
+
+```http
+POST /api/deep-recall
+Content-Type: application/json
+Authorization: Bearer change-me
+```
+
+```json
+{
+  "query": "sqlite backup evidence",
+  "project": "vega",
+  "limit": 3,
+  "evidence_limit": 2,
+  "include_content": true,
+  "include_metadata": true,
+  "inject_into_session": false
+}
+```
+
+Request fields:
+
+- `query` required string
+- `project` optional string
+- `limit` optional positive integer
+- `evidence_limit` optional positive integer
+- `include_content` optional boolean
+- `include_metadata` optional boolean
+- `inject_into_session` optional boolean, defaults to `false`
+
+Current response:
+
+- `501 Not Implemented`
+
+Example response:
+
+```json
+{
+  "error": {
+    "status": 501,
+    "code": "DEEP_RECALL_NOT_IMPLEMENTED",
+    "message": "deep_recall is reserved for VM2-006 and is not implemented yet",
+    "retryable": false
+  }
+}
+```
+
+The eventual success shape is specified in [specs/vm2-001-recall-protocol.md](specs/vm2-001-recall-protocol.md).
 
 ## `POST /api/session/end`
 
@@ -459,4 +548,3 @@ curl -X POST http://127.0.0.1:3271/api/recall \
     "min_similarity": 0.3
   }'
 ```
-

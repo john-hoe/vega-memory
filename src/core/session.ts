@@ -17,6 +17,7 @@ import type {
   Memory,
   MemoryType,
   SearchResult,
+  SessionStartMode,
   SessionStartResult,
   SessionStartWikiPage
 } from "./types.js";
@@ -203,13 +204,14 @@ export class SessionService {
   async sessionStart(
     workingDirectory: string,
     taskHint?: string,
-    tenantId?: string | null
+    tenantId?: string | null,
+    mode: SessionStartMode = "standard"
   ): Promise<SessionStartResult> {
     const project = this.inferProject(workingDirectory);
     this.sessionStartTimes.set(project, now());
     const normalizedTaskHint = taskHint?.trim() ?? "";
     const taskHintKeywords = normalizedTaskHint ? extractTaskHintKeywords(normalizedTaskHint) : [];
-    const cacheKey = `${resolve(workingDirectory)}\u0000${tenantId ?? ""}\u0000${normalizedTaskHint}`;
+    const cacheKey = `${resolve(workingDirectory)}\u0000${tenantId ?? ""}\u0000${normalizedTaskHint}\u0000${mode}`;
     const cached = this.sessionStartCache.get(cacheKey);
 
     if (cached && Date.now() - cached.cachedAt < SESSION_START_CACHE_TTL_MS) {

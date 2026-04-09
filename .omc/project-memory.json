@@ -1,0 +1,196 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1775715285314,
+  "projectRoot": "/Users/johnmacmini/workspace/vega-memory",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "express",
+        "version": "5.2.1",
+        "category": "backend"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "build": "tsc && node scripts/copy-web-public.mjs",
+      "dev": "tsc --watch",
+      "docker:build": "docker build -t vega-memory .",
+      "docker:up": "docker compose up --build",
+      "docker:down": "docker compose down",
+      "test": "node --test dist/tests/**/*.test.js"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts",
+      "src"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "client": {
+      "path": "client",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1775715285304,
+      "keyFiles": [
+        "package.json",
+        "vega-remote-mcp.mjs"
+      ]
+    },
+    "data": {
+      "path": "data",
+      "purpose": "Data files",
+      "fileCount": 6,
+      "lastAccessed": 1775715285304,
+      "keyFiles": [
+        "D:\\codex-snapshot.md",
+        "content-factory-snapshot.md",
+        "memory.db",
+        "memory.db-shm",
+        "memory.db-wal"
+      ]
+    },
+    "deploy": {
+      "path": "deploy",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1775715285307,
+      "keyFiles": []
+    },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 6,
+      "lastAccessed": 1775715285307,
+      "keyFiles": [
+        "config.d.ts",
+        "config.js",
+        "config.js.map",
+        "index.d.ts",
+        "index.js"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 2,
+      "lastAccessed": 1775715285307,
+      "keyFiles": [
+        "API.md",
+        "deployment.md"
+      ]
+    },
+    "launchd": {
+      "path": "launchd",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775715285307,
+      "keyFiles": [
+        "dev.vega-memory.plist"
+      ]
+    },
+    "rules": {
+      "path": "rules",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1775715285308,
+      "keyFiles": [
+        "CLAUDE.md",
+        "CODEX.md",
+        "cursor-memory.mdc"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 1,
+      "lastAccessed": 1775715285308,
+      "keyFiles": [
+        "copy-web-public.mjs"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 2,
+      "lastAccessed": 1775715285308,
+      "keyFiles": [
+        "config.ts",
+        "index.ts"
+      ]
+    },
+    "dist/api": {
+      "path": "dist/api",
+      "purpose": "API routes",
+      "fileCount": 15,
+      "lastAccessed": 1775715285309,
+      "keyFiles": [
+        "auth.d.ts",
+        "auth.js",
+        "auth.js.map"
+      ]
+    },
+    "src/api": {
+      "path": "src/api",
+      "purpose": "API routes",
+      "fileCount": 5,
+      "lastAccessed": 1775715285309,
+      "keyFiles": [
+        "auth.ts",
+        "oidc.ts",
+        "permissions.ts"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "scripts/task-done.sh",
+      "accessCount": 6,
+      "lastAccessed": 1775717591258,
+      "type": "file"
+    },
+    {
+      "path": "docs/specs/vm2-001-recall-protocol.md",
+      "accessCount": 1,
+      "lastAccessed": 1775716318248,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

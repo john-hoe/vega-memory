@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"NOTION_TOKEN=\\\"ntn_q78837016754bnoQC8pyXpv1ULaHQojKzmyXNWHiJj24ev\\\" bash scripts/task-done.sh VM2-TEST \\\"test dry run\\\" 2>&1\",\"timeout\":180000,\"description\":\"Test fixed task-done script\"}",
+  "error": "Exit code 1\n=== Task Done: VM2-TEST ===\n[1/5] Verifying build and tests...\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 43196.010916\nERROR: tests failed (8 failures)\n[rerun: b56]",
+  "timestamp": "2026-04-09T06:52:55.243Z",
+  "retry_count": 1
+}

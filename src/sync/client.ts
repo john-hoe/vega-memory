@@ -11,6 +11,7 @@ import type {
   MemoryUpdateParams,
   SearchOptions,
   SearchResult,
+  SessionStartMode,
   SessionStartResult,
   StoreParams,
   StoreResult
@@ -266,7 +267,11 @@ export class VegaSyncClient {
     }
   }
 
-  async sessionStart(workingDirectory: string, taskHint?: string): Promise<SessionStartResult> {
+  async sessionStart(
+    workingDirectory: string,
+    taskHint?: string,
+    mode: SessionStartMode = "standard"
+  ): Promise<SessionStartResult> {
     try {
       const result = await this.requestJson<SessionStartResult>(
         "/api/session/start",
@@ -274,7 +279,8 @@ export class VegaSyncClient {
           method: "POST",
           body: JSON.stringify({
             working_directory: workingDirectory,
-            task_hint: taskHint
+            task_hint: taskHint,
+            mode
           })
         },
         DEFAULT_REQUEST_TIMEOUT_MS
@@ -305,7 +311,7 @@ export class VegaSyncClient {
         throw error;
       }
 
-      return this.loadSessionFromCache(workingDirectory, taskHint);
+      return this.loadSessionFromCache(workingDirectory, taskHint, mode);
     }
   }
 
@@ -612,7 +618,8 @@ export class VegaSyncClient {
 
   private loadSessionFromCache(
     workingDirectory: string,
-    taskHint?: string
+    taskHint?: string,
+    _mode: SessionStartMode = "standard"
   ): SessionStartResult {
     if (!this.cacheRepo) {
       return emptySessionResult(workingDirectory);

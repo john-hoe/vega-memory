@@ -369,6 +369,70 @@ test("POST /api/session/start returns session context", async () => {
   }
 });
 
+test("POST /api/session/start accepts light mode without changing current shape", async () => {
+  const harness = await createHarness();
+  const workingDirectory = mkdtempSync(join(tmpdir(), "vega-api-session-start-light-"));
+
+  try {
+    const response = await harness.request("/api/session/start", {
+      method: "POST",
+      body: JSON.stringify({
+        working_directory: workingDirectory,
+        task_hint: "health endpoint",
+        mode: "light"
+      })
+    });
+    const body = await readJson<{
+      project: string;
+      active_tasks: unknown[];
+      preferences: unknown[];
+      context: unknown[];
+      relevant: unknown[];
+      recent_unverified: unknown[];
+      conflicts: unknown[];
+      proactive_warnings: string[];
+      token_estimate: number;
+    }>(response);
+
+    assert.equal(response.status, 200);
+    assert.equal(body.project.length > 0, true);
+    assert.equal(Array.isArray(body.preferences), true);
+    assert.equal(typeof body.token_estimate, "number");
+  } finally {
+    rmSync(workingDirectory, { recursive: true, force: true });
+    await harness.cleanup();
+  }
+});
+
+test("POST /api/deep-recall returns the reserved 501 placeholder", async () => {
+  const harness = await createHarness();
+
+  try {
+    const response = await harness.request("/api/deep-recall", {
+      method: "POST",
+      body: JSON.stringify({
+        query: "sqlite backup evidence",
+        project: "vega"
+      })
+    });
+    const body = await readJson<{
+      error: {
+        status: number;
+        code: string;
+        message: string;
+        retryable: boolean;
+      };
+    }>(response);
+
+    assert.equal(response.status, 501);
+    assert.equal(body.error.status, 501);
+    assert.equal(body.error.code, "DEEP_RECALL_NOT_IMPLEMENTED");
+    assert.equal(body.error.retryable, false);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("POST /api/session/end records session", async () => {
   const harness = await createHarness();
 

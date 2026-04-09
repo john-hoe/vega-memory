@@ -21,7 +21,9 @@ import type {
   Memory,
   MemorySource,
   MemoryType,
+  RecallProtocolError,
   SearchResult,
+  SessionStartMode,
   SessionStartResult
 } from "../core/types.js";
 import { Repository } from "../db/repository.js";
@@ -54,6 +56,7 @@ const MEMORY_TYPES = new Set<MemoryType>([
 ]);
 
 const MEMORY_SOURCES = new Set<MemorySource>(["auto", "explicit"]);
+const SESSION_START_MODES = new Set<SessionStartMode>(["light", "standard"]);
 const WIKI_PAGE_TYPE_VALUES = new Set<WikiPageType>(WIKI_PAGE_TYPES);
 const WIKI_PAGE_STATUS_VALUES = new Set<WikiPageStatus>(WIKI_PAGE_STATUSES);
 const WIKI_SPACE_VISIBILITY_VALUES = new Set<WikiSpaceVisibility>(WIKI_SPACE_VISIBILITIES);
@@ -371,6 +374,19 @@ const parseMemorySource = (value: unknown, field: string): MemorySource | undefi
   }
 
   return parsed as MemorySource;
+};
+
+const parseSessionStartMode = (value: unknown, field: string): SessionStartMode | undefined => {
+  const parsed = parseSingleValue(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  if (!SESSION_START_MODES.has(parsed as SessionStartMode)) {
+    throw new ApiError(400, `${field} must be one of light, standard`);
+  }
+
+  return parsed as SessionStartMode;
 };
 
 const parseWikiPageType = (value: unknown, field: string): WikiPageType | undefined => {
@@ -909,10 +925,29 @@ export function createRouter(services: APIRouterServices): Router {
       const result = await services.sessionService.sessionStart(
         requireString(body.working_directory, "working_directory"),
         parseSingleValue(body.task_hint, "task_hint"),
-        getRequestTenantId(res)
+        getRequestTenantId(res),
+        parseSessionStartMode(body.mode, "mode") ?? "standard"
       );
 
       res.status(200).json(serializeSessionStartResult(result));
+    })
+  );
+
+  router.post(
+    "/api/deep-recall",
+    handleRoute((req, res) => {
+      requireBody(req.body);
+
+      const error: RecallProtocolError = {
+        status: 501,
+        code: "DEEP_RECALL_NOT_IMPLEMENTED",
+        message: "deep_recall is reserved for VM2-006 and is not implemented yet",
+        retryable: false
+      };
+
+      res.status(501).json({
+        error
+      });
     })
   );
 

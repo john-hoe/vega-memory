@@ -321,6 +321,85 @@ export function initializeDatabase(db: Database.Database): void {
       tags TEXT NOT NULL DEFAULT '[]'
     );
 
+    CREATE TABLE IF NOT EXISTS raw_archives (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT,
+      project TEXT NOT NULL,
+      source_memory_id TEXT,
+      archive_type TEXT NOT NULL CHECK(archive_type IN (
+        'transcript',
+        'discussion',
+        'design_debate',
+        'chat_export',
+        'tool_log',
+        'document'
+      )),
+      title TEXT NOT NULL,
+      source_uri TEXT,
+      content TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      captured_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (source_memory_id) REFERENCES memories(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS fact_claims (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT,
+      project TEXT NOT NULL,
+      source_memory_id TEXT,
+      evidence_archive_id TEXT,
+      canonical_key TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      predicate TEXT NOT NULL,
+      claim_value TEXT NOT NULL,
+      claim_text TEXT NOT NULL,
+      source TEXT NOT NULL CHECK(source IN ('hot_memory', 'raw_archive', 'manual', 'mixed')),
+      status TEXT NOT NULL CHECK(status IN ('active', 'expired', 'suspected_expired', 'conflict')),
+      confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+      valid_from TEXT NOT NULL,
+      valid_to TEXT,
+      invalidation_reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK (source_memory_id IS NOT NULL OR evidence_archive_id IS NOT NULL),
+      CHECK (valid_to IS NULL OR valid_to >= valid_from),
+      FOREIGN KEY (source_memory_id) REFERENCES memories(id) ON DELETE RESTRICT,
+      FOREIGN KEY (evidence_archive_id) REFERENCES raw_archives(id) ON DELETE RESTRICT
+    );
+
+    CREATE TABLE IF NOT EXISTS topics (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT,
+      project TEXT NOT NULL,
+      topic_key TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+      label TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'topic' CHECK(kind IN ('topic', 'room')),
+      description TEXT,
+      source TEXT NOT NULL CHECK(source IN ('auto', 'explicit')),
+      state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active', 'superseded')),
+      supersedes_topic_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (supersedes_topic_id) REFERENCES topics(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS memory_topics (
+      memory_id TEXT NOT NULL,
+      topic_id TEXT NOT NULL,
+      source TEXT NOT NULL CHECK(source IN ('auto', 'explicit')),
+      confidence REAL CHECK(confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'superseded')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (memory_id, topic_id),
+      FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+      FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE RESTRICT
+    );
+
     CREATE TABLE IF NOT EXISTS rss_feeds (
       id TEXT PRIMARY KEY,
       url TEXT UNIQUE NOT NULL,
@@ -398,6 +477,42 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_content_sources_processed
       ON content_sources(processed);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_archives_dedupe
+      ON raw_archives(COALESCE(tenant_id, ''), content_hash);
+
+    CREATE INDEX IF NOT EXISTS idx_raw_archives_project_type
+      ON raw_archives(project, archive_type);
+
+    CREATE INDEX IF NOT EXISTS idx_raw_archives_source_memory
+      ON raw_archives(source_memory_id);
+
+    CREATE INDEX IF NOT EXISTS idx_fact_claims_subject_predicate
+      ON fact_claims(project, subject, predicate, status);
+
+    CREATE INDEX IF NOT EXISTS idx_fact_claims_canonical_key
+      ON fact_claims(project, canonical_key, status);
+
+    CREATE INDEX IF NOT EXISTS idx_fact_claims_as_of
+      ON fact_claims(project, status, valid_from, valid_to);
+
+    CREATE INDEX IF NOT EXISTS idx_fact_claims_source_memory
+      ON fact_claims(source_memory_id);
+
+    CREATE INDEX IF NOT EXISTS idx_fact_claims_evidence_archive
+      ON fact_claims(evidence_archive_id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_topics_tenant_key_version
+      ON topics(COALESCE(tenant_id, ''), project, topic_key, version);
+
+    CREATE INDEX IF NOT EXISTS idx_topics_project_state
+      ON topics(project, state);
+
+    CREATE INDEX IF NOT EXISTS idx_memory_topics_topic
+      ON memory_topics(topic_id);
+
+    CREATE INDEX IF NOT EXISTS idx_memory_topics_memory_status
+      ON memory_topics(memory_id, status);
 
     CREATE INDEX IF NOT EXISTS idx_rss_feeds_active
       ON rss_feeds(active);
