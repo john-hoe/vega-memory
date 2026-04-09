@@ -182,3 +182,107 @@ test("reassignMemoryTopic supersedes the old link, activates the new link, and a
     repository.close();
   }
 });
+
+test("cross-project topic methods build tunnel views without new tables", async () => {
+  const repository = new Repository(":memory:");
+  const topicService = new TopicService(repository, baseConfig);
+
+  try {
+    repository.createMemory(
+      createStoredMemory("vega-decision", {
+        project: "vega",
+        type: "decision",
+        title: "Use SQLite"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory("vega-pitfall", {
+        project: "vega",
+        type: "pitfall",
+        title: "WAL checkpoint"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory("atlas-decision", {
+        project: "atlas",
+        type: "decision",
+        title: "Use SQLite"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory("atlas-pitfall", {
+        project: "atlas",
+        type: "pitfall",
+        title: "WAL checkpoint"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory("atlas-context", {
+        project: "atlas",
+        type: "project_context",
+        title: "Database rollout notes"
+      })
+    );
+
+    await topicService.assignTopic("vega-decision", "database", "explicit");
+    await topicService.assignTopic("vega-pitfall", "database", "explicit");
+    await topicService.assignTopic("atlas-decision", "database", "explicit");
+    await topicService.assignTopic("atlas-pitfall", "database", "explicit");
+    await topicService.assignTopic("atlas-context", "database", "explicit");
+
+    const topics = topicService.listCrossProjectTopics("database");
+    const pitfalls = topicService.getCrossProjectMemories("database", "pitfall");
+    const tunnel = topicService.getTunnelView("database");
+
+    assert.deepEqual(
+      topics.map((topic) => topic.project),
+      ["atlas", "vega"]
+    );
+    assert.equal(pitfalls.length, 2);
+    assert.deepEqual(
+      pitfalls.map((entry) => entry.memory.project),
+      ["atlas", "vega"]
+    );
+    assert.ok(pitfalls.every((entry) => entry.topic.topic_key === "database"));
+    assert.equal(tunnel.project_count, 2);
+    assert.equal(tunnel.total_memory_count, 5);
+    assert.deepEqual(
+      tunnel.projects.map((project) => ({
+        project: project.project,
+        memory_count: project.memory_count
+      })),
+      [
+        { project: "atlas", memory_count: 3 },
+        { project: "vega", memory_count: 2 }
+      ]
+    );
+    assert.deepEqual(
+      tunnel.projects[0]?.memories_by_type.project_context?.map((memory) => memory.id),
+      ["atlas-context"]
+    );
+    assert.deepEqual(
+      tunnel.projects[1]?.memories_by_type.decision?.map((memory) => memory.id),
+      ["vega-decision"]
+    );
+    assert.deepEqual(tunnel.common_decisions, [
+      {
+        title: "Use SQLite",
+        normalized_title: "use sqlite",
+        projects: ["atlas", "vega"],
+        memory_ids: ["atlas-decision", "vega-decision"],
+        occurrences: 2
+      }
+    ]);
+    assert.deepEqual(tunnel.common_pitfalls, [
+      {
+        title: "WAL checkpoint",
+        normalized_title: "wal checkpoint",
+        projects: ["atlas", "vega"],
+        memory_ids: ["atlas-pitfall", "vega-pitfall"],
+        occurrences: 2
+      }
+    ]);
+  } finally {
+    repository.close();
+  }
+});

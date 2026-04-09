@@ -26,6 +26,7 @@ import type {
   AuditContext,
   AsOfQueryOptions,
   CompactResult,
+  CrossProjectTopicMemory,
   DeepRecallRequest,
   DeepRecallResponse,
   FactClaim,
@@ -43,7 +44,8 @@ import type {
   SessionStartResult,
   StoreParams,
   StoreResult,
-  Topic
+  Topic,
+  TunnelView
 } from "../core/types.js";
 import { WIKI_PAGE_STATUSES, WIKI_PAGE_TYPES } from "../wiki/types.js";
 
@@ -175,6 +177,30 @@ const serializeTopic = (topic: Topic) => ({
   supersedes_topic_id: topic.supersedes_topic_id,
   created_at: topic.created_at,
   updated_at: topic.updated_at
+});
+
+const serializeCrossProjectTopicMemory = (entry: CrossProjectTopicMemory) => ({
+  topic: serializeTopic(entry.topic),
+  memory: serializeMemory(entry.memory)
+});
+
+const serializeTunnelView = (result: TunnelView) => ({
+  topic_key: result.topic_key,
+  project_count: result.project_count,
+  total_memory_count: result.total_memory_count,
+  projects: result.projects.map((project) => ({
+    project: project.project,
+    topic: serializeTopic(project.topic),
+    memory_count: project.memory_count,
+    memories_by_type: Object.fromEntries(
+      Object.entries(project.memories_by_type).map(([type, memories]) => [
+        type,
+        (memories ?? []).map(serializeMemory)
+      ])
+    )
+  })),
+  common_pitfalls: result.common_pitfalls,
+  common_decisions: result.common_decisions
 });
 
 const resultCountForSessionStart = (result: SessionStartResult): number =>
@@ -820,6 +846,41 @@ export function createMCPServer({
         return {
           result,
           resultCount: 1
+        };
+      })
+  );
+
+  server.tool(
+    "topic_tunnel",
+    "Return the cross-project tunnel view for a topic key.",
+    {
+      topic_key: z.string().trim().min(1)
+    },
+    async (args) =>
+      runTool(repository, "topic_tunnel", args, observer, async () => {
+        const result = topicService.getTunnelView(args.topic_key);
+
+        return {
+          result: serializeTunnelView(result),
+          resultCount: Math.max(result.total_memory_count, result.project_count)
+        };
+      })
+  );
+
+  server.tool(
+    "topic_cross_project",
+    "List cross-project memories attached to the same topic key.",
+    {
+      topic_key: z.string().trim().min(1),
+      type: z.enum(MEMORY_TYPES).optional()
+    },
+    async (args) =>
+      runTool(repository, "topic_cross_project", args, observer, async () => {
+        const result = topicService.getCrossProjectMemories(args.topic_key, args.type);
+
+        return {
+          result: result.map(serializeCrossProjectTopicMemory),
+          resultCount: result.length
         };
       })
   );

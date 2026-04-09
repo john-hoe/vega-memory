@@ -438,6 +438,35 @@ export interface TopicRecallOptions {
   fallback_to_tags?: boolean;
 }
 
+export interface CrossProjectTopicMemory {
+  topic: Topic;
+  memory: Memory;
+}
+
+export interface TunnelSharedMemorySummary {
+  title: string;
+  normalized_title: string;
+  projects: string[];
+  memory_ids: string[];
+  occurrences: number;
+}
+
+export interface TunnelProjectView {
+  project: string;
+  topic: Topic;
+  memory_count: number;
+  memories_by_type: Partial<Record<MemoryType, Memory[]>>;
+}
+
+export interface TunnelView {
+  topic_key: string;
+  project_count: number;
+  total_memory_count: number;
+  projects: TunnelProjectView[];
+  common_pitfalls: TunnelSharedMemorySummary[];
+  common_decisions: TunnelSharedMemorySummary[];
+}
+
 export interface RedactionPattern {
   name: string;
   pattern: string;

@@ -523,8 +523,14 @@ export function initializeDatabase(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_topics_project_state
       ON topics(project, state);
 
+    CREATE INDEX IF NOT EXISTS idx_topics_key_state_project
+      ON topics(topic_key, state, project);
+
     CREATE INDEX IF NOT EXISTS idx_memory_topics_topic
       ON memory_topics(topic_id);
+
+    CREATE INDEX IF NOT EXISTS idx_memory_topics_topic_status
+      ON memory_topics(topic_id, status);
 
     CREATE INDEX IF NOT EXISTS idx_memory_topics_memory_status
       ON memory_topics(memory_id, status);

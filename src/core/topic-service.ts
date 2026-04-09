@@ -2,7 +2,18 @@ import { v4 as uuidv4 } from "uuid";
 
 import type { VegaConfig } from "../config.js";
 import { Repository } from "../db/repository.js";
-import type { AuditContext, MemorySource, MemoryTopic, Topic } from "./types.js";
+import type {
+  AuditContext,
+  CrossProjectTopicMemory,
+  Memory,
+  MemorySource,
+  MemoryTopic,
+  MemoryType,
+  Topic,
+  TunnelProjectView,
+  TunnelSharedMemorySummary,
+  TunnelView
+} from "./types.js";
 
 const now = (): string => new Date().toISOString();
 
@@ -43,6 +54,85 @@ const scoreTopic = (topic: Topic, tokens: Set<string>): number =>
     .map((segment) => segment.trim().toLowerCase())
     .filter((segment) => segment.length > 0)
     .reduce((score, segment) => score + (tokens.has(segment) ? 1 : 0), 0);
+
+const MEMORY_TYPES: readonly MemoryType[] = [
+  "task_state",
+  "preference",
+  "project_context",
+  "decision",
+  "pitfall",
+  "insight"
+];
+
+const normalizeSummaryTitle = (title: string): string =>
+  title.trim().replace(/\s+/g, " ").toLowerCase();
+
+const groupMemoriesByType = (memories: Memory[]): Partial<Record<MemoryType, Memory[]>> => {
+  const grouped: Partial<Record<MemoryType, Memory[]>> = {};
+
+  for (const memoryType of MEMORY_TYPES) {
+    const matches = memories.filter((memory) => memory.type === memoryType);
+    if (matches.length > 0) {
+      grouped[memoryType] = matches;
+    }
+  }
+
+  return grouped;
+};
+
+const summarizeSharedMemories = (
+  memories: CrossProjectTopicMemory[],
+  type: Extract<MemoryType, "decision" | "pitfall">
+): TunnelSharedMemorySummary[] => {
+  const summaries = new Map<
+    string,
+    {
+      title: string;
+      projects: Set<string>;
+      memory_ids: string[];
+    }
+  >();
+
+  for (const entry of memories) {
+    if (entry.memory.type !== type) {
+      continue;
+    }
+
+    const normalizedTitle = normalizeSummaryTitle(entry.memory.title);
+    if (normalizedTitle.length === 0) {
+      continue;
+    }
+
+    const existing = summaries.get(normalizedTitle);
+    if (existing) {
+      existing.projects.add(entry.memory.project);
+      existing.memory_ids.push(entry.memory.id);
+      continue;
+    }
+
+    summaries.set(normalizedTitle, {
+      title: entry.memory.title,
+      projects: new Set([entry.memory.project]),
+      memory_ids: [entry.memory.id]
+    });
+  }
+
+  return [...summaries.entries()]
+    .map(([normalizedTitle, summary]) => ({
+      title: summary.title,
+      normalized_title: normalizedTitle,
+      projects: [...summary.projects].sort(),
+      memory_ids: summary.memory_ids.sort(),
+      occurrences: summary.memory_ids.length
+    }))
+    .filter((summary) => summary.projects.length >= 2)
+    .sort(
+      (left, right) =>
+        right.projects.length - left.projects.length ||
+        right.occurrences - left.occurrences ||
+        left.title.localeCompare(right.title)
+    );
+};
 
 export interface TopicMutationResult {
   topic: Topic;
@@ -235,6 +325,60 @@ export class TopicService {
   /** List active taxonomy rows for a project. */
   listTopics(project: string): Topic[] {
     return this.repository.listTopics(project);
+  }
+
+  listCrossProjectTopics(topicKey: string): Topic[] {
+    return this.repository.listCrossProjectTopics(normalizeTopicKey(topicKey));
+  }
+
+  getCrossProjectMemories(topicKey: string, type?: MemoryType): CrossProjectTopicMemory[] {
+    return this.repository.listCrossProjectTopicMemories(normalizeTopicKey(topicKey), type);
+  }
+
+  getTunnelView(topicKey: string): TunnelView {
+    const normalizedTopicKey = normalizeTopicKey(topicKey);
+    const memories = this.getCrossProjectMemories(normalizedTopicKey);
+    const projects = new Map<string, { topic: Topic; memories: Memory[] }>();
+
+    for (const entry of memories) {
+      const existing = projects.get(entry.topic.project);
+      if (existing) {
+        existing.memories.push(entry.memory);
+        continue;
+      }
+
+      projects.set(entry.topic.project, {
+        topic: entry.topic,
+        memories: [entry.memory]
+      });
+    }
+
+    for (const topic of this.listCrossProjectTopics(normalizedTopicKey)) {
+      if (!projects.has(topic.project)) {
+        projects.set(topic.project, {
+          topic,
+          memories: []
+        });
+      }
+    }
+
+    const projectViews: TunnelProjectView[] = [...projects.values()]
+      .map(({ topic, memories }) => ({
+        project: topic.project,
+        topic,
+        memory_count: memories.length,
+        memories_by_type: groupMemoriesByType(memories)
+      }))
+      .sort((left, right) => left.project.localeCompare(right.project));
+
+    return {
+      topic_key: normalizedTopicKey,
+      project_count: projectViews.length,
+      total_memory_count: memories.length,
+      projects: projectViews,
+      common_pitfalls: summarizeSharedMemories(memories, "pitfall"),
+      common_decisions: summarizeSharedMemories(memories, "decision")
+    };
   }
 
   /** Replace the active topic definition with a new explicit version. */

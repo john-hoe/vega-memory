@@ -6,6 +6,7 @@ import type {
   AuditContext,
   AuditEntry,
   AuditQueryFilters,
+  CrossProjectTopicMemory,
   Entity,
   EntityRelation,
   FactClaim,
@@ -125,6 +126,22 @@ interface TopicRow {
   supersedes_topic_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface CrossProjectTopicMemoryRow extends MemoryRow {
+  topic_id: string;
+  topic_tenant_id: string | null;
+  topic_project: string;
+  topic_key: string;
+  topic_version: number;
+  topic_label: string;
+  topic_kind: Topic["kind"];
+  topic_description: string | null;
+  topic_source: Topic["source"];
+  topic_state: Topic["state"];
+  topic_supersedes_topic_id: string | null;
+  topic_created_at: string;
+  topic_updated_at: string;
 }
 
 interface TopicMemoryIdRow {
@@ -959,6 +976,111 @@ export class Repository {
       .all(...params);
 
     return rows.map(mapTopic);
+  }
+
+  listCrossProjectTopics(topicKey: string, tenantId?: string | null): Topic[] {
+    const normalizedTopicKey = topicKey.trim().toLowerCase();
+
+    if (normalizedTopicKey.length === 0) {
+      return [];
+    }
+
+    const clauses = ["topic_key = ?", "state = 'active'"];
+    const params: unknown[] = [normalizedTopicKey];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], TopicRow>(
+        `SELECT *
+         FROM topics
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY project ASC, version DESC`
+      )
+      .all(...params);
+
+    return rows.map(mapTopic);
+  }
+
+  listCrossProjectTopicMemories(
+    topicKey: string,
+    type?: Memory["type"],
+    tenantId?: string | null
+  ): CrossProjectTopicMemory[] {
+    const normalizedTopicKey = topicKey.trim().toLowerCase();
+
+    if (normalizedTopicKey.length === 0) {
+      return [];
+    }
+
+    const clauses = [
+      "topic_scope.topic_key = ?",
+      "topic_scope.state = 'active'",
+      "topic_memory.topic_id = topic_scope.id",
+      "topic_memory.status = 'active'",
+      "memories.id = topic_memory.memory_id",
+      "memories.status = 'active'",
+      "memories.project = topic_scope.project"
+    ];
+    const params: unknown[] = [normalizedTopicKey];
+
+    if (tenantId !== undefined) {
+      clauses.push("topic_scope.tenant_id IS ?");
+      clauses.push("memories.tenant_id IS ?");
+      params.push(tenantId, tenantId);
+    }
+
+    if (type) {
+      clauses.push("memories.type = ?");
+      params.push(type);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], CrossProjectTopicMemoryRow>(
+        `SELECT
+           memories.*,
+           topic_scope.id AS topic_id,
+           topic_scope.tenant_id AS topic_tenant_id,
+           topic_scope.project AS topic_project,
+           topic_scope.topic_key AS topic_key,
+           topic_scope.version AS topic_version,
+           topic_scope.label AS topic_label,
+           topic_scope.kind AS topic_kind,
+           topic_scope.description AS topic_description,
+           topic_scope.source AS topic_source,
+           topic_scope.state AS topic_state,
+           topic_scope.supersedes_topic_id AS topic_supersedes_topic_id,
+           topic_scope.created_at AS topic_created_at,
+           topic_scope.updated_at AS topic_updated_at
+         FROM topics topic_scope
+         JOIN memory_topics topic_memory ON topic_memory.topic_id = topic_scope.id
+         JOIN memories ON memories.id = topic_memory.memory_id
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY topic_scope.project ASC, memories.updated_at DESC, memories.id ASC`
+      )
+      .all(...params);
+
+    return rows.map((row) => ({
+      topic: {
+        id: row.topic_id,
+        tenant_id: row.topic_tenant_id,
+        project: row.topic_project,
+        topic_key: row.topic_key,
+        version: row.topic_version,
+        label: row.topic_label,
+        kind: row.topic_kind,
+        description: row.topic_description,
+        source: row.topic_source,
+        state: row.topic_state,
+        supersedes_topic_id: row.topic_supersedes_topic_id,
+        created_at: row.topic_created_at,
+        updated_at: row.topic_updated_at
+      },
+      memory: mapMemory(row)
+    }));
   }
 
   getActiveTopic(project: string, topicKey: string, tenantId?: string | null): Topic | null {

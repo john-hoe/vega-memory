@@ -1,9 +1,17 @@
 import { Command, InvalidArgumentError } from "commander";
 
 import { TopicService } from "../../core/topic-service.js";
-import type { AuditContext, Topic } from "../../core/types.js";
+import type { AuditContext, Memory, MemoryType, Topic, TunnelView } from "../../core/types.js";
 
 const CLI_AUDIT_CONTEXT: AuditContext = { actor: "cli", ip: null };
+const MEMORY_TYPES = [
+  "task_state",
+  "preference",
+  "project_context",
+  "decision",
+  "pitfall",
+  "insight"
+] as const satisfies readonly MemoryType[];
 
 const parseVersion = (value: string): number => {
   const parsed = Number.parseInt(value, 10);
@@ -26,6 +34,113 @@ const printTopicHistoryTable = (topics: Topic[]): void => {
       topic_id: topic.id
     }))
   );
+};
+
+const serializeMemory = (memory: Memory) => ({
+  id: memory.id,
+  tenant_id: memory.tenant_id ?? null,
+  type: memory.type,
+  project: memory.project,
+  title: memory.title,
+  content: memory.content,
+  summary: memory.summary,
+  importance: memory.importance,
+  source: memory.source,
+  tags: memory.tags,
+  created_at: memory.created_at,
+  updated_at: memory.updated_at,
+  accessed_at: memory.accessed_at,
+  access_count: memory.access_count,
+  status: memory.status,
+  verified: memory.verified,
+  scope: memory.scope,
+  accessed_projects: memory.accessed_projects
+});
+
+const serializeTunnelView = (view: TunnelView) => ({
+  topic_key: view.topic_key,
+  project_count: view.project_count,
+  total_memory_count: view.total_memory_count,
+  projects: view.projects.map((project) => ({
+    project: project.project,
+    topic: project.topic,
+    memory_count: project.memory_count,
+    memories_by_type: Object.fromEntries(
+      MEMORY_TYPES.flatMap((type) => {
+        const memories = project.memories_by_type[type];
+        return memories ? [[type, memories.map(serializeMemory)]] : [];
+      })
+    )
+  })),
+  common_pitfalls: view.common_pitfalls,
+  common_decisions: view.common_decisions
+});
+
+const formatTypeCounts = (view: TunnelView["projects"][number]): string =>
+  MEMORY_TYPES.flatMap((type) => {
+    const count = view.memories_by_type[type]?.length ?? 0;
+    return count > 0 ? [`${type}:${count}`] : [];
+  }).join(", ");
+
+const printTunnelView = (view: TunnelView): void => {
+  if (view.projects.length === 0) {
+    console.log("No cross-project tunnel data found.");
+    return;
+  }
+
+  console.log(`topic_key: ${view.topic_key}`);
+  console.log(`projects: ${view.project_count}`);
+  console.log(`memories: ${view.total_memory_count}`);
+  console.table(
+    view.projects.map((project) => ({
+      project: project.project,
+      label: project.topic.label,
+      kind: project.topic.kind,
+      memory_count: project.memory_count,
+      types: formatTypeCounts(project)
+    }))
+  );
+
+  for (const project of view.projects) {
+    const rows = MEMORY_TYPES.flatMap((type) =>
+      (project.memories_by_type[type] ?? []).map((memory) => ({
+        id: memory.id,
+        type: memory.type,
+        title: memory.title,
+        updated_at: memory.updated_at
+      }))
+    );
+
+    console.log(`\n[${project.project}] ${project.topic.label}`);
+    if (rows.length === 0) {
+      console.log("No memories.");
+      continue;
+    }
+
+    console.table(rows);
+  }
+
+  if (view.common_pitfalls.length > 0) {
+    console.log("\nCommon pitfalls");
+    console.table(
+      view.common_pitfalls.map((summary) => ({
+        title: summary.title,
+        projects: summary.projects.join(", "),
+        occurrences: summary.occurrences
+      }))
+    );
+  }
+
+  if (view.common_decisions.length > 0) {
+    console.log("\nCommon decisions");
+    console.table(
+      view.common_decisions.map((summary) => ({
+        title: summary.title,
+        projects: summary.projects.join(", "),
+        occurrences: summary.occurrences
+      }))
+    );
+  }
 };
 
 export function registerTopicCommand(program: Command, topicService: TopicService): void {
@@ -155,6 +270,23 @@ export function registerTopicCommand(program: Command, topicService: TopicServic
         console.log(
           `reassigned ${result.memory_id} from ${options.fromTopicKey} to ${options.toTopicKey}`
         );
+      }
+    );
+
+  topicCommand
+    .command("tunnel <topicKey>")
+    .description("Show the cross-project tunnel view for a topic key")
+    .option("--json", "print JSON")
+    .action(
+      (topicKey: string, options: { json?: boolean }) => {
+        const result = topicService.getTunnelView(topicKey);
+
+        if (options.json) {
+          console.log(JSON.stringify(serializeTunnelView(result), null, 2));
+          return;
+        }
+
+        printTunnelView(result);
       }
     );
 }

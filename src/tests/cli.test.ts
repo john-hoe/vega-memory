@@ -254,6 +254,127 @@ test("CLI topic override and history expose versioned taxonomy changes", async (
   }
 });
 
+test("CLI topic tunnel shows cross-project topic reuse as JSON", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-topic-tunnel-"));
+  const dbPath = join(tempDir, "memory.db");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999"
+  };
+  const repository = new Repository(dbPath);
+  const topicService = new TopicService(repository, topicConfig);
+
+  try {
+    repository.createMemory({
+      id: "vega-decision",
+      tenant_id: null,
+      type: "decision",
+      project: "vega",
+      title: "Use SQLite",
+      content: "Primary database choice for vega.",
+      summary: null,
+      embedding: null,
+      importance: 0.5,
+      source: "explicit",
+      tags: ["database"],
+      created_at: "2026-04-09T00:00:00.000Z",
+      updated_at: "2026-04-09T00:00:00.000Z",
+      accessed_at: "2026-04-09T00:00:00.000Z",
+      status: "active",
+      verified: "verified",
+      scope: "project",
+      accessed_projects: ["vega"]
+    });
+    repository.createMemory({
+      id: "atlas-pitfall",
+      tenant_id: null,
+      type: "pitfall",
+      project: "atlas",
+      title: "WAL checkpoint",
+      content: "Checkpoint before copying backups.",
+      summary: null,
+      embedding: null,
+      importance: 0.5,
+      source: "explicit",
+      tags: ["database"],
+      created_at: "2026-04-09T00:00:00.000Z",
+      updated_at: "2026-04-09T00:00:00.000Z",
+      accessed_at: "2026-04-09T00:00:00.000Z",
+      status: "active",
+      verified: "verified",
+      scope: "project",
+      accessed_projects: ["atlas"]
+    });
+    repository.createMemory({
+      id: "atlas-decision",
+      tenant_id: null,
+      type: "decision",
+      project: "atlas",
+      title: "Use SQLite",
+      content: "Primary database choice for atlas.",
+      summary: null,
+      embedding: null,
+      importance: 0.5,
+      source: "explicit",
+      tags: ["database"],
+      created_at: "2026-04-09T00:00:00.000Z",
+      updated_at: "2026-04-09T00:00:00.000Z",
+      accessed_at: "2026-04-09T00:00:00.000Z",
+      status: "active",
+      verified: "verified",
+      scope: "project",
+      accessed_projects: ["atlas"]
+    });
+    await topicService.assignTopic("vega-decision", "database", "explicit");
+    await topicService.assignTopic("atlas-pitfall", "database", "explicit");
+    await topicService.assignTopic("atlas-decision", "database", "explicit");
+    repository.close();
+
+    const tunnelOutput = JSON.parse(
+      runCli(["topic", "tunnel", "database", "--json"], env)
+    ) as {
+      topic_key: string;
+      project_count: number;
+      total_memory_count: number;
+      projects: Array<{ project: string; memory_count: number }>;
+      common_decisions: Array<{ title: string; projects: string[]; occurrences: number }>;
+      common_pitfalls: Array<{ title: string; projects: string[]; occurrences: number }>;
+    };
+
+    assert.equal(tunnelOutput.topic_key, "database");
+    assert.equal(tunnelOutput.project_count, 2);
+    assert.equal(tunnelOutput.total_memory_count, 3);
+    assert.deepEqual(
+      tunnelOutput.projects.map((project) => ({
+        project: project.project,
+        memory_count: project.memory_count
+      })),
+      [
+        { project: "atlas", memory_count: 2 },
+        { project: "vega", memory_count: 1 }
+      ]
+    );
+    assert.deepEqual(
+      tunnelOutput.common_decisions.map((summary) => ({
+        title: summary.title,
+        projects: summary.projects,
+        occurrences: summary.occurrences
+      })),
+      [
+        {
+          title: "Use SQLite",
+          projects: ["atlas", "vega"],
+          occurrences: 2
+        }
+      ]
+    );
+    assert.deepEqual(tunnelOutput.common_pitfalls, []);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CLI Phase 5 commands support JSON output", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-phase5-json-"));
   const dbPath = join(tempDir, "memory.db");

@@ -358,6 +358,122 @@ test("topic MCP tools expose override, history, revert, and reassign flows", asy
   }
 });
 
+test("topic tunnel MCP tools expose cross-project topic views", async () => {
+  const { repository, server } = createServerHarness();
+  const topicService = new TopicService(repository, baseConfig);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "vega-decision",
+        project: "vega",
+        type: "decision",
+        title: "Use SQLite",
+        content: "Primary database choice for vega."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "atlas-decision",
+        project: "atlas",
+        type: "decision",
+        title: "Use SQLite",
+        content: "Primary database choice for atlas."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "atlas-pitfall",
+        project: "atlas",
+        type: "pitfall",
+        title: "WAL checkpoint",
+        content: "Checkpoint before copying backups."
+      })
+    );
+
+    await topicService.assignTopic("vega-decision", "database", "explicit");
+    await topicService.assignTopic("atlas-decision", "database", "explicit");
+    await topicService.assignTopic("atlas-pitfall", "database", "explicit");
+
+    const tunnelResult = await getRegisteredTools(server).topic_tunnel.handler(
+      {
+        topic_key: "database"
+      },
+      {}
+    );
+    const crossProjectResult = await getRegisteredTools(server).topic_cross_project.handler(
+      {
+        topic_key: "database",
+        type: "decision"
+      },
+      {}
+    );
+
+    const tunnelPayload = parseToolPayload<{
+      topic_key: string;
+      project_count: number;
+      total_memory_count: number;
+      projects: Array<{ project: string; memory_count: number }>;
+      common_decisions: Array<{ title: string; projects: string[]; occurrences: number }>;
+    }>(tunnelResult);
+    const crossProjectPayload = parseToolPayload<
+      Array<{ topic: { project: string; topic_key: string }; memory: { id: string; type: string } }>
+    >(crossProjectResult);
+
+    assert.equal(tunnelPayload.topic_key, "database");
+    assert.equal(tunnelPayload.project_count, 2);
+    assert.equal(tunnelPayload.total_memory_count, 3);
+    assert.deepEqual(
+      tunnelPayload.projects.map((project) => ({
+        project: project.project,
+        memory_count: project.memory_count
+      })),
+      [
+        { project: "atlas", memory_count: 2 },
+        { project: "vega", memory_count: 1 }
+      ]
+    );
+    assert.deepEqual(
+      tunnelPayload.common_decisions.map((summary) => ({
+        title: summary.title,
+        projects: summary.projects,
+        occurrences: summary.occurrences
+      })),
+      [
+        {
+          title: "Use SQLite",
+          projects: ["atlas", "vega"],
+          occurrences: 2
+        }
+      ]
+    );
+    assert.deepEqual(
+      crossProjectPayload.map((entry) => ({
+        project: entry.topic.project,
+        topic_key: entry.topic.topic_key,
+        id: entry.memory.id,
+        type: entry.memory.type
+      })),
+      [
+        {
+          project: "atlas",
+          topic_key: "database",
+          id: "atlas-decision",
+          type: "decision"
+        },
+        {
+          project: "vega",
+          topic_key: "database",
+          id: "vega-decision",
+          type: "decision"
+        }
+      ]
+    );
+  } finally {
+    repository.close();
+  }
+});
+
 test("wiki_read MCP tool returns page with backlinks", async () => {
   const { repository, pageManager, crossReferenceService, server } = createServerHarness();
 
