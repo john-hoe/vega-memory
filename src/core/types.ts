@@ -391,6 +391,20 @@ export interface StoreResult {
   title: string;
 }
 
+export interface TopicAssignmentRequest {
+  memory_id: string;
+  project: string;
+  topic_key: string;
+  source: MemorySource;
+  confidence?: number | null;
+}
+
+export interface TopicRecallOptions {
+  topic_key: string;
+  include_rooms?: boolean;
+  fallback_to_tags?: boolean;
+}
+
 export interface RedactionPattern {
   name: string;
   pattern: string;
@@ -402,12 +416,14 @@ export interface SearchResult {
   memory: Memory;
   similarity: number;
   finalScore: number;
+  fallback?: boolean;
 }
 
 export interface SearchOptions {
   project?: string;
   type?: MemoryType;
   tenant_id?: string | null;
+  topic?: string | TopicRecallOptions;
   limit: number;
   minSimilarity: number;
 }
