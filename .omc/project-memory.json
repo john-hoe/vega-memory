@@ -186,6 +186,12 @@
       "type": "file"
     },
     {
+      "path": "src/mcp/server.ts",
+      "accessCount": 3,
+      "lastAccessed": 1775726438179,
+      "type": "directory"
+    },
+    {
       "path": "docs/specs/vm2-001-recall-protocol.md",
       "accessCount": 1,
       "lastAccessed": 1775716318248,

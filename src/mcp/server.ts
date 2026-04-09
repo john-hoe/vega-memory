@@ -400,11 +400,23 @@ export function createMCPServer({
         return {
           result: result.map((entry) => ({
             id: entry.memory.id,
+            type: entry.memory.type,
+            project: entry.memory.project,
             title: entry.memory.title,
             content: entry.memory.content,
-            type: entry.memory.type,
+            importance: entry.memory.importance,
+            source: entry.memory.source,
+            tags: entry.memory.tags,
+            created_at: entry.memory.created_at,
+            updated_at: entry.memory.updated_at,
+            accessed_at: entry.memory.accessed_at,
+            access_count: entry.memory.access_count,
+            status: entry.memory.status,
+            verified: entry.memory.verified,
+            scope: entry.memory.scope,
+            accessed_projects: entry.memory.accessed_projects,
             similarity: entry.similarity,
-            project: entry.memory.project
+            finalScore: entry.finalScore
           })),
           resultCount: result.length
         };
