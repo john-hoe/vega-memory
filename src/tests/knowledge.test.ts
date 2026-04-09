@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -15,6 +16,7 @@ import type { VegaConfig } from "../config.js";
 import { CodeIndexService } from "../core/code-index.js";
 import { DocIndexService } from "../core/doc-index.js";
 import { GitHistoryService } from "../core/git-history.js";
+import { GraphReportService } from "../core/graph-report.js";
 import { ImageAnalyzer, ImageMemoryService } from "../core/image-memory.js";
 import { KnowledgeGraphService } from "../core/knowledge-graph.js";
 import { MemoryService } from "../core/memory.js";
@@ -991,6 +993,82 @@ test("DocIndexService.indexMarkdown builds document graph sidecar when enabled",
   }
 });
 
+test("GraphReportService summarizes code and document sidecars in markdown", async () => {
+  const restoreFetch = installEmbeddingMock();
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-graph-report-"));
+  const repoPath = join(tempDir, "repo");
+  const docsPath = join(repoPath, "docs");
+  const sourcePath = join(repoPath, "src");
+  const previousCwd = process.cwd();
+  const repository = new Repository(":memory:");
+  const graphService = new KnowledgeGraphService(repository);
+  const memoryService = new MemoryService(repository, baseConfig);
+  const codeIndexService = new CodeIndexService(repository, memoryService, {
+    features: {
+      codeGraph: true
+    }
+  });
+  const docIndexService = new DocIndexService(repository, memoryService, {
+    features: {
+      codeGraph: true
+    }
+  });
+  const reportService = new GraphReportService(repository, graphService);
+
+  mkdirSync(sourcePath, { recursive: true });
+  mkdirSync(docsPath, { recursive: true });
+  writeFileSync(
+    join(sourcePath, "index.js"),
+    [
+      "import { helper } from \"./util.js\";",
+      "export function run() {",
+      "  return helper();",
+      "}"
+    ].join("\n"),
+    "utf8"
+  );
+  writeFileSync(join(sourcePath, "util.js"), "export function helper() { return 1; }\n", "utf8");
+  writeFileSync(
+    join(docsPath, "guide.md"),
+    [
+      "## Setup",
+      "",
+      "Core Term: graph report term.",
+      "",
+      "### Details",
+      "",
+      "See [[API Guide]] for more detail."
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    await codeIndexService.indexDirectory(repoPath, ["js"], { graph: true });
+    await docIndexService.indexDirectory(docsPath, "repo", ["md"], { graph: true });
+
+    const report = reportService.generateGraphReport("repo");
+
+    assert.match(report, /# Graph Report: repo/);
+    assert.match(report, /## Code Structure/);
+    assert.match(report, /`src\/index\.js`/);
+    assert.match(report, /`src\/index\.js` -> `src\/util\.js`/);
+    assert.match(report, /## Document Structure/);
+    assert.match(report, /`guide\.md` - headings 2, terms 1, references 1/);
+    assert.match(report, /`Setup`/);
+
+    process.chdir(tempDir);
+    const saved = reportService.saveGraphReport("repo");
+
+    assert.equal(existsSync(saved.path), true);
+    assert.equal(readFileSync(saved.path, "utf8"), saved.report);
+  } finally {
+    process.chdir(previousCwd);
+    restoreFetch();
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("DocIndexService.indexDirectory tracks cache status and removes stale section memories", async () => {
   const restoreFetch = installEmbeddingMock();
   const tempDir = mkdtempSync(join(tmpdir(), "vega-doc-index-incremental-"));
@@ -1562,5 +1640,97 @@ test("graph query tools forward arguments and serialize structured results", asy
   } finally {
     repository.close();
     await server.close();
+  }
+});
+
+test("graph_report tool returns markdown and optional saved path", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-mcp-graph-report-"));
+  const previousCwd = process.cwd();
+  const repository = new Repository(":memory:");
+  const graphService = new KnowledgeGraphService(repository);
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "memory-report",
+        project: "vega"
+      })
+    );
+    graphService.linkMemory("memory-report", [
+      { name: "Vega Memory", type: "project" },
+      { name: "SQLite", type: "tool" }
+    ]);
+
+    process.chdir(tempDir);
+
+    const server = createMCPServer({
+      repository,
+      graphService,
+      memoryService: {
+        store: async () => ({ id: "noop", action: "created", title: "noop" }),
+        update: async () => {},
+        delete: async () => {}
+      },
+      recallService: {
+        recall: async () => [],
+        listMemories: () => []
+      },
+      sessionService: {
+        sessionStart: async () => ({
+          project: "vega",
+          active_tasks: [],
+          preferences: [],
+          context: [],
+          relevant: [],
+          relevant_wiki_pages: [],
+          wiki_drafts_pending: 0,
+          recent_unverified: [],
+          conflicts: [],
+          proactive_warnings: [],
+          token_estimate: 0
+        }),
+        sessionEnd: async () => {}
+      },
+      compactService: {
+        compact: () => ({ merged: 0, archived: 0 })
+      },
+      config: baseConfig
+    });
+
+    try {
+      const registeredTools = (
+        server as unknown as {
+          _registeredTools: Record<
+            string,
+            {
+              handler: (args: Record<string, unknown>, extra: object) => Promise<{ content: Array<{ text: string }> }>;
+            }
+          >;
+        }
+      )._registeredTools;
+      const result = await registeredTools.graph_report.handler(
+        {
+          project: "vega",
+          save: true
+        },
+        {}
+      );
+      const payload = JSON.parse(result.content[0]?.text ?? "{}") as {
+        project: string;
+        report: string;
+        saved_path: string;
+      };
+
+      assert.equal(payload.project, "vega");
+      assert.match(payload.report, /# Graph Report: vega/);
+      assert.equal(existsSync(payload.saved_path), true);
+      assert.match(payload.saved_path, /data\/vega-graph-report\.md$/);
+    } finally {
+      await server.close();
+    }
+  } finally {
+    process.chdir(previousCwd);
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
   }
 });

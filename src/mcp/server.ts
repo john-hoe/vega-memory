@@ -10,6 +10,7 @@ import { isDeepRecallAvailable, isFactClaimsEnabled, type VegaConfig } from "../
 import { ArchiveService } from "../core/archive-service.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
+import { GraphReportService } from "../core/graph-report.js";
 import { getHealthReport } from "../core/health.js";
 import { TopicService } from "../core/topic-service.js";
 import { Repository } from "../db/repository.js";
@@ -122,6 +123,7 @@ const serializeSessionStartResult = (result: SessionStartResult) => ({
   conflicts: result.conflicts.map(serializeMemory),
   proactive_warnings: result.proactive_warnings,
   token_estimate: result.token_estimate,
+  ...(result.graph_report !== undefined ? { graph_report: result.graph_report } : {}),
   ...(result.deep_recall !== undefined ? { deep_recall: result.deep_recall } : {})
 });
 
@@ -266,6 +268,7 @@ const resultCountForSessionStart = (result: SessionStartResult): number =>
   result.relevant_wiki_pages.length +
   result.recent_unverified.length +
   result.conflicts.length +
+  (result.graph_report === undefined ? 0 : 1) +
   (result.deep_recall?.results.length ?? 0);
 
 const dbg = (msg: string) => {
@@ -484,6 +487,7 @@ export function createMCPServer({
     version: "0.1.0"
   });
   const diagnoseService = new DiagnoseService(repository, config);
+  const graphReportService = new GraphReportService(repository);
   const topicService = new TopicService(repository, config);
   const rawArchiveService = archiveService ?? new ArchiveService(repository, config);
   const claimsService = factClaimService ?? new FactClaimService(repository, config);
@@ -599,6 +603,38 @@ export function createMCPServer({
         return {
           result: serializeGraphSubgraphResult(result),
           resultCount: result.entities.length + result.relations.length + result.memories.length
+        };
+      })
+  );
+
+  server.tool(
+    "graph_report",
+    "Generate a markdown project structure report from the graph sidecar.",
+    {
+      project: z.string().trim().min(1),
+      save: z.boolean().default(false)
+    },
+    async (args) =>
+      runTool(repository, "graph_report", args, observer, async () => {
+        const result: { project: string; report: string; saved_path: string | null } = args.save
+          ? (() => {
+              const saved = graphReportService.saveGraphReport(args.project);
+
+              return {
+                project: saved.project,
+                report: saved.report,
+                saved_path: saved.path
+              };
+            })()
+          : {
+              project: args.project,
+              report: graphReportService.generateGraphReport(args.project),
+              saved_path: null
+            };
+
+        return {
+          result,
+          resultCount: 1
         };
       })
   );

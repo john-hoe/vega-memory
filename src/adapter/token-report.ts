@@ -63,6 +63,7 @@ const countSessionItems = (result: SessionStartResult): number =>
   result.relevant_wiki_pages.length +
   result.recent_unverified.length +
   result.conflicts.length +
+  (result.graph_report === undefined ? 0 : 1) +
   (result.deep_recall?.results.length ?? 0);
 
 const buildMemory = (

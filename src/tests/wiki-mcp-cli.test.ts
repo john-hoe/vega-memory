@@ -711,6 +711,7 @@ test("session_start MCP tool accepts L3 mode and returns deep recall payload", a
           conflicts: [],
           proactive_warnings: [],
           token_estimate: 12,
+          graph_report: "# Graph Report: vega\n",
           deep_recall: {
             results: [
               {
@@ -742,6 +743,7 @@ test("session_start MCP tool accepts L3 mode and returns deep recall payload", a
       {}
     );
     const payload = parseToolPayload<{
+      graph_report?: string;
       deep_recall?: {
         injected_into_session: boolean;
         results: Array<{ archive_type: string }>;
@@ -749,6 +751,7 @@ test("session_start MCP tool accepts L3 mode and returns deep recall payload", a
     }>(result);
 
     assert.equal(capturedMode, "L3");
+    assert.equal(payload.graph_report, "# Graph Report: vega\n");
     assert.ok(payload.deep_recall);
     assert.equal(payload.deep_recall.injected_into_session, true);
     assert.equal(payload.deep_recall.results[0]?.archive_type, "tool_log");

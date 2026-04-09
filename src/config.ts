@@ -57,6 +57,7 @@ export interface VegaFeatureFlags {
 export interface VegaConfig {
   dbPath: string;
   dbEncryption: boolean;
+  sessionIncludeGraphReport?: boolean;
   archivePreserveRaw?: boolean;
   byokEnabled?: boolean;
   csrfEnabled?: boolean;
@@ -514,6 +515,7 @@ export const loadConfig = (): VegaConfig => {
   return {
     dbPath: expandHomePath(process.env.VEGA_DB_PATH ?? "./data/memory.db"),
     dbEncryption,
+    sessionIncludeGraphReport: parseBoolean(process.env.VEGA_SESSION_INCLUDE_GRAPH_REPORT, false),
     byokEnabled: parseBoolean(process.env.VEGA_BYOK_ENABLED, false),
     csrfEnabled: parseBoolean(process.env.VEGA_CSRF_ENABLED, false),
     corsOrigins: parseStringArray(process.env.VEGA_CORS_ORIGINS),

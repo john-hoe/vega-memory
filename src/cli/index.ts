@@ -49,6 +49,7 @@ import { CompressionService } from "../core/compression.js";
 import { DocGenerator } from "../core/doc-generator.js";
 import { DocIndexService } from "../core/doc-index.js";
 import { GitHistoryService } from "../core/git-history.js";
+import { GraphReportService } from "../core/graph-report.js";
 import { ImageAnalyzer, ImageMemoryService } from "../core/image-memory.js";
 import { KnowledgeGraphService } from "../core/knowledge-graph.js";
 import { MemoryService } from "../core/memory.js";
@@ -118,6 +119,7 @@ async function main(): Promise<void> {
   const repository = new Repository(createAdapter({ ...config, encryptionKey: repositoryKey }));
   const searchEngine = new SearchEngine(repository, config);
   const knowledgeGraphService = new KnowledgeGraphService(repository);
+  const graphReportService = new GraphReportService(repository, knowledgeGraphService);
   const memoryService = new MemoryService(repository, config, knowledgeGraphService);
   const recallService = new RecallService(repository, searchEngine, config);
   const sessionService = new SessionService(
@@ -175,7 +177,7 @@ async function main(): Promise<void> {
   registerListCommand(program, recallService);
   registerCompressionCommand(program, compressionService, repository);
   registerDocGeneratorCommand(program, docGenerator);
-  registerGraphCommand(program, knowledgeGraphService);
+  registerGraphCommand(program, knowledgeGraphService, graphReportService);
   registerCodeIndexCommand(program, codeIndexService, isCodeGraphEnabled(config));
   registerGitImportCommand(program, gitHistoryService);
   registerScreenshotCommand(program, imageMemoryService);

@@ -474,6 +474,7 @@ export interface SessionStartResult {
   conflicts: Memory[];
   proactive_warnings: string[];
   token_estimate: number;
+  graph_report?: string;
   deep_recall?: DeepRecallResponse;
 }
 

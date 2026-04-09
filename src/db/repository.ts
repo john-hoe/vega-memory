@@ -3000,6 +3000,37 @@ export class Repository {
     return rows.map(mapEntityRelation);
   }
 
+  listGraphRelations(project?: string): EntityRelation[] {
+    const normalizedProject = project?.trim();
+    const hasProjectFilter = normalizedProject !== undefined && normalizedProject.length > 0;
+    const params = hasProjectFilter ? [normalizedProject] : [];
+    const rows = this.db
+      .prepare<unknown[], EntityRelationRow>(
+        `SELECT
+           relations.id,
+           relations.source_entity_id,
+           relations.target_entity_id,
+           relations.relation_type,
+           relations.memory_id,
+           relations.confidence,
+           relations.extraction_method,
+           relations.created_at,
+           source.name AS source_entity_name,
+           source.type AS source_entity_type,
+           target.name AS target_entity_name,
+           target.type AS target_entity_type
+         FROM relations
+         JOIN entities AS source ON source.id = relations.source_entity_id
+         JOIN entities AS target ON target.id = relations.target_entity_id
+         ${hasProjectFilter ? "JOIN memories ON memories.id = relations.memory_id" : ""}
+         ${hasProjectFilter ? "WHERE memories.project = ?" : ""}
+         ORDER BY relations.created_at ASC, relations.id ASC`
+      )
+      .all(...params);
+
+    return rows.map(mapEntityRelation);
+  }
+
   findEntity(name: string): Entity | null {
     const normalizedName = name.trim();
     if (normalizedName.length === 0) {

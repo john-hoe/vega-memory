@@ -88,6 +88,7 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_FEATURE_TOPIC_RECALL: process.env.VEGA_FEATURE_TOPIC_RECALL,
     VEGA_FEATURE_DEEP_RECALL: process.env.VEGA_FEATURE_DEEP_RECALL,
     VEGA_FEATURE_CODE_GRAPH: process.env.VEGA_FEATURE_CODE_GRAPH,
+    VEGA_SESSION_INCLUDE_GRAPH_REPORT: process.env.VEGA_SESSION_INCLUDE_GRAPH_REPORT,
     VEGA_WEBHOOKS: process.env.VEGA_WEBHOOKS
   };
 
@@ -170,11 +171,13 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_FEATURE_TOPIC_RECALL;
   delete process.env.VEGA_FEATURE_DEEP_RECALL;
   delete process.env.VEGA_FEATURE_CODE_GRAPH;
+  delete process.env.VEGA_SESSION_INCLUDE_GRAPH_REPORT;
   delete process.env.VEGA_WEBHOOKS;
 
   assertConfigSubset(loadConfig() as unknown as Record<string, unknown>, {
     dbPath: "./data/memory.db",
     databaseType: "sqlite",
+    sessionIncludeGraphReport: false,
     metricsEnabled: false,
     sentryDsn: undefined,
     logLevel: "info",
@@ -344,6 +347,7 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_FEATURE_TOPIC_RECALL: process.env.VEGA_FEATURE_TOPIC_RECALL,
     VEGA_FEATURE_DEEP_RECALL: process.env.VEGA_FEATURE_DEEP_RECALL,
     VEGA_FEATURE_CODE_GRAPH: process.env.VEGA_FEATURE_CODE_GRAPH,
+    VEGA_SESSION_INCLUDE_GRAPH_REPORT: process.env.VEGA_SESSION_INCLUDE_GRAPH_REPORT,
     VEGA_WEBHOOKS: process.env.VEGA_WEBHOOKS
   };
 
@@ -426,6 +430,7 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_FEATURE_TOPIC_RECALL = "yes";
   process.env.VEGA_FEATURE_DEEP_RECALL = "off";
   process.env.VEGA_FEATURE_CODE_GRAPH = "true";
+  process.env.VEGA_SESSION_INCLUDE_GRAPH_REPORT = "true";
   process.env.VEGA_WEBHOOKS = JSON.stringify([
     {
       url: "https://example.com/hooks/memory",
@@ -438,6 +443,7 @@ test("loadConfig reads overrides from process.env", () => {
   assertConfigSubset(loadConfig() as unknown as Record<string, unknown>, {
     dbPath: "/tmp/vega.db",
     databaseType: "postgres",
+    sessionIncludeGraphReport: true,
     metricsEnabled: true,
     sentryDsn: "https://example@sentry.test/1",
     logLevel: "debug",

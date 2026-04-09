@@ -15,6 +15,7 @@ import { PageManager } from "../wiki/page-manager.js";
 import { ArchiveService } from "./archive-service.js";
 import { ExtractionService } from "./extraction.js";
 import { FactClaimService } from "./fact-claim-service.js";
+import { GraphReportService } from "./graph-report.js";
 import { MemoryService } from "./memory.js";
 import { RecallService } from "./recall.js";
 import { RegressionGuard } from "./regression-guard.js";
@@ -69,6 +70,7 @@ const SNAPSHOT_EXPORT_DEBOUNCE_MS = 60_000;
 const OLLAMA_AVAILABILITY_TTL_MS = 60_000;
 const EXTRACTION_MIN_SUMMARY_LENGTH = 120;
 const SESSION_START_CACHE_TTL_MS = 5_000;
+const GRAPH_REPORT_TRUNCATION_NOTICE = "[graph report truncated to fit session token budget]";
 
 interface SessionWikiSearchRow {
   slug: string;
@@ -237,6 +239,39 @@ const takeWarningsWithinBudget = (warnings: string[], tokenBudget: number): stri
   return kept;
 };
 
+const trimTextWithinTokenBudget = (content: string, tokenBudget: number): string => {
+  const trimmed = content.trim();
+
+  if (trimmed.length === 0 || tokenBudget <= 0) {
+    return "";
+  }
+
+  if (estimateTextTokens(trimmed) <= tokenBudget) {
+    return trimmed;
+  }
+
+  const keptLines: string[] = [];
+
+  for (const line of trimmed.split("\n")) {
+    const next = keptLines.length === 0 ? line : `${keptLines.join("\n")}\n${line}`;
+
+    if (estimateTextTokens(next) > tokenBudget) {
+      break;
+    }
+
+    keptLines.push(line);
+  }
+
+  if (keptLines.length === 0) {
+    return "";
+  }
+
+  const base = keptLines.join("\n").trimEnd();
+  const withNotice = `${base}\n\n${GRAPH_REPORT_TRUNCATION_NOTICE}`;
+
+  return estimateTextTokens(withNotice) <= tokenBudget ? withNotice : base;
+};
+
 const countSessionResultItems = (result: SessionStartResult): number =>
   result.active_tasks.length +
   result.preferences.length +
@@ -245,6 +280,7 @@ const countSessionResultItems = (result: SessionStartResult): number =>
   result.relevant_wiki_pages.length +
   result.recent_unverified.length +
   result.conflicts.length +
+  (result.graph_report === undefined ? 0 : 1) +
   (result.deep_recall?.results.length ?? 0);
 
 const appendWarnings = (warnings: string[], nextWarnings: string[]): string[] =>
@@ -286,7 +322,8 @@ export class SessionService {
     private readonly config: VegaConfig,
     private readonly pageManager?: PageManager | null,
     regressionGuard?: RegressionGuard,
-    private readonly factClaimService = new FactClaimService(repository, config)
+    private readonly factClaimService = new FactClaimService(repository, config),
+    private readonly graphReportService = new GraphReportService(repository)
   ) {
     this.archiveService = new ArchiveService(repository, config);
     this.extractionService = new ExtractionService(config);
@@ -336,6 +373,7 @@ export class SessionService {
       taskHintKeywords,
       tenantId
     );
+    this.attachGraphReport(result, canonicalMode, project);
     const violations = this.regressionGuard.recordSessionStart(
       mode,
       result.token_estimate,
@@ -359,6 +397,42 @@ export class SessionService {
     });
 
     return structuredClone(result) as SessionStartResult;
+  }
+
+  private attachGraphReport(
+    result: SessionStartResult,
+    mode: ReturnType<typeof normalizeSessionStartMode>,
+    project: string
+  ): void {
+    if (this.config.sessionIncludeGraphReport !== true || (mode !== "L2" && mode !== "L3")) {
+      return;
+    }
+
+    try {
+      const report = this.graphReportService.generateGraphReport(project);
+      const remainingBudget = Math.max(0, this.config.tokenBudget - result.token_estimate);
+      const trimmedReport = trimTextWithinTokenBudget(report, remainingBudget);
+
+      if (trimmedReport.length === 0) {
+        result.proactive_warnings = appendWarnings(result.proactive_warnings, [
+          "graph report omitted because no session token budget remained."
+        ]);
+        return;
+      }
+
+      result.graph_report = trimmedReport;
+      result.token_estimate += estimateTextTokens(trimmedReport);
+
+      if (trimmedReport !== report.trim()) {
+        result.proactive_warnings = appendWarnings(result.proactive_warnings, [
+          "graph report was truncated to fit the session token budget."
+        ]);
+      }
+    } catch (error) {
+      result.proactive_warnings = appendWarnings(result.proactive_warnings, [
+        `graph report generation failed: ${error instanceof Error ? error.message : String(error)}`
+      ]);
+    }
   }
 
   private async buildSessionStartResult(

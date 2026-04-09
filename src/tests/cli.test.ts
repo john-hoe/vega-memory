@@ -357,6 +357,45 @@ test("CLI index --graph and graph stats expose structural graph counts", () => {
   }
 });
 
+test("CLI graph report prints markdown and saves the report file", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-graph-report-"));
+  const dbPath = join(tempDir, "memory.db");
+  const sourceDir = join(tempDir, "repo");
+  const savedReportPath = join(projectRoot, "data", "repo-graph-report.md");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999"
+  };
+
+  mkdirSync(join(sourceDir, "src"), { recursive: true });
+  writeFileSync(
+    join(sourceDir, "src", "index.js"),
+    [
+      "import { helper } from \"./util.js\";",
+      "export function run() {",
+      "  return helper();",
+      "}"
+    ].join("\n"),
+    "utf8"
+  );
+  writeFileSync(join(sourceDir, "src", "util.js"), "export function helper() { return 1; }\n", "utf8");
+
+  try {
+    runCli(["index", sourceDir, "--graph", "--ext", "js"], env);
+
+    const report = runCli(["graph", "report", "repo", "--save"], env);
+
+    assert.match(report, /# Graph Report: repo/);
+    assert.match(report, /## Module Dependencies/);
+    assert.match(report, /`src\/index\.js` -> `src\/util\.js`/);
+    assert.equal(existsSync(savedReportPath), true);
+    assert.equal(readFileSync(savedReportPath, "utf8").trim(), report.trim());
+  } finally {
+    rmSync(savedReportPath, { force: true });
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CLI index --graph builds the sidecar graph and graph stats report it", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-graph-"));
   const dbPath = join(tempDir, "memory.db");

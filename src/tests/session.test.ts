@@ -1117,6 +1117,40 @@ test("sessionStart L1 and L2 preserve light and standard behavior", async () => 
   }
 });
 
+test("sessionStart optionally injects graph_report for L2 and L3 only", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-session-graph-report-"));
+  const project = basename(tempDir);
+  const { repository, sessionService } = createSessionService({
+    ...baseConfig,
+    sessionIncludeGraphReport: true
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "context-graph-report",
+        type: "project_context",
+        project,
+        verified: "verified",
+        content: "Graph report injection should preserve standard context."
+      })
+    );
+
+    const l1 = await sessionService.sessionStart(tempDir, "graph summary", undefined, "L1");
+    const l2 = await sessionService.sessionStart(tempDir, "graph summary", undefined, "L2");
+    const l3 = await sessionService.sessionStart(tempDir, "graph summary", undefined, "L3");
+
+    assert.equal(l1.graph_report, undefined);
+    assert.match(l2.graph_report ?? "", new RegExp(`# Graph Report: ${project}`));
+    assert.match(l3.graph_report ?? "", new RegExp(`# Graph Report: ${project}`));
+    assert.equal(l2.token_estimate > l1.token_estimate, true);
+    assert.equal(l3.token_estimate >= l2.token_estimate, true);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("sessionStart L3 adds deep recall evidence on top of the standard bundle", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-session-l3-"));
   const project = basename(tempDir);

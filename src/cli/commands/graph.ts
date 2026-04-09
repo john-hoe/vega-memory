@@ -1,5 +1,7 @@
+import { basename } from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 
+import { GraphReportService } from "../../core/graph-report.js";
 import { KnowledgeGraphService } from "../../core/knowledge-graph.js";
 
 const parseDepth = (value: string): number => {
@@ -26,7 +28,8 @@ const printJson = (value: unknown): void => {
 
 export function registerGraphCommand(
   program: Command,
-  knowledgeGraphService: KnowledgeGraphService
+  knowledgeGraphService: KnowledgeGraphService,
+  graphReportService: GraphReportService
 ): void {
   const graphCommand = program
     .command("graph")
@@ -38,6 +41,25 @@ export function registerGraphCommand(
     .option("--project <project>", "limit stats to one project")
     .action((options: { project?: string }) => {
       printJson(knowledgeGraphService.graphStats(options.project));
+    });
+
+  graphCommand
+    .command("report")
+    .description("Generate a markdown graph report for one project")
+    .argument("[project]", "project name")
+    .option("--save", "save to data/{project}-graph-report.md")
+    .action((project: string | undefined, options: { save?: boolean }) => {
+      const resolvedProject = project?.trim() || basename(process.cwd()) || "global";
+
+      if (options.save) {
+        const saved = graphReportService.saveGraphReport(resolvedProject);
+
+        console.log(saved.report);
+        console.error(`Saved graph report to ${saved.path}`);
+        return;
+      }
+
+      console.log(graphReportService.generateGraphReport(resolvedProject));
     });
 
   graphCommand

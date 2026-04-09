@@ -126,6 +126,7 @@ const serializeSessionStartResult = (result: SessionStartResult) => ({
   conflicts: result.conflicts.map(serializeMemory),
   proactive_warnings: result.proactive_warnings,
   token_estimate: result.token_estimate,
+  ...(result.graph_report !== undefined ? { graph_report: result.graph_report } : {}),
   ...(result.deep_recall !== undefined ? { deep_recall: result.deep_recall } : {})
 });
 
