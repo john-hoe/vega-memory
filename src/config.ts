@@ -56,6 +56,7 @@ export interface VegaFeatureFlags {
 export interface VegaConfig {
   dbPath: string;
   dbEncryption: boolean;
+  archivePreserveRaw?: boolean;
   byokEnabled?: boolean;
   csrfEnabled?: boolean;
   corsOrigins?: string[];
@@ -152,6 +153,10 @@ export const isFactClaimsEnabled = (config?: Pick<VegaConfig, "features">): bool
 
 export const isRawArchiveEnabled = (config?: Pick<VegaConfig, "features">): boolean =>
   resolveFeatureFlags(config).rawArchive;
+
+export const shouldPreserveRawArchive = (
+  config?: Pick<VegaConfig, "archivePreserveRaw">
+): boolean => config?.archivePreserveRaw ?? false;
 
 export const isTopicRecallEnabled = (config?: Pick<VegaConfig, "features">): boolean =>
   resolveFeatureFlags(config).topicRecall;
@@ -541,6 +546,7 @@ export const loadConfig = (): VegaConfig => {
       365
     ),
     archiveMaxSizeMb: clamp(parseNumber(process.env.VEGA_ARCHIVE_MAX_SIZE_MB, 500), 1, 100_000),
+    archivePreserveRaw: parseBoolean(process.env.VEGA_ARCHIVE_PRESERVE_RAW, false),
     observerEnabled: parseBoolean(process.env.VEGA_OBSERVER_ENABLED, false),
     apiPort: parseNumber(process.env.VEGA_API_PORT, 3271),
     apiKey: process.env.VEGA_API_KEY || fileConfig.apiKey || undefined,

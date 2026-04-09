@@ -192,10 +192,22 @@
       "type": "directory"
     },
     {
+      "path": "src/core/archive-service.ts",
+      "accessCount": 3,
+      "lastAccessed": 1775734237967,
+      "type": "directory"
+    },
+    {
       "path": "docs/specs/vm2-001-recall-protocol.md",
       "accessCount": 1,
       "lastAccessed": 1775716318248,
       "type": "file"
+    },
+    {
+      "path": "src/core/types.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775734217867,
+      "type": "directory"
     }
   ],
   "userDirectives": []

@@ -34,6 +34,7 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_SHARDING_ENABLED: process.env.VEGA_SHARDING_ENABLED,
     VEGA_BACKUP_RETENTION_DAYS: process.env.VEGA_BACKUP_RETENTION_DAYS,
     VEGA_ARCHIVE_MAX_SIZE_MB: process.env.VEGA_ARCHIVE_MAX_SIZE_MB,
+    VEGA_ARCHIVE_PRESERVE_RAW: process.env.VEGA_ARCHIVE_PRESERVE_RAW,
     VEGA_OBSERVER_ENABLED: process.env.VEGA_OBSERVER_ENABLED,
     VEGA_API_PORT: process.env.VEGA_API_PORT,
     VEGA_API_KEY: process.env.VEGA_API_KEY,
@@ -114,6 +115,7 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_SHARDING_ENABLED;
   delete process.env.VEGA_BACKUP_RETENTION_DAYS;
   delete process.env.VEGA_ARCHIVE_MAX_SIZE_MB;
+  delete process.env.VEGA_ARCHIVE_PRESERVE_RAW;
   delete process.env.VEGA_OBSERVER_ENABLED;
   delete process.env.VEGA_API_PORT;
   delete process.env.VEGA_API_KEY;
@@ -194,6 +196,7 @@ test("loadConfig returns the documented defaults", () => {
     shardingEnabled: false,
     backupRetentionDays: 7,
     archiveMaxSizeMb: 500,
+    archivePreserveRaw: false,
     apiPort: 3271,
     apiKey: undefined,
     mode: "server",
@@ -248,6 +251,22 @@ test("loadConfig returns the documented defaults", () => {
   });
 
   Object.assign(process.env, previous);
+});
+
+test("loadConfig reads VEGA_ARCHIVE_PRESERVE_RAW", () => {
+  const previous = process.env.VEGA_ARCHIVE_PRESERVE_RAW;
+
+  try {
+    process.env.VEGA_ARCHIVE_PRESERVE_RAW = "true";
+
+    assert.equal(loadConfig().archivePreserveRaw, true);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.VEGA_ARCHIVE_PRESERVE_RAW;
+    } else {
+      process.env.VEGA_ARCHIVE_PRESERVE_RAW = previous;
+    }
+  }
 });
 
 test("loadConfig reads overrides from process.env", () => {

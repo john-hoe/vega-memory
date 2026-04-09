@@ -1,6 +1,10 @@
 import { v4 as uuidv4 } from "uuid";
 
-import { isRawArchiveEnabled, type VegaConfig } from "../config.js";
+import {
+  isRawArchiveEnabled,
+  shouldPreserveRawArchive,
+  type VegaConfig
+} from "../config.js";
 import type {
   AuditContext,
   Memory,
@@ -163,26 +167,54 @@ export class MemoryService {
     private readonly archiveService = new ArchiveService(repository, config)
   ) {}
 
-  private captureRawContent(
+  private shouldPreserveRaw(preserveRaw?: boolean): boolean {
+    return preserveRaw ?? shouldPreserveRawArchive(this.config);
+  }
+
+  private captureArchiveContent(
     content: string,
+    containsRaw: boolean,
     project: string,
     type: MemoryType,
     tenantId: string | null,
     sourceMemoryId: string,
-    title?: string
+    title: string,
+    auditContext: AuditContext
   ): void {
     if (!isRawArchiveEnabled(this.config)) {
       return;
     }
 
-    this.archiveService.store(content, "document", project, {
+    const archive = this.archiveService.store(content, "document", project, {
       tenant_id: tenantId,
       source_memory_id: sourceMemoryId,
       title,
       metadata: {
         captured_from: "memory_service",
-        memory_type: type
+        memory_type: type,
+        contains_raw: containsRaw
       }
+    });
+
+    if (!containsRaw) {
+      return;
+    }
+
+    this.repository.logAudit({
+      timestamp: now(),
+      actor: auditContext.actor,
+      action: "raw_archive_preserved",
+      memory_id: sourceMemoryId,
+      detail: JSON.stringify({
+        archive_id: archive.id,
+        created: archive.created,
+        content_hash: archive.content_hash,
+        memory_type: type,
+        project,
+        contains_raw: true
+      }),
+      ip: auditContext.ip,
+      tenant_id: tenantId
     });
   }
 
@@ -274,6 +306,7 @@ export class MemoryService {
     const tenantId = params.tenant_id ?? auditContext.tenant_id ?? null;
     const source = params.source ?? "auto";
     const rawContent = params.content;
+    const preserveRaw = this.shouldPreserveRaw(params.preserve_raw);
 
     if (source !== "explicit") {
       const exclusion = shouldExclude(params.content);
@@ -287,10 +320,12 @@ export class MemoryService {
       }
     }
 
+    const preservedRawContent = preserveRaw ? rawContent : null;
     const { redacted, wasRedacted } = redactSensitiveData(
       params.content,
       this.config.customRedactionPatterns
     );
+    const archiveContent = preservedRawContent ?? redacted;
     const embedding = await generateEmbedding(redacted, this.config);
     const title = buildTitle(params.title, redacted);
     const tags = unique(
@@ -355,7 +390,16 @@ export class MemoryService {
       });
 
       this.linkKnowledgeGraph(id, redacted, tags);
-      this.captureRawContent(rawContent, params.project, params.type, tenantId, id, params.title);
+      this.captureArchiveContent(
+        archiveContent,
+        preserveRaw,
+        params.project,
+        params.type,
+        tenantId,
+        id,
+        title,
+        auditContext
+      );
 
       return { id, action: "conflict", title };
     }
@@ -421,13 +465,15 @@ export class MemoryService {
       });
 
       this.linkKnowledgeGraph(matched.memory.id, mergedContent, mergedTags);
-      this.captureRawContent(
-        rawContent,
+      this.captureArchiveContent(
+        archiveContent,
+        preserveRaw,
         params.project,
         params.type,
         tenantId,
         matched.memory.id,
-        params.title ?? matched.memory.title
+        nextTitle,
+        auditContext
       );
 
       return { id: matched.memory.id, action: "updated", title: nextTitle };
@@ -475,7 +521,16 @@ export class MemoryService {
     });
 
     this.linkKnowledgeGraph(id, redacted, tags);
-    this.captureRawContent(rawContent, params.project, params.type, tenantId, id, params.title);
+    this.captureArchiveContent(
+      archiveContent,
+      preserveRaw,
+      params.project,
+      params.type,
+      tenantId,
+      id,
+      title,
+      auditContext
+    );
 
     return { id, action: "created", title };
   }
@@ -488,6 +543,7 @@ export class MemoryService {
 
     const nextUpdates: Partial<Memory> = {};
     let rawContentToArchive: string | null = null;
+    let redactedContentToArchive: string | null = null;
     if (updates.content !== undefined) {
       const rawContent = updates.content;
       const { redacted } = redactSensitiveData(
@@ -502,6 +558,7 @@ export class MemoryService {
           ? unique(updates.tags.map(normalizeToken).filter(Boolean))
           : extractTags(redacted);
       rawContentToArchive = rawContent;
+      redactedContentToArchive = redacted;
     }
     if (updates.importance !== undefined) {
       nextUpdates.importance = Math.max(0, Math.min(1, updates.importance));
@@ -518,14 +575,17 @@ export class MemoryService {
 
     nextUpdates.updated_at = now();
     this.repository.updateMemory(id, nextUpdates, { auditContext });
-    if (rawContentToArchive !== null) {
-      this.captureRawContent(
-        rawContentToArchive,
+    if (rawContentToArchive !== null && redactedContentToArchive !== null) {
+      const preserveRaw = this.shouldPreserveRaw();
+      this.captureArchiveContent(
+        preserveRaw ? rawContentToArchive : redactedContentToArchive,
+        preserveRaw,
         existing.project,
         existing.type,
         existing.tenant_id ?? null,
         existing.id,
-        updates.title ?? existing.title
+        updates.title ?? existing.title,
+        resolveAuditContext(auditContext)
       );
     }
 

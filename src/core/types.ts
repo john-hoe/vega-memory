@@ -413,6 +413,7 @@ export interface StoreParams {
   tags?: string[];
   importance?: number;
   source?: MemorySource;
+  preserve_raw?: boolean;
   skipSimilarityCheck?: boolean;
   auditContext?: AuditContext;
 }
@@ -477,7 +478,9 @@ export interface DeepRecallResult {
   type: MemoryType | null;
   archive_type: RawArchiveType;
   title: string;
+  warning?: string;
   content?: string;
+  contains_raw: boolean;
   summary?: string | null;
   verified?: VerifiedStatus | null;
   metadata?: Record<string, unknown>;
@@ -492,6 +495,7 @@ export interface DeepRecallResponse {
   results: DeepRecallResult[];
   next_cursor: string | null;
   injected_into_session: boolean;
+  warnings?: string[];
 }
 
 export type RecallProtocolErrorCode =

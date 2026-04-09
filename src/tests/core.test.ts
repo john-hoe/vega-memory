@@ -401,6 +401,45 @@ test("store keeps unrelated task_state memories active", async () => {
   }
 });
 
+test("store honors archivePreserveRaw config and preserve_raw overrides it", async () => {
+  const restoreFetch = installEmbeddingMock([0.6, 0.4]);
+  const repository = new Repository(":memory:");
+  const service = new MemoryService(repository, {
+    ...baseConfig,
+    archivePreserveRaw: true
+  });
+
+  try {
+    const inherited = await service.store({
+      content: "Cold evidence password=cleartext should stay in the archive when enabled.",
+      type: "pitfall",
+      project: "vega",
+      skipSimilarityCheck: true
+    });
+    const overridden = await service.store({
+      content: "Override config password=redacted-by-default for this write only.",
+      type: "pitfall",
+      project: "vega",
+      preserve_raw: false,
+      skipSimilarityCheck: true
+    });
+    const archives = repository.listRawArchives("vega");
+    const inheritedArchive = archives.find((archive) => archive.source_memory_id === inherited.id);
+    const overriddenArchive = archives.find((archive) => archive.source_memory_id === overridden.id);
+
+    assert.ok(inheritedArchive);
+    assert.match(inheritedArchive.content, /password=cleartext/);
+    assert.equal(inheritedArchive.metadata.contains_raw, true);
+
+    assert.ok(overriddenArchive);
+    assert.match(overriddenArchive.content, /\[REDACTED:SECRET\]/);
+    assert.equal(overriddenArchive.metadata.contains_raw, false);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
 test("recall returns results and updates access metadata", async () => {
   const restoreFetch = installEmbeddingMock([0.9, 0.1]);
   const repository = new Repository(":memory:");

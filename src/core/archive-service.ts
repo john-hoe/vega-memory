@@ -31,6 +31,8 @@ interface ArchiveStoreResult {
 }
 
 const now = (): string => new Date().toISOString();
+const DEEP_RECALL_RAW_WARNING =
+  "deep_recall returned raw archived content; treat the result as sensitive evidence.";
 
 const buildArchiveTitle = (value: string | undefined, content: string): string => {
   const candidate = value?.trim();
@@ -235,6 +237,9 @@ export class ArchiveService {
     const includeContent = request.include_content ?? true;
     const includeMetadata = request.include_metadata ?? false;
     const matches = this.search(request.query, request.project, limit, tenantId);
+    const hasRawContent = includeContent
+      ? matches.some(({ archive }) => archive.metadata.contains_raw === true)
+      : false;
     const sourceMemoryIds = [
       ...new Set(
         matches
@@ -255,6 +260,7 @@ export class ArchiveService {
           archive.source_memory_id === null
             ? null
             : memoriesById.get(archive.source_memory_id) ?? null;
+        const containsRaw = archive.metadata.contains_raw === true;
 
         return {
           archive_id: archive.id,
@@ -264,6 +270,7 @@ export class ArchiveService {
           archive_type: archive.archive_type,
           title: archive.title,
           ...(includeContent ? { content: archive.content } : {}),
+          contains_raw: containsRaw && includeContent,
           ...(sourceMemory?.summary !== undefined ? { summary: sourceMemory.summary } : {}),
           ...(sourceMemory?.verified !== undefined ? { verified: sourceMemory.verified } : {}),
           ...(includeMetadata
@@ -279,7 +286,8 @@ export class ArchiveService {
         };
       }),
       next_cursor: null,
-      injected_into_session: false
+      injected_into_session: false,
+      ...(hasRawContent ? { warnings: [DEEP_RECALL_RAW_WARNING] } : {})
     };
   }
 }

@@ -391,7 +391,7 @@ test("health report warns when cold archive size exceeds the configured threshol
   }
 });
 
-test("POST /api/deep-recall returns original unredacted archive evidence", async () => {
+test("POST /api/deep-recall returns redacted archive evidence by default", async () => {
   const harness = await createHarness();
 
   try {
@@ -413,6 +413,74 @@ test("POST /api/deep-recall returns original unredacted archive evidence", async
     const response = await harness.request("/api/deep-recall", {
       method: "POST",
       body: JSON.stringify({
+        query: "SQLite backup evidence",
+        project: "vega",
+        include_content: true,
+        include_metadata: true
+      })
+    });
+    const body = await readJson<{
+      results: Array<{
+        archive_id: string;
+        memory_id: string | null;
+        archive_type: string;
+        title: string;
+        content?: string;
+        contains_raw: boolean;
+        metadata?: Record<string, unknown>;
+      }>;
+      next_cursor: string | null;
+      injected_into_session: boolean;
+      warnings?: string[];
+    }>(response);
+
+    assert.equal(response.status, 200);
+    assert.equal(body.next_cursor, null);
+    assert.equal(body.injected_into_session, false);
+    assert.equal(body.results.length, 1);
+    assert.equal(body.results[0]?.memory_id, stored.id);
+    assert.equal(body.results[0]?.archive_type, "document");
+    assert.match(body.results[0]?.content ?? "", /\[REDACTED:SECRET\]/);
+    assert.equal(body.results[0]?.contains_raw, false);
+    assert.deepEqual(body.results[0]?.metadata, {
+      captured_from: "memory_service",
+      memory_type: "pitfall",
+      contains_raw: false
+    });
+    assert.equal(body.warnings, undefined);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("POST /api/store with preserve_raw keeps raw archive evidence and warns on deep recall", async () => {
+  const harness = await createHarness();
+
+  try {
+    const storeResponse = await harness.request("/api/store", {
+      method: "POST",
+      body: JSON.stringify({
+        content: "SQLite backup evidence password=cleartext should stay cold-only.",
+        type: "pitfall",
+        project: "vega",
+        preserve_raw: true
+      })
+    });
+    const stored = await readJson<{ id: string; action: string }>(storeResponse);
+    const hotMemory = harness.repository.getMemory(stored.id);
+    const rawAuditEntries = harness.repository.getAuditLog({
+      action: "raw_archive_preserved",
+      memory_id: stored.id
+    });
+
+    assert.equal(storeResponse.status, 200);
+    assert.ok(hotMemory);
+    assert.match(hotMemory.content, /\[REDACTED:SECRET\]/);
+    assert.equal(rawAuditEntries.length, 1);
+
+    const response = await harness.request("/api/deep-recall", {
+      method: "POST",
+      body: JSON.stringify({
         query: "cleartext",
         project: "vega",
         include_content: true,
@@ -426,23 +494,27 @@ test("POST /api/deep-recall returns original unredacted archive evidence", async
         archive_type: string;
         title: string;
         content?: string;
+        contains_raw: boolean;
         metadata?: Record<string, unknown>;
       }>;
       next_cursor: string | null;
       injected_into_session: boolean;
+      warnings?: string[];
     }>(response);
 
     assert.equal(response.status, 200);
-    assert.equal(body.next_cursor, null);
-    assert.equal(body.injected_into_session, false);
     assert.equal(body.results.length, 1);
     assert.equal(body.results[0]?.memory_id, stored.id);
-    assert.equal(body.results[0]?.archive_type, "document");
     assert.match(body.results[0]?.content ?? "", /password=cleartext/);
+    assert.equal(body.results[0]?.contains_raw, true);
     assert.deepEqual(body.results[0]?.metadata, {
       captured_from: "memory_service",
-      memory_type: "pitfall"
+      memory_type: "pitfall",
+      contains_raw: true
     });
+    assert.deepEqual(body.warnings, [
+      "deep_recall returned raw archived content; treat the result as sensitive evidence."
+    ]);
   } finally {
     await harness.cleanup();
   }

@@ -155,3 +155,39 @@ test("store without auditContext defaults to system", async () => {
     repository.close();
   }
 });
+
+test("store with preserve_raw records a dedicated raw archive audit entry", async () => {
+  const restoreFetch = installEmbeddingMock([0.4, 0.6]);
+  const repository = new Repository(":memory:");
+  const service = new MemoryService(repository, baseConfig);
+
+  try {
+    const result = await service.store({
+      content: "Archive raw evidence token=super-secret for cold-only retention.",
+      type: "pitfall",
+      project: "vega",
+      preserve_raw: true,
+      auditContext: { actor: "api", ip: "192.168.1.20" }
+    });
+    const archive = repository.listRawArchives("vega")[0];
+    const auditEntries = getAuditEntriesForMemory(repository, result.id);
+    const rawAuditEntry = auditEntries.find((entry) => entry.action === "raw_archive_preserved");
+
+    assert.equal(auditEntries.length, 3);
+    assert.ok(archive);
+    assert.ok(rawAuditEntry);
+    assert.equal(rawAuditEntry.actor, "api");
+    assert.equal(rawAuditEntry.ip, "192.168.1.20");
+    assert.deepEqual(JSON.parse(rawAuditEntry.detail), {
+      archive_id: archive.id,
+      created: true,
+      content_hash: archive.content_hash,
+      memory_type: "pitfall",
+      project: "vega",
+      contains_raw: true
+    });
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});

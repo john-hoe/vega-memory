@@ -749,6 +749,10 @@ export function createRouter(services: APIRouterServices): Router {
           max: 1
         }),
         source: parseMemorySource(body.source, "source"),
+        preserve_raw:
+          body.preserve_raw === undefined
+            ? undefined
+            : requireBoolean(body.preserve_raw, "preserve_raw"),
         auditContext: getRequestAuditContext(req, res)
       });
 

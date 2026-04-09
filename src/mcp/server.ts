@@ -380,7 +380,8 @@ export function createMCPServer({
       title: z.string().trim().min(1).optional(),
       tags: z.array(z.string().trim().min(1)).optional(),
       importance: z.number().min(0).max(1).optional(),
-      source: z.enum(MEMORY_SOURCES).default("auto")
+      source: z.enum(MEMORY_SOURCES).default("auto"),
+      preserve_raw: z.boolean().optional()
     },
     async (args) =>
       runTool(repository, "memory_store", args, observer, async () => {

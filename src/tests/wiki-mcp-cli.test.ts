@@ -7,7 +7,7 @@ import test from "node:test";
 import type { VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { TopicService } from "../core/topic-service.js";
-import type { Memory } from "../core/types.js";
+import type { Memory, StoreParams, StoreResult } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 import { createMCPServer } from "../mcp/server.js";
 import { CrossReferenceService } from "../wiki/cross-reference.js";
@@ -100,7 +100,12 @@ const installOllamaMock = (chatContent = "## Synthesized Content\n\nAuth wiki su
   };
 };
 
-const createServerHarness = (overrides: Partial<VegaConfig> = {}) => {
+const createServerHarness = (
+  overrides: Partial<VegaConfig> = {},
+  services: {
+    memoryStore?: (params: StoreParams) => Promise<StoreResult>;
+  } = {}
+) => {
   const repository = new Repository(":memory:");
   const pageManager = new PageManager(repository);
   const crossReferenceService = new CrossReferenceService(pageManager);
@@ -114,7 +119,13 @@ const createServerHarness = (overrides: Partial<VegaConfig> = {}) => {
       })
     },
     memoryService: {
-      store: async () => ({ id: "noop", action: "created", title: "noop" }),
+      store:
+        services.memoryStore ??
+        (async () => ({
+          id: "noop",
+          action: "created",
+          title: "noop"
+        })),
       update: async () => {},
       delete: async () => {}
     },
@@ -491,6 +502,50 @@ test("deep_recall MCP tool returns cold archive results", async () => {
     assert.equal(payload.injected_into_session, false);
   } finally {
     repository.close();
+    await server.close();
+  }
+});
+
+test("memory_store MCP tool forwards optional preserve_raw without forcing a default", async () => {
+  const captured: StoreParams[] = [];
+  const { server } = createServerHarness(
+    {},
+    {
+      memoryStore: async (params) => {
+        captured.push(params);
+
+        return {
+          id: "captured-memory",
+          action: "created",
+          title: "Captured memory"
+        };
+      }
+    }
+  );
+
+  try {
+    await getRegisteredTools(server).memory_store.handler(
+      {
+        content: "Default config should remain in control when preserve_raw is omitted.",
+        type: "decision",
+        project: "vega"
+      },
+      {}
+    );
+    await getRegisteredTools(server).memory_store.handler(
+      {
+        content: "Explicit raw preservation should flow through MCP.",
+        type: "decision",
+        project: "vega",
+        preserve_raw: true
+      },
+      {}
+    );
+
+    assert.equal(captured.length, 2);
+    assert.equal(captured[0]?.preserve_raw, undefined);
+    assert.equal(captured[1]?.preserve_raw, true);
+  } finally {
     await server.close();
   }
 });
