@@ -244,7 +244,7 @@ export class ConsolidationApprovalService {
         reviewed_by: decision.reviewed_by,
         reviewed_at: reviewedAt,
         review_comment: execution.success
-          ? (decision.comment ?? null)
+          ? appendReviewComment(decision.comment ?? null, "[executed]")
           : appendReviewComment(
               decision.comment ?? null,
               formatExecutionFailureComment(execution.error ?? "unknown error")

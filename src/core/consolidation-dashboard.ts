@@ -182,7 +182,7 @@ export class ConsolidationDashboardService {
         item.review_comment !== null &&
         (item.review_comment.includes("[retried: success") ||
           item.review_comment.includes("approved_pending_execution") ||
-          item.review_comment.includes("[executed:"))
+          item.review_comment.includes("[executed"))
     ).length;
   }
 }
