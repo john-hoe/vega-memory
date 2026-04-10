@@ -3642,6 +3642,30 @@ export class Repository {
     return (row?.total ?? 0) > 0;
   }
 
+  countConsolidationRunsForKey(
+    project: string,
+    runId: string,
+    tenantId?: string | null
+  ): number {
+    const clauses = ["project = ?", "(run_id = ? OR run_id LIKE ?)"];
+    const params: unknown[] = [project, runId, `${runId}:attempt:%`];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const row = this.db
+      .prepare<unknown[], CountRow>(
+        `SELECT COUNT(*) AS total
+         FROM consolidation_runs
+         WHERE ${clauses.join(" AND ")}`
+      )
+      .get(...params);
+
+    return row?.total ?? 0;
+  }
+
   insertApprovalItem(item: Omit<ApprovalItem, "updated_at">): void {
     this.db
       .prepare<

@@ -419,6 +419,147 @@ test("auto_execute failure sets status to execution_failed", () => {
   }
 });
 
+test("retry on execution_failed succeeds", () => {
+  const repository = new Repository(":memory:");
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    const item = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({
+        memory_ids: ["memory-1", "memory-2"]
+      }),
+      "vega"
+    );
+
+    approvalService.review(
+      {
+        item_id: item.id,
+        status: "approved",
+        reviewed_by: "admin"
+      },
+      true
+    );
+
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-1",
+        title: "Auth cache v1",
+        content: "Original auth cache note.",
+        updated_at: "2026-04-09T00:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-2",
+        title: "Auth cache v2",
+        content: "Updated auth cache note.",
+        updated_at: "2026-04-10T00:00:00.000Z"
+      })
+    );
+
+    const retried = approvalService.retry(item.id, "retry-admin");
+
+    assert.equal(retried.status, "approved");
+    assert.equal(repository.getApprovalItem(item.id)?.status, "approved");
+  } finally {
+    repository.close();
+  }
+});
+
+test("retry on execution_failed that fails again stays execution_failed", () => {
+  const repository = new Repository(":memory:");
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    const item = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({
+        memory_ids: ["missing-1", "missing-2"]
+      }),
+      "vega"
+    );
+
+    approvalService.review(
+      {
+        item_id: item.id,
+        status: "approved",
+        reviewed_by: "admin"
+      },
+      true
+    );
+
+    const retried = approvalService.retry(item.id, "retry-admin");
+
+    assert.equal(retried.status, "execution_failed");
+    assert.equal(repository.getApprovalItem(item.id)?.status, "execution_failed");
+    assert.match(retried.review_comment ?? "", /\[execution_failed:/);
+    assert.match(retried.review_comment ?? "", /\[retry_execution_failed by retry-admin/);
+  } finally {
+    repository.close();
+  }
+});
+
+test("retry on non-execution_failed throws", () => {
+  const repository = new Repository(":memory:");
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    const item = approvalService.submitForApproval("run-1", createCandidate(), "vega");
+
+    assert.throws(() => approvalService.retry(item.id, "retry-admin"), /only execution_failed items can be retried/);
+  } finally {
+    repository.close();
+  }
+});
+
+test("audit records both original failure and retry", () => {
+  const repository = new Repository(":memory:");
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    const item = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({
+        memory_ids: ["missing-1", "missing-2"]
+      }),
+      "vega"
+    );
+
+    approvalService.review(
+      {
+        item_id: item.id,
+        status: "approved",
+        reviewed_by: "admin"
+      },
+      true
+    );
+    approvalService.retry(item.id, "retry-admin");
+
+    const reviewEntries = repository.getAuditLog({
+      action: "consolidation_approval_reviewed"
+    });
+    const retryEntries = repository.getAuditLog({
+      action: "consolidation_approval_retried"
+    });
+    const reviewDetail = JSON.parse(reviewEntries[0]?.detail ?? "{}") as {
+      execution?: { success?: boolean };
+    };
+    const retryDetail = JSON.parse(retryEntries[0]?.detail ?? "{}") as {
+      success?: boolean;
+      previous_status?: string;
+    };
+
+    assert.equal(reviewEntries.length, 1);
+    assert.equal(retryEntries.length, 1);
+    assert.equal(reviewDetail.execution?.success, false);
+    assert.equal(retryDetail.previous_status, "execution_failed");
+    assert.equal(retryDetail.success, false);
+  } finally {
+    repository.close();
+  }
+});
+
 test("execute approved conflict resolution", () => {
   const repository = new Repository(":memory:");
   const approvalService = new ConsolidationApprovalService(repository);
@@ -695,6 +836,91 @@ test("MCP tool reviews approval", async () => {
     assert.equal(result.isError, undefined);
     assert.equal(payload.status, "approved");
     assert.equal(repository.getApprovalItem(item.id)?.status, "approved");
+  } finally {
+    repository.close();
+    await server.close();
+  }
+});
+
+test("MCP lists execution_failed items", async () => {
+  const { repository, server } = createServerHarness({
+    features: {
+      consolidationReport: true
+    }
+  });
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    const failed = approvalService.submitForApproval("run-1", createCandidate(), "vega");
+    const pending = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({ memory_ids: ["memory-3", "memory-4"] }),
+      "vega"
+    );
+
+    repository.updateApprovalItem(failed.id, {
+      status: "execution_failed",
+      reviewed_by: "admin",
+      reviewed_at: now,
+      review_comment: "[execution_failed: test]"
+    });
+
+    const result = await getRegisteredTools(server).consolidation_approvals_list.handler(
+      {
+        project: "vega",
+        status: "execution_failed"
+      },
+      {}
+    );
+    const payload = parseToolPayload<Array<{ id: string; status: string }>>(result);
+
+    assert.equal(result.isError, undefined);
+    assert.equal(payload.length, 1);
+    assert.equal(payload[0]?.id, failed.id);
+    assert.equal(payload[0]?.status, "execution_failed");
+    assert.equal(repository.getApprovalItem(pending.id)?.status, "pending");
+  } finally {
+    repository.close();
+    await server.close();
+  }
+});
+
+test("MCP lists approved_pending_execution items", async () => {
+  const { repository, server } = createServerHarness({
+    features: {
+      consolidationReport: true
+    }
+  });
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    const pendingExecution = approvalService.submitForApproval("run-1", createCandidate(), "vega");
+    approvalService.submitForApproval(
+      "run-1",
+      createCandidate({ memory_ids: ["memory-3", "memory-4"] }),
+      "vega"
+    );
+
+    repository.updateApprovalItem(pendingExecution.id, {
+      status: "approved_pending_execution",
+      reviewed_by: "admin",
+      reviewed_at: now,
+      review_comment: "retrying"
+    });
+
+    const result = await getRegisteredTools(server).consolidation_approvals_list.handler(
+      {
+        project: "vega",
+        status: "approved_pending_execution"
+      },
+      {}
+    );
+    const payload = parseToolPayload<Array<{ id: string; status: string }>>(result);
+
+    assert.equal(result.isError, undefined);
+    assert.equal(payload.length, 1);
+    assert.equal(payload[0]?.id, pendingExecution.id);
+    assert.equal(payload[0]?.status, "approved_pending_execution");
   } finally {
     repository.close();
     await server.close();

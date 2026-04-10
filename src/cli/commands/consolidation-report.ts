@@ -253,7 +253,11 @@ export function registerConsolidationReportCommand(
     .description("List consolidation approval items")
     .requiredOption("--project <project>", "project name")
     .option("--tenant <tenant>", "tenant ID")
-    .option("--status <status>", "status: pending, approved, rejected, expired", "pending")
+    .option(
+      "--status <status>",
+      "status: pending, approved, approved_pending_execution, execution_failed, rejected, expired",
+      "pending"
+    )
     .option("--limit <limit>", "maximum items to return", "100")
     .option("--json", "output as JSON instead of markdown")
     .action(
@@ -330,6 +334,38 @@ export function registerConsolidationReportCommand(
           },
           options.autoExecute ?? false
         );
+
+        if (options.json) {
+          console.log(JSON.stringify(item, null, 2));
+          return;
+        }
+
+        console.log(formatApprovalItemAsMarkdown(item));
+      }
+    );
+
+  approvals
+    .command("retry")
+    .description("Retry execution of a failed consolidation approval item")
+    .requiredOption("--id <id>", "approval item ID")
+    .requiredOption("--by <name>", "retry actor name")
+    .option("--json", "output as JSON instead of markdown")
+    .action(
+      (options: {
+        id: string;
+        by: string;
+        json?: boolean;
+      }) => {
+        if (!isConsolidationReportEnabled(config)) {
+          console.error(
+            "consolidation_report feature is disabled. Set features.consolidationReport=true"
+          );
+          process.exitCode = 1;
+          return;
+        }
+
+        const approvalService = new ConsolidationApprovalService(repository);
+        const item = approvalService.retry(options.id, options.by);
 
         if (options.json) {
           console.log(JSON.stringify(item, null, 2));

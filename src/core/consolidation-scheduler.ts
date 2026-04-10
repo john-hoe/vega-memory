@@ -26,6 +26,10 @@ import {
 } from "./types.js";
 
 const DEFAULT_MIN_WRITES_THRESHOLD = 25;
+const DEDUPLICATED_ERROR_FRAGMENT = "deduplicated";
+
+const isDeduplicatedError = (error: string): boolean =>
+  error.toLowerCase().includes(DEDUPLICATED_ERROR_FRAGMENT);
 
 export class ConsolidationScheduler {
   constructor(
@@ -69,19 +73,29 @@ export class ConsolidationScheduler {
       resolvedPolicy.mode,
       candidates
     );
+    let effectiveRunId = runId;
 
     if (auditService.isIdempotent(runId)) {
       const existing = auditService.getRun(runId);
 
       if (existing !== null) {
-        return {
-          ...existing,
-          errors: [...existing.errors, `Run ${runId} deduplicated; existing audit record reused.`]
-        };
+        const hasMeaningfulErrors = existing.errors.some(
+          (error) => !isDeduplicatedError(error)
+        );
+
+        if (!hasMeaningfulErrors) {
+          return {
+            ...existing,
+            errors: [...existing.errors, `Run ${runId} deduplicated; existing audit record reused.`]
+          };
+        }
+
+        const attemptCount = auditService.countRunsForKey(project, runId, tenantId);
+        effectiveRunId = `${runId}:attempt:${attemptCount + 1}`;
       }
     }
 
-    report.execution.run_id = runId;
+    report.execution.run_id = effectiveRunId;
     const errors = [...report.execution.errors];
     let actionsExecuted = 0;
     const approvalService = new ConsolidationApprovalService(this.repository);
@@ -114,7 +128,7 @@ export class ConsolidationScheduler {
 
     if (resolvedPolicy.mode !== "dry_run") {
       try {
-        approvalService.submitCandidates(runId, candidates, project, tenantId);
+        approvalService.submitCandidates(effectiveRunId, candidates, project, tenantId);
       } catch (error) {
         errors.push(
           `approval queue: ${error instanceof Error ? error.message : String(error)}`
@@ -125,7 +139,7 @@ export class ConsolidationScheduler {
     report.execution.errors = errors;
 
     const record: ConsolidationRunRecord = {
-      run_id: runId,
+      run_id: effectiveRunId,
       project,
       tenant_id: tenantId ?? null,
       trigger: resolvedPolicy.trigger,
@@ -144,7 +158,12 @@ export class ConsolidationScheduler {
     return record;
   }
 
-  shouldTrigger(trigger: ConsolidationPolicy["trigger"], project: string): boolean {
+  shouldTrigger(
+    trigger: ConsolidationPolicy["trigger"],
+    project: string,
+    tenantId?: string | null,
+    policy?: Partial<ConsolidationPolicy>
+  ): boolean {
     if (!isConsolidationReportEnabled(this.config)) {
       return false;
     }
@@ -153,11 +172,16 @@ export class ConsolidationScheduler {
       return true;
     }
 
-    const lastRun = new ConsolidationAuditService(this.repository).getLastRun(project);
+    const lastRun = new ConsolidationAuditService(this.repository).getLastRun(
+      project,
+      tenantId
+    );
     const since = lastRun?.completed_at ?? "1970-01-01T00:00:00.000Z";
-    const writes = this.repository.countProjectMemoryWritesSince(project, since);
+    const writes = this.repository.countProjectMemoryWritesSince(project, since, tenantId);
+    const threshold =
+      policy?.min_writes_threshold ?? this.getDefaultPolicy().min_writes_threshold;
 
-    return writes >= this.getDefaultPolicy().min_writes_threshold;
+    return writes >= threshold;
   }
 
   private resolvePolicy(policy?: Partial<ConsolidationPolicy>): ConsolidationPolicy {

@@ -30,4 +30,12 @@ export class ConsolidationAuditService {
   isIdempotent(runId: string): boolean {
     return this.repository.consolidationRunExists(runId);
   }
+
+  countRunsForKey(
+    project: string,
+    runId: string,
+    tenantId?: string | null
+  ): number {
+    return this.repository.countConsolidationRunsForKey(project, runId, tenantId);
+  }
 }

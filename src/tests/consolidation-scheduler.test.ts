@@ -353,6 +353,231 @@ test("same input produces same run key", () => {
   }
 });
 
+test("successful run is deduplicated on repeat", () => {
+  const repository = new Repository(":memory:");
+  const scheduler = new ConsolidationScheduler(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true,
+      consolidationAutoExecute: true
+    }
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "dup-1",
+        title: "Alpha memo",
+        embedding: createEmbeddingBuffer([1, 0, 0, 0])
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "dup-2",
+        title: "Beta note",
+        embedding: createEmbeddingBuffer([0.86, 0.51, 0, 0])
+      })
+    );
+
+    const first = scheduler.run("vega", null, { mode: "dry_run" });
+    const second = scheduler.run("vega", null, { mode: "dry_run" });
+
+    assert.equal(second.run_id, first.run_id);
+    assert.match(second.errors.at(-1) ?? "", /deduplicated/i);
+  } finally {
+    repository.close();
+  }
+});
+
+test("failed run allows retry", () => {
+  const repository = new Repository(":memory:");
+  const scheduler = new ConsolidationScheduler(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true,
+      consolidationAutoExecute: false
+    }
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "dup-1",
+        title: "Alpha memo",
+        embedding: createEmbeddingBuffer([1, 0, 0, 0])
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "dup-2",
+        title: "Beta note",
+        embedding: createEmbeddingBuffer([0.86, 0.51, 0, 0])
+      })
+    );
+
+    const first = scheduler.run("vega", null, { mode: "auto_low_risk" });
+    const second = scheduler.run("vega", null, { mode: "auto_low_risk" });
+
+    assert.notEqual(second.run_id, first.run_id);
+    assert.match(second.run_id, new RegExp(`^${first.run_id}:attempt:2$`));
+  } finally {
+    repository.close();
+  }
+});
+
+test("retry creates new approval items when previous run failed", () => {
+  const repository = new Repository(":memory:");
+  const scheduler = new ConsolidationScheduler(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true,
+      consolidationAutoExecute: false
+    }
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "dup-1",
+        title: "Alpha memo",
+        embedding: createEmbeddingBuffer([1, 0, 0, 0])
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "dup-2",
+        title: "Beta note",
+        embedding: createEmbeddingBuffer([0.86, 0.51, 0, 0])
+      })
+    );
+
+    const first = scheduler.run("vega", null, { mode: "auto_low_risk" });
+    const firstApprovalItems = repository.listApprovalItems("vega");
+    const second = scheduler.run("vega", null, { mode: "auto_low_risk" });
+    const secondApprovalItems = repository.listApprovalItems("vega");
+
+    assert.equal(firstApprovalItems.length, 1);
+    assert.equal(secondApprovalItems.length, 2);
+    assert.equal(
+      secondApprovalItems.filter((item) => item.run_id === second.run_id).length,
+      1
+    );
+    assert.notEqual(second.run_id, first.run_id);
+  } finally {
+    repository.close();
+  }
+});
+
+test("shouldTrigger after_writes respects tenant isolation", () => {
+  const repository = new Repository(":memory:");
+  const scheduler = new ConsolidationScheduler(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true
+    }
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-a-memory",
+        tenant_id: "tenant-a"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-b-memory",
+        tenant_id: "tenant-b"
+      })
+    );
+
+    assert.equal(
+      scheduler.shouldTrigger("after_writes", "vega", "tenant-a", {
+        min_writes_threshold: 2
+      }),
+      false
+    );
+  } finally {
+    repository.close();
+  }
+});
+
+test("shouldTrigger after_writes respects custom threshold", () => {
+  const repository = new Repository(":memory:");
+  const scheduler = new ConsolidationScheduler(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true
+    }
+  });
+
+  try {
+    for (let index = 1; index <= 5; index += 1) {
+      repository.createMemory(
+        createStoredMemory({
+          id: `memory-${index}`
+        })
+      );
+    }
+
+    assert.equal(
+      scheduler.shouldTrigger("after_writes", "vega", null, {
+        min_writes_threshold: 10
+      }),
+      false
+    );
+
+    for (let index = 6; index <= 10; index += 1) {
+      repository.createMemory(
+        createStoredMemory({
+          id: `memory-${index}`
+        })
+      );
+    }
+
+    assert.equal(
+      scheduler.shouldTrigger("after_writes", "vega", null, {
+        min_writes_threshold: 10
+      }),
+      true
+    );
+  } finally {
+    repository.close();
+  }
+});
+
+test("shouldTrigger default threshold still works", () => {
+  const repository = new Repository(":memory:");
+  const scheduler = new ConsolidationScheduler(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true
+    }
+  });
+
+  try {
+    for (let index = 1; index <= 24; index += 1) {
+      repository.createMemory(
+        createStoredMemory({
+          id: `memory-${index}`
+        })
+      );
+    }
+
+    assert.equal(scheduler.shouldTrigger("after_writes", "vega"), false);
+
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-25"
+      })
+    );
+
+    assert.equal(scheduler.shouldTrigger("after_writes", "vega"), true);
+  } finally {
+    repository.close();
+  }
+});
+
 test("different input produces different run key", () => {
   const repository = new Repository(":memory:");
   const scheduler = new ConsolidationScheduler(repository, {

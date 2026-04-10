@@ -29,6 +29,20 @@ const isAutoExecutableApprovalAction = (
 
 const unique = (values: string[]): string[] => [...new Set(values)];
 
+const appendReviewComment = (
+  current: string | null,
+  addition: string
+): string => (current === null || current.trim().length === 0 ? addition : `${current}\n${addition}`);
+
+const formatExecutionFailureComment = (error: string): string =>
+  `[execution_failed: ${error}]`;
+
+const formatRetryFailureComment = (
+  retriedBy: string,
+  retriedAt: string,
+  error: string
+): string => `[retry_execution_failed by ${retriedBy} at ${retriedAt}: ${error}]`;
+
 const mergeContent = (newer: string, older: string): string => {
   const recent = newer.trim();
   const previous = older.trim();
@@ -217,7 +231,10 @@ export class ConsolidationApprovalService {
         reviewed_at: reviewedAt,
         review_comment: execution.success
           ? (decision.comment ?? null)
-          : `${decision.comment ? `${decision.comment} ` : ""}[execution_failed: ${execution.error ?? "unknown error"}]`
+          : appendReviewComment(
+              decision.comment ?? null,
+              formatExecutionFailureComment(execution.error ?? "unknown error")
+            )
       });
     } else {
       this.repository.updateApprovalItem(decision.item_id, {
@@ -247,6 +264,61 @@ export class ConsolidationApprovalService {
                 error: execution.error ?? null,
                 details: execution.details ?? null
               }
+      }),
+      ip: null,
+      tenant_id: updated.tenant_id
+    });
+
+    return updated;
+  }
+
+  retry(itemId: string, retriedBy: string): ApprovalItem {
+    const existing = this.requireApprovalItem(itemId);
+
+    if (existing.status !== "execution_failed") {
+      throw new Error(`Approval item ${itemId} is ${existing.status}; only execution_failed items can be retried`);
+    }
+
+    const retriedAt = now();
+    this.repository.updateApprovalItem(itemId, {
+      status: "approved_pending_execution",
+      reviewed_by: retriedBy,
+      reviewed_at: retriedAt,
+      review_comment: existing.review_comment
+    });
+
+    const execution = this.executeApproved(this.requireApprovalItem(itemId));
+    const updatedComment = execution.success
+      ? existing.review_comment
+      : appendReviewComment(
+          existing.review_comment,
+          formatRetryFailureComment(
+            retriedBy,
+            retriedAt,
+            execution.error ?? "unknown error"
+          )
+        );
+
+    this.repository.updateApprovalItem(itemId, {
+      status: execution.success ? "approved" : "execution_failed",
+      reviewed_by: retriedBy,
+      reviewed_at: retriedAt,
+      review_comment: updatedComment
+    });
+
+    const updated = this.requireApprovalItem(itemId);
+    this.repository.logAudit({
+      timestamp: retriedAt,
+      actor: retriedBy,
+      action: "consolidation_approval_retried",
+      memory_id: updated.memory_ids[0] ?? null,
+      detail: JSON.stringify({
+        approval_id: updated.id,
+        previous_status: existing.status,
+        status: updated.status,
+        success: execution.success,
+        error: execution.error ?? null,
+        details: execution.details ?? null
       }),
       ip: null,
       tenant_id: updated.tenant_id

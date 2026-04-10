@@ -776,7 +776,16 @@ export function createMCPServer({
     {
       project: z.string().trim().min(1),
       tenant_id: z.string().trim().min(1).optional(),
-      status: z.enum(["pending", "approved", "rejected", "expired"]).default("pending"),
+      status: z
+        .enum([
+          "pending",
+          "approved",
+          "approved_pending_execution",
+          "execution_failed",
+          "rejected",
+          "expired"
+        ])
+        .default("pending"),
       limit: z.number().int().positive().max(1000).default(100)
     },
     async (args) => {
@@ -832,6 +841,34 @@ export function createMCPServer({
           },
           args.auto_execute ?? false
         );
+
+        return {
+          result: serializeApprovalItem(result),
+          resultCount: 1
+        };
+      });
+    }
+  );
+
+  server.tool(
+    "consolidation_approval_retry",
+    "Retry execution of a failed approval item.",
+    {
+      item_id: z.string().trim().min(1),
+      retried_by: z.string().trim().min(1)
+    },
+    async (args) => {
+      if (!isConsolidationReportEnabled(config)) {
+        return toTextResult(
+          {
+            error: "consolidation_report feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(repository, "consolidation_approval_retry", args, observer, async () => {
+        const result = approvalService.retry(args.item_id, args.retried_by);
 
         return {
           result: serializeApprovalItem(result),
