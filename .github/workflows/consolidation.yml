@@ -1,0 +1,61 @@
+name: Nightly Consolidation
+
+on:
+  schedule:
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "Project name (default: all)"
+        required: false
+        default: "all"
+      mode:
+        description: "Run mode"
+        required: false
+        default: "dry_run"
+        type: choice
+        options:
+          - dry_run
+          - auto_low_risk
+
+jobs:
+  consolidation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run consolidation
+        env:
+          VEGA_DB_PATH: ${{ vars.VEGA_DB_PATH || './data/vega.db' }}
+          VEGA_FEATURE_CONSOLIDATION_REPORT: "true"
+          VEGA_FEATURE_CONSOLIDATION_AUTO_EXECUTE: ${{ inputs.mode == 'auto_low_risk' && 'true' || 'false' }}
+        run: |
+          PROJECT="${{ inputs.project || 'all' }}"
+          MODE="${{ inputs.mode || 'dry_run' }}"
+
+          if [ "$PROJECT" = "all" ]; then
+            node dist/cli/index.js consolidation-run-all --mode "$MODE" --trigger nightly --json --save
+          else
+            node dist/cli/index.js consolidation-run --project "$PROJECT" --mode "$MODE" --trigger nightly --json --save
+          fi
+
+      - name: Upload consolidation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: consolidation-report-${{ github.run_number }}
+          path: data/consolidation-reports/
+          if-no-files-found: ignore

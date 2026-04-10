@@ -10,6 +10,7 @@ import {
 } from "../config.js";
 import type { APIRouterServices } from "../api/routes.js";
 import { CompactService } from "../core/compact.js";
+import { ConsolidationCron } from "../core/consolidation-cron.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
@@ -166,6 +167,9 @@ async function main(): Promise<void> {
   const contentFetcher = new ContentFetcher();
   const contentDistiller = new ContentDistiller(config);
   const rssService = new RSSService(repository);
+  const consolidationCron = config.consolidationCronEnabled ?? false
+    ? new ConsolidationCron(repository, config)
+    : null;
   const apiRuntime = await startSchedulerApiServer(
     {
       repository,
@@ -176,6 +180,7 @@ async function main(): Promise<void> {
     },
     config
   );
+  consolidationCron?.start(config.consolidationCronIntervalMs ?? 24 * 60 * 60 * 1000);
   const runDaily = createGuardedRunner("daily maintenance", async () => {
     await dailyMaintenance(repository, compactService, memoryService, config, {
       notificationManager,
@@ -235,6 +240,7 @@ async function main(): Promise<void> {
 
     shuttingDown = true;
     log(`Received ${signal}, shutting down scheduler`);
+    consolidationCron?.stop();
     clearInterval(schedulerInterval);
     clearInterval(ollamaInterval);
 

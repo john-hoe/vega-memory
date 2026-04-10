@@ -18,6 +18,8 @@ const assertConfigSubset = (
 test("loadConfig returns the documented defaults", () => {
   const previous = {
     VEGA_DB_PATH: process.env.VEGA_DB_PATH,
+    VEGA_CONSOLIDATION_CRON: process.env.VEGA_CONSOLIDATION_CRON,
+    VEGA_CONSOLIDATION_CRON_INTERVAL_MS: process.env.VEGA_CONSOLIDATION_CRON_INTERVAL_MS,
     VEGA_DATABASE_TYPE: process.env.VEGA_DATABASE_TYPE,
     VEGA_METRICS_ENABLED: process.env.VEGA_METRICS_ENABLED,
     VEGA_SENTRY_DSN: process.env.VEGA_SENTRY_DSN,
@@ -96,6 +98,8 @@ test("loadConfig returns the documented defaults", () => {
   };
 
   delete process.env.VEGA_DB_PATH;
+  delete process.env.VEGA_CONSOLIDATION_CRON;
+  delete process.env.VEGA_CONSOLIDATION_CRON_INTERVAL_MS;
   delete process.env.VEGA_DATABASE_TYPE;
   delete process.env.VEGA_METRICS_ENABLED;
   delete process.env.VEGA_SENTRY_DSN;
@@ -181,6 +185,8 @@ test("loadConfig returns the documented defaults", () => {
 
   assertConfigSubset(loadConfig() as unknown as Record<string, unknown>, {
     dbPath: "./data/memory.db",
+    consolidationCronEnabled: false,
+    consolidationCronIntervalMs: 86400000,
     databaseType: "sqlite",
     sessionIncludeGraphReport: false,
     metricsEnabled: false,
@@ -285,6 +291,8 @@ test("loadConfig reads VEGA_ARCHIVE_PRESERVE_RAW", () => {
 test("loadConfig reads overrides from process.env", () => {
   const previous = {
     VEGA_DB_PATH: process.env.VEGA_DB_PATH,
+    VEGA_CONSOLIDATION_CRON: process.env.VEGA_CONSOLIDATION_CRON,
+    VEGA_CONSOLIDATION_CRON_INTERVAL_MS: process.env.VEGA_CONSOLIDATION_CRON_INTERVAL_MS,
     VEGA_DATABASE_TYPE: process.env.VEGA_DATABASE_TYPE,
     VEGA_METRICS_ENABLED: process.env.VEGA_METRICS_ENABLED,
     VEGA_SENTRY_DSN: process.env.VEGA_SENTRY_DSN,
@@ -362,6 +370,8 @@ test("loadConfig reads overrides from process.env", () => {
   };
 
   process.env.VEGA_DB_PATH = "/tmp/vega.db";
+  process.env.VEGA_CONSOLIDATION_CRON = "true";
+  process.env.VEGA_CONSOLIDATION_CRON_INTERVAL_MS = "60000";
   process.env.VEGA_DATABASE_TYPE = "postgres";
   process.env.VEGA_METRICS_ENABLED = "true";
   process.env.VEGA_SENTRY_DSN = "https://example@sentry.test/1";
@@ -454,6 +464,8 @@ test("loadConfig reads overrides from process.env", () => {
 
   assertConfigSubset(loadConfig() as unknown as Record<string, unknown>, {
     dbPath: "/tmp/vega.db",
+    consolidationCronEnabled: true,
+    consolidationCronIntervalMs: 60000,
     databaseType: "postgres",
     sessionIncludeGraphReport: true,
     metricsEnabled: true,

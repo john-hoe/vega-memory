@@ -5,6 +5,11 @@ import { ConsolidationApprovalService } from "../../core/consolidation-approval.
 import { ConsolidationDashboardService } from "../../core/consolidation-dashboard.js";
 import { registerDefaultConsolidationDetectors } from "../../core/consolidation-defaults.js";
 import { ConsolidationReportEngine } from "../../core/consolidation-report-engine.js";
+import {
+  runConsolidationAcrossProjects,
+  saveConsolidationReportArtifact,
+  type ConsolidationRunAllResult
+} from "../../core/consolidation-runner.js";
 import { ConsolidationScheduler } from "../../core/consolidation-scheduler.js";
 import type {
   ApprovalItem,
@@ -135,6 +140,18 @@ const formatRunRecordAsMarkdown = (record: ConsolidationRunRecord): string =>
     `Errors: ${record.errors.length === 0 ? "(none)" : record.errors.join(" | ")}`
   ].join("\n");
 
+const formatRunAllAsMarkdown = (summary: ConsolidationRunAllResult): string =>
+  [
+    "# Consolidation Runs",
+    `Trigger: ${summary.trigger} | Mode: ${summary.mode}`,
+    `Projects: ${summary.total_projects}`,
+    `Saved reports: ${summary.saved_reports.length}`,
+    "",
+    ...summary.runs.map((run) =>
+      `${run.project}: run=${run.run_id} candidates=${run.total_candidates} executed=${run.actions_executed} skipped=${run.actions_skipped} errors=${run.errors.length}`
+    )
+  ].join("\n");
+
 const findSection = (
   sections: ConsolidationReportSection[],
   kind: ConsolidationCandidateKind
@@ -213,6 +230,7 @@ export function registerConsolidationReportCommand(
       "manual"
     )
     .option("--json", "output as JSON instead of markdown")
+    .option("--save", "save report to data/consolidation-reports/")
     .action(
       (options: {
         project: string;
@@ -220,6 +238,7 @@ export function registerConsolidationReportCommand(
         mode?: "dry_run" | "auto_low_risk";
         trigger?: "manual" | "nightly" | "after_writes" | "after_session_end";
         json?: boolean;
+        save?: boolean;
       }) => {
         if (!isConsolidationReportEnabled(config)) {
           console.error(
@@ -234,13 +253,68 @@ export function registerConsolidationReportCommand(
           mode: options.mode,
           trigger: options.trigger
         });
+        const savedReport =
+          options.save === true
+            ? saveConsolidationReportArtifact(repository, config, runRecord)
+            : null;
 
         if (options.json) {
-          console.log(JSON.stringify(runRecord, null, 2));
+          console.log(
+            JSON.stringify(
+              {
+                run: runRecord,
+                ...(savedReport === null ? {} : { saved_report: savedReport })
+              },
+              null,
+              2
+            )
+          );
           return;
         }
 
-        console.log(formatRunRecordAsMarkdown(runRecord));
+        console.log(
+          [
+            formatRunRecordAsMarkdown(runRecord),
+            ...(savedReport === null ? [] : ["", `Saved report: ${savedReport}`])
+          ].join("\n")
+        );
+      }
+    );
+
+  program
+    .command("consolidation-run-all")
+    .description("Run consolidation across all projects")
+    .option("--mode <mode>", "dry_run or auto_low_risk", "dry_run")
+    .option("--trigger <trigger>", "trigger type", "nightly")
+    .option("--json", "output as JSON")
+    .option("--save", "save reports to data/consolidation-reports/")
+    .action(
+      (options: {
+        mode?: "dry_run" | "auto_low_risk";
+        trigger?: "manual" | "nightly" | "after_writes" | "after_session_end";
+        json?: boolean;
+        save?: boolean;
+      }) => {
+        if (!isConsolidationReportEnabled(config)) {
+          console.error(
+            "consolidation_report feature is disabled. Set features.consolidationReport=true"
+          );
+          process.exitCode = 1;
+          return;
+        }
+
+        const summary = runConsolidationAcrossProjects(repository, config, {
+          mode: options.mode,
+          trigger: options.trigger,
+          saveReports: options.save
+        });
+
+        if (options.json) {
+          console.log(JSON.stringify(summary, null, 2));
+          return;
+        }
+
+        console.log(formatRunAllAsMarkdown(summary));
       }
     );
 

@@ -3630,6 +3630,18 @@ export class Repository {
     return row ? mapConsolidationRunRow(row) : null;
   }
 
+  getConsolidationRunReportJson(runId: string): string | null {
+    const row = this.db
+      .prepare<[string], { report_json: string | null }>(
+        `SELECT report_json
+         FROM consolidation_runs
+         WHERE run_id = ?`
+      )
+      .get(runId);
+
+    return row?.report_json ?? null;
+  }
+
   consolidationRunExists(runId: string): boolean {
     const row = this.db
       .prepare<[string], CountRow>(
@@ -3664,6 +3676,18 @@ export class Repository {
       .get(...params);
 
     return row?.total ?? 0;
+  }
+
+  listDistinctProjects(): string[] {
+    return this.db
+      .prepare<[], { project: string }>(
+        `SELECT DISTINCT project
+         FROM memories
+         WHERE status = 'active'
+         ORDER BY project`
+      )
+      .all()
+      .map((row) => row.project);
   }
 
   insertApprovalItem(item: Omit<ApprovalItem, "updated_at">): void {

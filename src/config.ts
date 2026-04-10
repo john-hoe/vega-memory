@@ -59,6 +59,8 @@ export interface VegaFeatureFlags {
 export interface VegaConfig {
   dbPath: string;
   dbEncryption: boolean;
+  consolidationCronEnabled?: boolean;
+  consolidationCronIntervalMs?: number;
   sessionIncludeGraphReport?: boolean;
   archivePreserveRaw?: boolean;
   byokEnabled?: boolean;
@@ -534,6 +536,11 @@ export const loadConfig = (): VegaConfig => {
   return {
     dbPath: expandHomePath(process.env.VEGA_DB_PATH ?? "./data/memory.db"),
     dbEncryption,
+    consolidationCronEnabled: parseBoolean(process.env.VEGA_CONSOLIDATION_CRON, false),
+    consolidationCronIntervalMs: Math.max(
+      1_000,
+      parseNumber(process.env.VEGA_CONSOLIDATION_CRON_INTERVAL_MS, 24 * 60 * 60 * 1000)
+    ),
     sessionIncludeGraphReport: parseBoolean(process.env.VEGA_SESSION_INCLUDE_GRAPH_REPORT, false),
     byokEnabled: parseBoolean(process.env.VEGA_BYOK_ENABLED, false),
     csrfEnabled: parseBoolean(process.env.VEGA_CSRF_ENABLED, false),

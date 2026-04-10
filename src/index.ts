@@ -6,6 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { loadConfig, requireDatabaseEncryptionKey } from "./config.js";
 import { CompactService } from "./core/compact.js";
 import { CompressionService } from "./core/compression.js";
+import { ConsolidationCron } from "./core/consolidation-cron.js";
 import { KnowledgeGraphService } from "./core/knowledge-graph.js";
 import { MemoryService } from "./core/memory.js";
 import { ObserverService } from "./core/observer.js";
@@ -133,7 +134,13 @@ async function main(): Promise<void> {
     ...runtime,
     config
   });
+  const consolidationCron =
+    config.mode === "server" && (config.consolidationCronEnabled ?? false)
+      ? new ConsolidationCron(runtime.repository, config)
+      : null;
   const transport = new StdioServerTransport();
+
+  consolidationCron?.start(config.consolidationCronIntervalMs ?? 24 * 60 * 60 * 1000);
 
   let shuttingDown = false;
   const shutdown = async (exitCode?: number): Promise<void> => {
@@ -144,6 +151,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
 
     try {
+      consolidationCron?.stop();
       await server.close();
     } catch {}
 
@@ -162,6 +170,7 @@ async function main(): Promise<void> {
   });
 
   transport.onclose = () => {
+    consolidationCron?.stop();
     runtime.repository.close();
   };
   transport.onerror = (error) => {

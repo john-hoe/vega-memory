@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 
 import type { VegaConfig } from "../config.js";
+import { runConsolidationAcrossProjects } from "../core/consolidation-runner.js";
 import { ConsolidationScheduler } from "../core/consolidation-scheduler.js";
 import type { ConsolidationReport, FactClaim, Memory } from "../core/types.js";
 import { CONSOLIDATION_CANDIDATE_KINDS } from "../core/types.js";
@@ -634,5 +638,60 @@ test("different input produces different run key", () => {
     assert.equal(repository.listApprovalItems("atlas").length, 1);
   } finally {
     repository.close();
+  }
+});
+
+test("consolidation-run-all lists and runs all projects", () => {
+  const tempDir = join(tmpdir(), `vega-consolidation-run-all-${Date.now()}`);
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "vega-memory",
+        project: "vega",
+        accessed_projects: ["vega"]
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "atlas-memory",
+        project: "atlas",
+        accessed_projects: ["atlas"]
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "hermes-memory",
+        project: "hermes",
+        accessed_projects: ["hermes"]
+      })
+    );
+
+    const result = runConsolidationAcrossProjects(repository, {
+      ...baseConfig,
+      dbPath: join(tempDir, "memory.db"),
+      features: {
+        consolidationReport: true
+      }
+    }, {
+      mode: "dry_run",
+      trigger: "nightly",
+      saveReports: true
+    });
+
+    assert.equal(result.total_projects, 3);
+    assert.equal(result.runs.length, 3);
+    assert.equal(result.saved_reports.length, 3);
+    assert.equal(
+      repository.listConsolidationRuns("vega", 10).length +
+        repository.listConsolidationRuns("atlas", 10).length +
+        repository.listConsolidationRuns("hermes", 10).length,
+      3
+    );
+    assert.equal(result.saved_reports.every((reportPath) => existsSync(reportPath)), true);
+  } finally {
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
   }
 });
