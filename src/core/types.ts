@@ -691,7 +691,7 @@ export interface DeepRecallResponse {
 export type RecallProtocolErrorCode =
   | "INVALID_RECALL_MODE"
   | "INVALID_RECALL_REQUEST"
-  | "DEEP_RECALL_NOT_IMPLEMENTED"
+  | "DEEP_RECALL_DISABLED"
   | "TOKEN_BUDGET_EXCEEDED";
 
 export interface RecallProtocolError {

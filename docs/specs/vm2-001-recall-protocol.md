@@ -302,18 +302,13 @@ Canonical protocol errors:
 | `400` | `INVALID_RECALL_MODE` | invalid `session_start.mode` |
 | `422` | `INVALID_RECALL_REQUEST` | malformed or semantically invalid recall payload |
 | `429` | `TOKEN_BUDGET_EXCEEDED` | future guard for hard budget ceilings |
-| `501` | `DEEP_RECALL_NOT_IMPLEMENTED` | reserved cold-recall path not implemented yet |
+| `501` | `DEEP_RECALL_DISABLED` | deep_recall feature is disabled via configuration |
 
 Canonical error body:
 
 ```json
 {
-  "error": {
-    "status": 501,
-    "code": "DEEP_RECALL_NOT_IMPLEMENTED",
-    "message": "deep_recall is reserved for VM2-006 and is not implemented yet",
-    "retryable": false
-  }
+  "error": "deep_recall feature is disabled"
 }
 ```
 
