@@ -3618,6 +3618,18 @@ export class Repository {
     return rows.map(mapConsolidationRunRow);
   }
 
+  getConsolidationRun(runId: string): ConsolidationRunRecord | null {
+    const row = this.db
+      .prepare<[string], ConsolidationRunRow>(
+        `SELECT *
+         FROM consolidation_runs
+         WHERE run_id = ?`
+      )
+      .get(runId);
+
+    return row ? mapConsolidationRunRow(row) : null;
+  }
+
   consolidationRunExists(runId: string): boolean {
     const row = this.db
       .prepare<[string], CountRow>(

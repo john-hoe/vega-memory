@@ -274,6 +274,7 @@ test("review updates status and records reviewer", () => {
     });
 
     assert.equal(reviewed.status, "approved");
+    assert.equal(repository.getApprovalItem(item.id)?.status, "approved");
     assert.equal(reviewed.reviewed_by, "admin");
     assert.equal(reviewed.review_comment, "looks safe");
     assert.equal(typeof reviewed.reviewed_at, "string");
@@ -300,12 +301,13 @@ test("reject updates status", () => {
   }
 });
 
-test("medium/high risk candidates auto-submitted", () => {
+test("medium/high risk candidates auto-submitted in non-dry-run modes", () => {
   const repository = new Repository(":memory:");
   const scheduler = new ConsolidationScheduler(repository, {
     ...baseConfig,
     features: {
       consolidationReport: true,
+      consolidationAutoExecute: true,
       factClaims: true
     }
   });
@@ -329,7 +331,7 @@ test("medium/high risk candidates auto-submitted", () => {
       })
     );
 
-    scheduler.run("vega");
+    scheduler.run("vega", null, { mode: "auto_low_risk" });
 
     const pending = approvalService.listPending("vega");
 
@@ -364,7 +366,7 @@ test("execute approved merge", () => {
     );
 
     const item = approvalService.submitForApproval("run-1", createCandidate(), "vega");
-    approvalService.review(
+    const reviewed = approvalService.review(
       {
         item_id: item.id,
         status: "approved",
@@ -373,6 +375,9 @@ test("execute approved merge", () => {
       true
     );
 
+    assert.equal(reviewed.status, "approved");
+    assert.equal(repository.getApprovalItem(item.id)?.status, "approved");
+
     const older = repository.getMemory("memory-1");
     const newer = repository.getMemory("memory-2");
 
@@ -380,6 +385,35 @@ test("execute approved merge", () => {
     assert.equal(newer?.status, "active");
     assert.match(newer?.content ?? "", /Original auth cache note\./);
     assert.match(newer?.content ?? "", /Updated auth cache note\./);
+  } finally {
+    repository.close();
+  }
+});
+
+test("auto_execute failure sets status to execution_failed", () => {
+  const repository = new Repository(":memory:");
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    const item = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({
+        memory_ids: ["missing-1", "missing-2"]
+      }),
+      "vega"
+    );
+    const reviewed = approvalService.review(
+      {
+        item_id: item.id,
+        status: "approved",
+        reviewed_by: "admin"
+      },
+      true
+    );
+
+    assert.equal(reviewed.status, "execution_failed");
+    assert.equal(repository.getApprovalItem(item.id)?.status, "execution_failed");
+    assert.match(reviewed.review_comment ?? "", /\[execution_failed:/);
   } finally {
     repository.close();
   }
@@ -434,6 +468,122 @@ test("execute approved conflict resolution", () => {
       true
     );
 
+    assert.equal(repository.getFactClaim("fact-1")?.status, "expired");
+    assert.equal(repository.getFactClaim("fact-2")?.status, "expired");
+    assert.equal(repository.getMemory("memory-1")?.verified, "verified");
+  } finally {
+    repository.close();
+  }
+});
+
+test("partial conflict resolution keeps memory as conflict", () => {
+  const repository = new Repository(":memory:");
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-1",
+        verified: "conflict"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-1",
+        status: "conflict",
+        source_memory_id: "memory-1"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-2",
+        status: "conflict",
+        source_memory_id: "memory-1",
+        claim_value: "postgresql"
+      })
+    );
+
+    const item = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({
+        kind: "conflict_aggregation",
+        action: "review_conflict",
+        risk: "high",
+        memory_ids: ["memory-1"],
+        fact_claim_ids: ["fact-1"],
+        description: "Resolve one conflict claim"
+      }),
+      "vega"
+    );
+
+    const reviewed = approvalService.review(
+      {
+        item_id: item.id,
+        status: "approved",
+        reviewed_by: "admin"
+      },
+      true
+    );
+
+    assert.equal(reviewed.status, "approved");
+    assert.equal(repository.getFactClaim("fact-1")?.status, "expired");
+    assert.equal(repository.getFactClaim("fact-2")?.status, "conflict");
+    assert.equal(repository.getMemory("memory-1")?.verified, "conflict");
+  } finally {
+    repository.close();
+  }
+});
+
+test("full conflict resolution changes memory to verified", () => {
+  const repository = new Repository(":memory:");
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-1",
+        verified: "conflict"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-1",
+        status: "conflict",
+        source_memory_id: "memory-1"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "fact-2",
+        status: "conflict",
+        source_memory_id: "memory-1",
+        claim_value: "postgresql"
+      })
+    );
+
+    const item = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({
+        kind: "conflict_aggregation",
+        action: "review_conflict",
+        risk: "high",
+        memory_ids: ["memory-1"],
+        fact_claim_ids: ["fact-1", "fact-2"],
+        description: "Resolve conflict group"
+      }),
+      "vega"
+    );
+
+    const reviewed = approvalService.review(
+      {
+        item_id: item.id,
+        status: "approved",
+        reviewed_by: "admin"
+      },
+      true
+    );
+
+    assert.equal(reviewed.status, "approved");
     assert.equal(repository.getFactClaim("fact-1")?.status, "expired");
     assert.equal(repository.getFactClaim("fact-2")?.status, "expired");
     assert.equal(repository.getMemory("memory-1")?.verified, "verified");

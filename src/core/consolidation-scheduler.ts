@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import {
   isConsolidationAutoExecuteEnabled,
@@ -14,7 +14,10 @@ import { CompactService } from "./compact.js";
 import { MemoryService } from "./memory.js";
 import { ConsolidationReportEngine } from "./consolidation-report-engine.js";
 import type {
+  ConsolidationCandidate,
   ConsolidationPolicy,
+  ConsolidationPolicyMode,
+  ConsolidationTrigger,
   ConsolidationRunRecord
 } from "./types.js";
 import {
@@ -51,16 +54,34 @@ export class ConsolidationScheduler {
 
     const auditService = new ConsolidationAuditService(this.repository);
     const resolvedPolicy = this.resolvePolicy(policy);
-    const runId = this.createUniqueRunId(auditService);
     const engine = new ConsolidationReportEngine(this.repository, this.config);
 
     registerDefaultConsolidationDetectors(engine, resolvedPolicy.enabled_detectors);
 
     const report = engine.generateReport(project, tenantId, {
-      runId,
       mode: resolvedPolicy.mode
     });
     const candidates = report.sections.flatMap((section) => section.candidates);
+    const runId = this.createDeterministicRunKey(
+      project,
+      tenantId ?? null,
+      resolvedPolicy.trigger,
+      resolvedPolicy.mode,
+      candidates
+    );
+
+    if (auditService.isIdempotent(runId)) {
+      const existing = auditService.getRun(runId);
+
+      if (existing !== null) {
+        return {
+          ...existing,
+          errors: [...existing.errors, `Run ${runId} deduplicated; existing audit record reused.`]
+        };
+      }
+    }
+
+    report.execution.run_id = runId;
     const errors = [...report.execution.errors];
     let actionsExecuted = 0;
     const approvalService = new ConsolidationApprovalService(this.repository);
@@ -91,12 +112,14 @@ export class ConsolidationScheduler {
       }
     }
 
-    try {
-      approvalService.submitCandidates(runId, candidates, project, tenantId);
-    } catch (error) {
-      errors.push(
-        `approval queue: ${error instanceof Error ? error.message : String(error)}`
-      );
+    if (resolvedPolicy.mode !== "dry_run") {
+      try {
+        approvalService.submitCandidates(runId, candidates, project, tenantId);
+      } catch (error) {
+        errors.push(
+          `approval queue: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
 
     report.execution.errors = errors;
@@ -157,13 +180,29 @@ export class ConsolidationScheduler {
     };
   }
 
-  private createUniqueRunId(auditService: ConsolidationAuditService): string {
-    let runId = randomUUID();
+  private createDeterministicRunKey(
+    project: string,
+    tenantId: string | null,
+    trigger: ConsolidationTrigger,
+    mode: ConsolidationPolicyMode,
+    candidates: ConsolidationCandidate[]
+  ): string {
+    const normalizedCandidates = candidates
+      .map((candidate) => ({
+        kind: candidate.kind,
+        action: candidate.action,
+        memory_ids: [...candidate.memory_ids].sort(),
+        fact_claim_ids: [...candidate.fact_claim_ids].sort()
+      }))
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    const candidateFingerprint = createHash("sha256")
+      .update(JSON.stringify(normalizedCandidates))
+      .digest("hex")
+      .slice(0, 16);
 
-    while (auditService.isIdempotent(runId)) {
-      runId = randomUUID();
-    }
-
-    return runId;
+    return createHash("sha256")
+      .update(`${project}\u0000${tenantId ?? ""}\u0000${trigger}\u0000${mode}\u0000${candidateFingerprint}`)
+      .digest("hex")
+      .slice(0, 32);
   }
 }

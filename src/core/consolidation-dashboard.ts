@@ -132,6 +132,9 @@ export class ConsolidationDashboardService {
         total_candidates_found: runs.reduce((sum, run) => sum + run.total_candidates, 0),
         total_candidates_resolved: runs.reduce((sum, run) => sum + run.actions_executed, 0)
       },
+      // Future enhancements require historical session/cross-run aggregation that is not stored yet:
+      // session_start(light) token trend, deep_recall trigger rate, wiki synthesis hit rate,
+      // and auto-execution error count.
       approval_stats: {
         pending: approvalService.getPendingCount(project, tenantId),
         approved_total: approvalService.listAll(project, "approved", tenantId, 10_000).length,

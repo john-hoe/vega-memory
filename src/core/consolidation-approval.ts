@@ -194,12 +194,39 @@ export class ConsolidationApprovalService {
     }
 
     const reviewedAt = now();
-    this.repository.updateApprovalItem(decision.item_id, {
-      status: decision.status,
-      reviewed_by: decision.reviewed_by,
-      reviewed_at: reviewedAt,
-      review_comment: decision.comment ?? null
-    });
+    let execution:
+      | { success: boolean; error?: string; details?: string }
+      | undefined;
+
+    if (
+      auto_execute &&
+      decision.status === "approved" &&
+      isAutoExecutableApprovalAction(existing.candidate_action)
+    ) {
+      this.repository.updateApprovalItem(decision.item_id, {
+        status: "approved_pending_execution",
+        reviewed_by: decision.reviewed_by,
+        reviewed_at: reviewedAt,
+        review_comment: decision.comment ?? null
+      });
+
+      execution = this.executeApproved(this.requireApprovalItem(decision.item_id));
+      this.repository.updateApprovalItem(decision.item_id, {
+        status: execution.success ? "approved" : "execution_failed",
+        reviewed_by: decision.reviewed_by,
+        reviewed_at: reviewedAt,
+        review_comment: execution.success
+          ? (decision.comment ?? null)
+          : `${decision.comment ? `${decision.comment} ` : ""}[execution_failed: ${execution.error ?? "unknown error"}]`
+      });
+    } else {
+      this.repository.updateApprovalItem(decision.item_id, {
+        status: decision.status,
+        reviewed_by: decision.reviewed_by,
+        reviewed_at: reviewedAt,
+        review_comment: decision.comment ?? null
+      });
+    }
 
     const updated = this.requireApprovalItem(decision.item_id);
     this.repository.logAudit({
@@ -211,23 +238,19 @@ export class ConsolidationApprovalService {
         approval_id: updated.id,
         status: updated.status,
         auto_execute,
-        comment: updated.review_comment
+        comment: updated.review_comment,
+        execution:
+          execution === undefined
+            ? null
+            : {
+                success: execution.success,
+                error: execution.error ?? null,
+                details: execution.details ?? null
+              }
       }),
       ip: null,
       tenant_id: updated.tenant_id
     });
-
-    if (
-      auto_execute &&
-      updated.status === "approved" &&
-      isAutoExecutableApprovalAction(updated.candidate_action)
-    ) {
-      const execution = this.executeApproved(updated);
-
-      if (!execution.success) {
-        throw new Error(execution.error ?? "Approval execution failed");
-      }
-    }
 
     return updated;
   }
@@ -250,7 +273,7 @@ export class ConsolidationApprovalService {
   }
 
   executeApproved(item: ApprovalItem): { success: boolean; error?: string; details?: string } {
-    if (item.status !== "approved") {
+    if (item.status !== "approved" && item.status !== "approved_pending_execution") {
       return {
         success: false,
         error: `Approval item ${item.id} must be approved before execution`
@@ -484,11 +507,20 @@ export class ConsolidationApprovalService {
             continue;
           }
 
-          this.repository.updateMemory(memory.id, {
-            verified: "verified",
-            updated_at: resolvedAt
-          });
-          verifiedMemories += 1;
+          const remainingConflicts = this.repository
+            .listFactClaimsBySourceMemoryId(memory.id)
+            .filter(
+              (claim) =>
+                claim.status === "conflict" && !item.fact_claim_ids.includes(claim.id)
+            );
+
+          if (remainingConflicts.length === 0) {
+            this.repository.updateMemory(memory.id, {
+              verified: "verified",
+              updated_at: resolvedAt
+            });
+            verifiedMemories += 1;
+          }
         }
 
         return;

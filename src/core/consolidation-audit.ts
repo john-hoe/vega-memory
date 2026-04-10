@@ -15,6 +15,10 @@ export class ConsolidationAuditService {
     return this.repository.getLastConsolidationRun(project, tenantId);
   }
 
+  getRun(runId: string): ConsolidationRunRecord | null {
+    return this.repository.getConsolidationRun(runId);
+  }
+
   listRuns(
     project: string,
     limit = 20,

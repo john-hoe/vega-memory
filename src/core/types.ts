@@ -851,7 +851,13 @@ export const LOW_RISK_CONSOLIDATION_AUTO_ACTIONS = [
 
 export type ConsolidationCandidateRisk = "low" | "medium" | "high";
 
-export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired";
+export type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "approved_pending_execution"
+  | "execution_failed"
+  | "rejected"
+  | "expired";
 
 export type ConsolidationTrigger =
   | "manual"
