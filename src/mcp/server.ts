@@ -14,12 +14,9 @@ import {
 } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { ConsolidationDashboardService } from "../core/consolidation-dashboard.js";
+import { registerDefaultConsolidationDetectors } from "../core/consolidation-defaults.js";
 import { ConsolidationReportEngine } from "../core/consolidation-report-engine.js";
-import { ConflictAggregationDetector } from "../core/detectors/conflict-aggregation-detector.js";
-import { DuplicateDetector } from "../core/detectors/duplicate-detector.js";
-import { ExpiredFactDetector } from "../core/detectors/expired-fact-detector.js";
-import { GlobalPromotionDetector } from "../core/detectors/global-promotion-detector.js";
-import { WikiSynthesisDetector } from "../core/detectors/wiki-synthesis-detector.js";
+import { ConsolidationScheduler } from "../core/consolidation-scheduler.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
 import { GraphReportService } from "../core/graph-report.js";
@@ -274,16 +271,6 @@ const serializeTunnelView = (result: TunnelView) => ({
 });
 
 const serializeConsolidationReport = (report: ConsolidationReport) => report;
-
-const registerDefaultConsolidationDetectors = (
-  engine: ConsolidationReportEngine
-): void => {
-  engine.registerDetector(new DuplicateDetector());
-  engine.registerDetector(new ExpiredFactDetector());
-  engine.registerDetector(new GlobalPromotionDetector());
-  engine.registerDetector(new WikiSynthesisDetector());
-  engine.registerDetector(new ConflictAggregationDetector());
-};
 
 const resultCountForSessionStart = (result: SessionStartResult): number =>
   result.active_tasks.length +
@@ -718,6 +705,42 @@ export function createMCPServer({
         return {
           result,
           resultCount: 1
+        };
+      });
+    }
+  );
+
+  server.tool(
+    "consolidation_run",
+    "Execute a consolidation run with the specified policy.",
+    {
+      project: z.string().trim().min(1),
+      tenant_id: z.string().trim().min(1).optional(),
+      mode: z.enum(["dry_run", "auto_low_risk"]).default("dry_run"),
+      trigger: z
+        .enum(["manual", "nightly", "after_writes", "after_session_end"])
+        .default("manual")
+    },
+    async (args) => {
+      if (!isConsolidationReportEnabled(config)) {
+        return toTextResult(
+          {
+            error: "consolidation_report feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(repository, "consolidation_run", args, observer, async () => {
+        const scheduler = new ConsolidationScheduler(repository, config);
+        const result = scheduler.run(args.project, args.tenant_id ?? undefined, {
+          mode: args.mode,
+          trigger: args.trigger
+        });
+
+        return {
+          result,
+          resultCount: result.total_candidates
         };
       });
     }

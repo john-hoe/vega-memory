@@ -1,5 +1,6 @@
 import { isFactClaimsEnabled, type VegaConfig } from "../config.js";
 import type { Repository } from "../db/repository.js";
+import { ConsolidationAuditService } from "./consolidation-audit.js";
 import { DuplicateDetector } from "./detectors/duplicate-detector.js";
 import { ExpiredFactDetector } from "./detectors/expired-fact-detector.js";
 import { GlobalPromotionDetector } from "./detectors/global-promotion-detector.js";
@@ -90,6 +91,9 @@ export class ConsolidationDashboardService {
       tenantId,
       repository: this.repository
     });
+    const auditService = new ConsolidationAuditService(this.repository);
+    const runs = auditService.listRuns(project, 10_000, tenantId);
+    const lastRun = auditService.getLastRun(project, tenantId);
 
     return {
       project,
@@ -121,10 +125,10 @@ export class ConsolidationDashboardService {
               )
       },
       consolidation_history: {
-        last_report_at: null,
-        total_reports_generated: 0,
-        total_candidates_found: 0,
-        total_candidates_resolved: 0
+        last_report_at: lastRun?.completed_at ?? null,
+        total_reports_generated: runs.length,
+        total_candidates_found: runs.reduce((sum, run) => sum + run.total_candidates, 0),
+        total_candidates_resolved: runs.reduce((sum, run) => sum + run.actions_executed, 0)
       },
       health_indicators: {
         duplicate_density:

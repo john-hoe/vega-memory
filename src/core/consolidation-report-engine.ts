@@ -7,6 +7,7 @@ import type { ConsolidationDetector } from "./consolidation-detector.js";
 import type {
   ConsolidationCandidate,
   ConsolidationCandidateKind,
+  ConsolidationPolicyMode,
   ConsolidationReport,
   ConsolidationReportSection
 } from "./types.js";
@@ -25,8 +26,15 @@ export class ConsolidationReportEngine {
     this.detectors.push(detector);
   }
 
-  generateReport(project: string, tenantId?: string | null): ConsolidationReport {
-    const runId = randomUUID();
+  generateReport(
+    project: string,
+    tenantId?: string | null,
+    options?: {
+      runId?: string;
+      mode?: ConsolidationPolicyMode;
+    }
+  ): ConsolidationReport {
+    const runId = options?.runId ?? randomUUID();
     const startedAtDate = new Date();
     const startedAt = startedAtDate.toISOString();
     const startedAtPerf = performance.now();
@@ -79,7 +87,7 @@ export class ConsolidationReportEngine {
         total_candidates: allCandidates.length,
         candidates_by_kind: candidatesByKind,
         errors,
-        mode: "dry_run"
+        mode: options?.mode ?? "dry_run"
       },
       sections,
       summary: {

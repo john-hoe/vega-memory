@@ -7,6 +7,7 @@ import type {
   AuditContext,
   AuditEntry,
   AuditQueryFilters,
+  ConsolidationRunRecord,
   CrossProjectTopicMemory,
   Entity,
   EntityRelation,
@@ -170,6 +171,23 @@ interface MetadataRow {
   key: string;
   value: string;
   updated_at: string;
+}
+
+interface ConsolidationRunRow {
+  run_id: string;
+  project: string;
+  tenant_id: string | null;
+  trigger: ConsolidationRunRecord["trigger"];
+  mode: ConsolidationRunRecord["mode"];
+  started_at: string;
+  completed_at: string;
+  duration_ms: number;
+  total_candidates: number;
+  actions_executed: number;
+  actions_skipped: number;
+  errors: string;
+  report_json: string | null;
+  created_at: string;
 }
 
 interface GraphContentCacheRow {
@@ -391,6 +409,21 @@ const mapGraphContentCacheRow = (row: GraphContentCacheRow): GraphContentCacheRe
   entity_count: row.entity_count,
   memory_ids: parseJsonArray(row.memory_ids),
   last_modified_ms: row.last_modified_ms
+});
+
+const mapConsolidationRunRow = (row: ConsolidationRunRow): ConsolidationRunRecord => ({
+  run_id: row.run_id,
+  project: row.project,
+  tenant_id: row.tenant_id,
+  trigger: row.trigger,
+  mode: row.mode,
+  started_at: row.started_at,
+  completed_at: row.completed_at,
+  duration_ms: row.duration_ms,
+  total_candidates: row.total_candidates,
+  actions_executed: row.actions_executed,
+  actions_skipped: row.actions_skipped,
+  errors: parseJsonArray(row.errors)
 });
 
 function mapMemory(row: MemoryRow): Memory {
@@ -3443,6 +3476,152 @@ export class Repository {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
       )
       .run(key, value, timestamp());
+  }
+
+  insertConsolidationRun(
+    record: ConsolidationRunRecord & {
+      report_json?: string | null;
+    }
+  ): void {
+    this.db
+      .prepare<
+        [
+          string,
+          string,
+          string | null,
+          ConsolidationRunRecord["trigger"],
+          ConsolidationRunRecord["mode"],
+          string,
+          string,
+          number,
+          number,
+          number,
+          number,
+          string,
+          string | null
+        ]
+      >(
+        `INSERT INTO consolidation_runs (
+          run_id, project, tenant_id, trigger, mode, started_at, completed_at, duration_ms,
+          total_candidates, actions_executed, actions_skipped, errors, report_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        record.run_id,
+        record.project,
+        record.tenant_id ?? null,
+        record.trigger,
+        record.mode,
+        record.started_at,
+        record.completed_at,
+        record.duration_ms,
+        record.total_candidates,
+        record.actions_executed,
+        record.actions_skipped,
+        serializeJsonArray(record.errors),
+        record.report_json ?? null
+      );
+  }
+
+  getLastConsolidationRun(
+    project: string,
+    tenantId?: string | null
+  ): ConsolidationRunRecord | null {
+    const clauses = ["project = ?"];
+    const params: unknown[] = [project];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const row = this.db
+      .prepare<unknown[], ConsolidationRunRow>(
+        `SELECT *
+         FROM consolidation_runs
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY completed_at DESC, created_at DESC
+         LIMIT 1`
+      )
+      .get(...params);
+
+    return row ? mapConsolidationRunRow(row) : null;
+  }
+
+  listConsolidationRuns(
+    project: string,
+    limit: number,
+    tenantId?: string | null
+  ): ConsolidationRunRecord[] {
+    const clauses = ["project = ?"];
+    const params: unknown[] = [project];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], ConsolidationRunRow>(
+        `SELECT *
+         FROM consolidation_runs
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY completed_at DESC, created_at DESC
+         LIMIT ?`
+      )
+      .all(...params, normalizePositiveInteger(limit, 20));
+
+    return rows.map(mapConsolidationRunRow);
+  }
+
+  consolidationRunExists(runId: string): boolean {
+    const row = this.db
+      .prepare<[string], CountRow>(
+        `SELECT COUNT(*) AS total
+         FROM consolidation_runs
+         WHERE run_id = ?`
+      )
+      .get(runId);
+
+    return (row?.total ?? 0) > 0;
+  }
+
+  countProjectMemoryWritesSince(
+    project: string,
+    since: string,
+    tenantId?: string | null
+  ): number {
+    const memoryClauses = ["project = ?", "(created_at > ? OR updated_at > ?)"];
+    const claimClauses = ["project = ?", "(created_at > ? OR updated_at > ?)"];
+    const memoryParams: unknown[] = [project, since, since];
+    const claimParams: unknown[] = [project, since, since];
+
+    if (tenantId !== undefined) {
+      memoryClauses.push("tenant_id IS ?");
+      claimClauses.push("tenant_id IS ?");
+      memoryParams.push(tenantId);
+      claimParams.push(tenantId);
+    }
+
+    const memoryWrites =
+      this.db
+      .prepare<unknown[], CountRow>(
+        `SELECT COUNT(*) AS total
+         FROM memories
+         WHERE ${memoryClauses.join(" AND ")}`
+      )
+      .get(...memoryParams)?.total ?? 0;
+
+    const factClaimWrites =
+      this.db
+        .prepare<unknown[], CountRow>(
+          `SELECT COUNT(*) AS total
+           FROM fact_claims
+           WHERE ${claimClauses.join(" AND ")}`
+        )
+        .get(...claimParams)?.total ?? 0;
+
+    return memoryWrites + factClaimWrites;
   }
 
   deleteMetadata(key: string): void {

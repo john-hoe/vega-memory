@@ -135,6 +135,23 @@ export function initializeDatabase(db: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS consolidation_runs (
+      run_id TEXT PRIMARY KEY,
+      project TEXT NOT NULL,
+      tenant_id TEXT,
+      trigger TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      completed_at TEXT NOT NULL,
+      duration_ms REAL NOT NULL,
+      total_candidates INTEGER NOT NULL DEFAULT 0,
+      actions_executed INTEGER NOT NULL DEFAULT 0,
+      actions_skipped INTEGER NOT NULL DEFAULT 0,
+      errors TEXT NOT NULL DEFAULT '[]',
+      report_json TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS graph_content_cache (
       kind TEXT NOT NULL CHECK(kind IN ('code', 'doc')),
       scope_key TEXT NOT NULL,

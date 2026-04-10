@@ -827,6 +827,14 @@ export type ConsolidationCandidateKind =
   | "wiki_synthesis"
   | "conflict_aggregation";
 
+export const CONSOLIDATION_CANDIDATE_KINDS = [
+  "duplicate_merge",
+  "expired_fact",
+  "global_promotion",
+  "wiki_synthesis",
+  "conflict_aggregation"
+] as const satisfies readonly ConsolidationCandidateKind[];
+
 export type ConsolidationCandidateAction =
   | "merge"
   | "archive"
@@ -835,7 +843,44 @@ export type ConsolidationCandidateAction =
   | "synthesize_wiki"
   | "review_conflict";
 
+export const LOW_RISK_CONSOLIDATION_AUTO_ACTIONS = [
+  "archive",
+  "mark_expired",
+  "synthesize_wiki"
+] as const satisfies readonly ConsolidationCandidateAction[];
+
 export type ConsolidationCandidateRisk = "low" | "medium" | "high";
+
+export type ConsolidationTrigger =
+  | "manual"
+  | "nightly"
+  | "after_writes"
+  | "after_session_end";
+
+export type ConsolidationPolicyMode = "dry_run" | "auto_low_risk";
+
+export interface ConsolidationPolicy {
+  trigger: ConsolidationTrigger;
+  mode: ConsolidationPolicyMode;
+  min_writes_threshold: number;
+  enabled_detectors: ConsolidationCandidateKind[];
+  auto_actions: ConsolidationCandidateAction[];
+}
+
+export interface ConsolidationRunRecord {
+  run_id: string;
+  project: string;
+  tenant_id: string | null;
+  trigger: ConsolidationTrigger;
+  mode: ConsolidationPolicyMode;
+  started_at: string;
+  completed_at: string;
+  duration_ms: number;
+  total_candidates: number;
+  actions_executed: number;
+  actions_skipped: number;
+  errors: string[];
+}
 
 export interface ConsolidationCandidate {
   kind: ConsolidationCandidateKind;
@@ -864,7 +909,7 @@ export interface ConsolidationReportExecutionLog {
   total_candidates: number;
   candidates_by_kind: Partial<Record<ConsolidationCandidateKind, number>>;
   errors: string[];
-  mode: "dry_run";
+  mode: ConsolidationPolicyMode;
 }
 
 export interface ConsolidationReport {
@@ -912,4 +957,18 @@ export interface ConsolidationDashboardMetrics {
     conflict_backlog: number;
     global_promotion_pending: number;
   };
+}
+
+export interface ConsolidationActionResult {
+  candidate_index: number;
+  action: ConsolidationCandidateAction;
+  success: boolean;
+  error?: string;
+  details?: string;
+}
+
+export interface ConsolidationExecutionResult {
+  executed: ConsolidationActionResult[];
+  skipped_high_risk: number;
+  skipped_no_approval: number;
 }

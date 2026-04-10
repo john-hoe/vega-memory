@@ -53,6 +53,7 @@ export interface VegaFeatureFlags {
   deepRecall: boolean;
   codeGraph: boolean;
   consolidationReport: boolean;
+  consolidationAutoExecute: boolean;
 }
 
 export interface VegaConfig {
@@ -143,7 +144,8 @@ export const DEFAULT_FEATURE_FLAGS: VegaFeatureFlags = {
   topicRecall: false,
   deepRecall: true,
   codeGraph: false,
-  consolidationReport: false
+  consolidationReport: false,
+  consolidationAutoExecute: false
 };
 
 export const resolveFeatureFlags = (
@@ -180,6 +182,10 @@ export const isCodeGraphEnabled = (config?: Pick<VegaConfig, "features">): boole
 
 export const isConsolidationReportEnabled = (config?: Pick<VegaConfig, "features">): boolean =>
   resolveFeatureFlags(config).consolidationReport;
+
+export const isConsolidationAutoExecuteEnabled = (
+  config?: Pick<VegaConfig, "features">
+): boolean => resolveFeatureFlags(config).consolidationAutoExecute;
 
 const parseNumber = (value: string | undefined, fallback: number): number => {
   if (value === undefined) {
@@ -420,6 +426,10 @@ const parseFeatureFlags = (): VegaFeatureFlags => ({
   consolidationReport: parseBoolean(
     process.env.VEGA_FEATURE_CONSOLIDATION_REPORT,
     DEFAULT_FEATURE_FLAGS.consolidationReport
+  ),
+  consolidationAutoExecute: parseBoolean(
+    process.env.VEGA_FEATURE_CONSOLIDATION_AUTO_EXECUTE,
+    DEFAULT_FEATURE_FLAGS.consolidationAutoExecute
   )
 });
 

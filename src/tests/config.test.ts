@@ -89,6 +89,8 @@ test("loadConfig returns the documented defaults", () => {
     VEGA_FEATURE_DEEP_RECALL: process.env.VEGA_FEATURE_DEEP_RECALL,
     VEGA_FEATURE_CODE_GRAPH: process.env.VEGA_FEATURE_CODE_GRAPH,
     VEGA_FEATURE_CONSOLIDATION_REPORT: process.env.VEGA_FEATURE_CONSOLIDATION_REPORT,
+    VEGA_FEATURE_CONSOLIDATION_AUTO_EXECUTE:
+      process.env.VEGA_FEATURE_CONSOLIDATION_AUTO_EXECUTE,
     VEGA_SESSION_INCLUDE_GRAPH_REPORT: process.env.VEGA_SESSION_INCLUDE_GRAPH_REPORT,
     VEGA_WEBHOOKS: process.env.VEGA_WEBHOOKS
   };
@@ -173,6 +175,7 @@ test("loadConfig returns the documented defaults", () => {
   delete process.env.VEGA_FEATURE_DEEP_RECALL;
   delete process.env.VEGA_FEATURE_CODE_GRAPH;
   delete process.env.VEGA_FEATURE_CONSOLIDATION_REPORT;
+  delete process.env.VEGA_FEATURE_CONSOLIDATION_AUTO_EXECUTE;
   delete process.env.VEGA_SESSION_INCLUDE_GRAPH_REPORT;
   delete process.env.VEGA_WEBHOOKS;
 
@@ -254,7 +257,8 @@ test("loadConfig returns the documented defaults", () => {
       topicRecall: false,
       deepRecall: true,
       codeGraph: false,
-      consolidationReport: false
+      consolidationReport: false,
+      consolidationAutoExecute: false
     },
     customRedactionPatterns: []
   });
@@ -351,6 +355,8 @@ test("loadConfig reads overrides from process.env", () => {
     VEGA_FEATURE_DEEP_RECALL: process.env.VEGA_FEATURE_DEEP_RECALL,
     VEGA_FEATURE_CODE_GRAPH: process.env.VEGA_FEATURE_CODE_GRAPH,
     VEGA_FEATURE_CONSOLIDATION_REPORT: process.env.VEGA_FEATURE_CONSOLIDATION_REPORT,
+    VEGA_FEATURE_CONSOLIDATION_AUTO_EXECUTE:
+      process.env.VEGA_FEATURE_CONSOLIDATION_AUTO_EXECUTE,
     VEGA_SESSION_INCLUDE_GRAPH_REPORT: process.env.VEGA_SESSION_INCLUDE_GRAPH_REPORT,
     VEGA_WEBHOOKS: process.env.VEGA_WEBHOOKS
   };
@@ -435,6 +441,7 @@ test("loadConfig reads overrides from process.env", () => {
   process.env.VEGA_FEATURE_DEEP_RECALL = "off";
   process.env.VEGA_FEATURE_CODE_GRAPH = "true";
   process.env.VEGA_FEATURE_CONSOLIDATION_REPORT = "true";
+  process.env.VEGA_FEATURE_CONSOLIDATION_AUTO_EXECUTE = "true";
   process.env.VEGA_SESSION_INCLUDE_GRAPH_REPORT = "true";
   process.env.VEGA_WEBHOOKS = JSON.stringify([
     {
@@ -528,7 +535,8 @@ test("loadConfig reads overrides from process.env", () => {
       topicRecall: true,
       deepRecall: false,
       codeGraph: true,
-      consolidationReport: true
+      consolidationReport: true,
+      consolidationAutoExecute: true
     },
     customRedactionPatterns: [],
     webhooks: [

@@ -2,16 +2,14 @@ import { Command } from "commander";
 
 import { isConsolidationReportEnabled, type VegaConfig } from "../../config.js";
 import { ConsolidationDashboardService } from "../../core/consolidation-dashboard.js";
-import { ConflictAggregationDetector } from "../../core/detectors/conflict-aggregation-detector.js";
-import { DuplicateDetector } from "../../core/detectors/duplicate-detector.js";
-import { ExpiredFactDetector } from "../../core/detectors/expired-fact-detector.js";
-import { GlobalPromotionDetector } from "../../core/detectors/global-promotion-detector.js";
-import { WikiSynthesisDetector } from "../../core/detectors/wiki-synthesis-detector.js";
+import { registerDefaultConsolidationDetectors } from "../../core/consolidation-defaults.js";
 import { ConsolidationReportEngine } from "../../core/consolidation-report-engine.js";
+import { ConsolidationScheduler } from "../../core/consolidation-scheduler.js";
 import type {
   ConsolidationDashboardMetrics,
   ConsolidationCandidateKind,
   ConsolidationReport,
+  ConsolidationRunRecord,
   ConsolidationReportSection
 } from "../../core/types.js";
 import type { Repository } from "../../db/repository.js";
@@ -107,13 +105,18 @@ export const formatDashboardAsMarkdown = (
     `Reports: ${dashboard.consolidation_history.total_reports_generated} | Candidates found: ${dashboard.consolidation_history.total_candidates_found} | Candidates resolved: ${dashboard.consolidation_history.total_candidates_resolved}`
   ].join("\n");
 
-const registerDefaultDetectors = (engine: ConsolidationReportEngine): void => {
-  engine.registerDetector(new DuplicateDetector());
-  engine.registerDetector(new ExpiredFactDetector());
-  engine.registerDetector(new GlobalPromotionDetector());
-  engine.registerDetector(new WikiSynthesisDetector());
-  engine.registerDetector(new ConflictAggregationDetector());
-};
+const formatRunRecordAsMarkdown = (record: ConsolidationRunRecord): string =>
+  [
+    `# Consolidation Run: ${record.project}`,
+    `Run: ${record.run_id}`,
+    `Trigger: ${record.trigger} | Mode: ${record.mode}`,
+    `Started: ${record.started_at}`,
+    `Completed: ${record.completed_at}`,
+    `Duration: ${record.duration_ms}ms`,
+    `Candidates: ${record.total_candidates}`,
+    `Actions executed: ${record.actions_executed} | Actions skipped: ${record.actions_skipped}`,
+    `Errors: ${record.errors.length === 0 ? "(none)" : record.errors.join(" | ")}`
+  ].join("\n");
 
 const findSection = (
   sections: ConsolidationReportSection[],
@@ -142,7 +145,7 @@ export function registerConsolidationReportCommand(
       }
 
       const engine = new ConsolidationReportEngine(repository, config);
-      registerDefaultDetectors(engine);
+      registerDefaultConsolidationDetectors(engine);
       const report = engine.generateReport(options.project, options.tenant);
 
       if (options.json) {
@@ -180,4 +183,47 @@ export function registerConsolidationReportCommand(
 
       console.log(formatDashboardAsMarkdown(dashboard));
     });
+
+  program
+    .command("consolidation-run")
+    .description("Execute a consolidation run for a project")
+    .requiredOption("--project <project>", "project name")
+    .option("--tenant <tenant>", "tenant ID")
+    .option("--mode <mode>", "run mode: dry_run or auto_low_risk", "dry_run")
+    .option(
+      "--trigger <trigger>",
+      "trigger source: manual, nightly, after_writes, after_session_end",
+      "manual"
+    )
+    .option("--json", "output as JSON instead of markdown")
+    .action(
+      (options: {
+        project: string;
+        tenant?: string;
+        mode?: "dry_run" | "auto_low_risk";
+        trigger?: "manual" | "nightly" | "after_writes" | "after_session_end";
+        json?: boolean;
+      }) => {
+        if (!isConsolidationReportEnabled(config)) {
+          console.error(
+            "consolidation_report feature is disabled. Set features.consolidationReport=true"
+          );
+          process.exitCode = 1;
+          return;
+        }
+
+        const scheduler = new ConsolidationScheduler(repository, config);
+        const runRecord = scheduler.run(options.project, options.tenant, {
+          mode: options.mode,
+          trigger: options.trigger
+        });
+
+        if (options.json) {
+          console.log(JSON.stringify(runRecord, null, 2));
+          return;
+        }
+
+        console.log(formatRunRecordAsMarkdown(runRecord));
+      }
+    );
 }
