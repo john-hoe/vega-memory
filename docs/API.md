@@ -43,10 +43,10 @@ Common status codes:
 
 - `400` invalid JSON, invalid request body, or invalid query parameter
 - `401` missing or invalid bearer token
-- `501` reserved endpoint or protocol branch that is not implemented yet
+- `501` feature is disabled via configuration (e.g., `deep_recall` when `features.deepRecall=false`)
 - `500` internal server error
 
-Recall-protocol placeholders may return a structured error payload:
+Feature-gated endpoints return a structured error payload when disabled:
 
 ```json
 {
@@ -419,24 +419,45 @@ Request fields:
 - `include_metadata` optional boolean
 - `inject_into_session` optional boolean, defaults to `false`
 
-Current response:
+Returns `200` with the deep recall results, or `501` if the feature is disabled.
 
-- `501 Not Implemented`
-
-Example response:
+Success response (`200`):
 
 ```json
 {
-  "error": {
-    "status": 501,
-    "code": "DEEP_RECALL_NOT_IMPLEMENTED",
-    "message": "deep_recall is reserved for VM2-006 and is not implemented yet",
-    "retryable": false
-  }
+  "results": [
+    {
+      "archive_id": "uuid",
+      "memory_id": "uuid or null",
+      "project": "my-project",
+      "type": "decision",
+      "archive_type": "tool_log",
+      "title": "Archive title",
+      "content": "Full archived text (omitted when index >= evidence_limit)",
+      "contains_raw": true,
+      "summary": "Memory summary if available",
+      "verified": "verified",
+      "evidence_score": 0.85,
+      "created_at": "2026-04-01T00:00:00.000Z",
+      "updated_at": "2026-04-01T00:00:00.000Z"
+    }
+  ],
+  "next_cursor": null,
+  "injected_into_session": false
 }
 ```
 
-The eventual success shape is specified in [specs/vm2-001-recall-protocol.md](specs/vm2-001-recall-protocol.md).
+When `evidence_limit` is set, results beyond the limit omit the `content` field to control token budget (e.g., `limit=5, evidence_limit=2` returns 5 results but only the top 2 include full content).
+
+Error response when feature is disabled (`501`):
+
+```json
+{
+  "error": "deep_recall feature is disabled"
+}
+```
+
+See [specs/vm2-001-recall-protocol.md](specs/vm2-001-recall-protocol.md) for the full protocol specification.
 
 ## `POST /api/session/end`
 
