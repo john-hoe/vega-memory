@@ -520,6 +520,128 @@ test("topic tunnel MCP tools expose cross-project topic views", async () => {
   }
 });
 
+test("topic_tunnel MCP tool respects tenant isolation", async () => {
+  const { repository, server } = createServerHarness();
+  const topicService = new TopicService(repository, baseConfig);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-a-memory",
+        tenant_id: "tenantA",
+        project: "atlas",
+        type: "decision",
+        title: "Tenant A database choice",
+        content: "Tenant A uses SQLite."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-b-memory",
+        tenant_id: "tenantB",
+        project: "zeus",
+        type: "decision",
+        title: "Tenant B database choice",
+        content: "Tenant B uses Postgres."
+      })
+    );
+
+    await topicService.assignTopic("tenant-a-memory", "database", "explicit");
+    await topicService.assignTopic("tenant-b-memory", "database", "explicit");
+
+    const result = await getRegisteredTools(server).topic_tunnel.handler(
+      {
+        topic_key: "database",
+        tenant_id: "tenantA"
+      },
+      {}
+    );
+    const payload = parseToolPayload<{
+      topic_key: string;
+      project_count: number;
+      total_memory_count: number;
+      projects: Array<{ project: string; memory_count: number }>;
+    }>(result);
+
+    assert.equal(payload.topic_key, "database");
+    assert.equal(payload.project_count, 1);
+    assert.equal(payload.total_memory_count, 1);
+    assert.deepEqual(
+      payload.projects.map((project) => ({
+        project: project.project,
+        memory_count: project.memory_count
+      })),
+      [{ project: "atlas", memory_count: 1 }]
+    );
+  } finally {
+    repository.close();
+    await server.close();
+  }
+});
+
+test("topic_cross_project MCP tool respects tenant isolation", async () => {
+  const { repository, server } = createServerHarness();
+  const topicService = new TopicService(repository, baseConfig);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-a-cross-project",
+        tenant_id: "tenantA",
+        project: "atlas",
+        type: "decision",
+        title: "Tenant A decision",
+        content: "Tenant A uses SQLite."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-b-cross-project",
+        tenant_id: "tenantB",
+        project: "zeus",
+        type: "decision",
+        title: "Tenant B decision",
+        content: "Tenant B uses Postgres."
+      })
+    );
+
+    await topicService.assignTopic("tenant-a-cross-project", "database", "explicit");
+    await topicService.assignTopic("tenant-b-cross-project", "database", "explicit");
+
+    const result = await getRegisteredTools(server).topic_cross_project.handler(
+      {
+        topic_key: "database",
+        type: "decision",
+        tenant_id: "tenantA"
+      },
+      {}
+    );
+    const payload = parseToolPayload<
+      Array<{ topic: { project: string; topic_key: string }; memory: { id: string; type: string } }>
+    >(result);
+
+    assert.deepEqual(
+      payload.map((entry) => ({
+        project: entry.topic.project,
+        topic_key: entry.topic.topic_key,
+        id: entry.memory.id,
+        type: entry.memory.type
+      })),
+      [
+        {
+          project: "atlas",
+          topic_key: "database",
+          id: "tenant-a-cross-project",
+          type: "decision"
+        }
+      ]
+    );
+  } finally {
+    repository.close();
+    await server.close();
+  }
+});
+
 test("wiki_read MCP tool returns page with backlinks", async () => {
   const { repository, pageManager, crossReferenceService, server } = createServerHarness();
 
@@ -685,6 +807,78 @@ test("deep_recall MCP tool returns cold archive results", async () => {
     });
     assert.equal(payload.next_cursor, null);
     assert.equal(payload.injected_into_session, false);
+  } finally {
+    repository.close();
+    await server.close();
+  }
+});
+
+test("deep_recall MCP tool respects tenant isolation", async () => {
+  const { repository, server } = createServerHarness();
+  const archiveService = new ArchiveService(repository);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-a-archive-memory",
+        tenant_id: "tenantA",
+        type: "decision",
+        title: "Tenant A backup decision",
+        content: "Tenant A backup validation memory."
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-b-archive-memory",
+        tenant_id: "tenantB",
+        type: "decision",
+        title: "Tenant B backup decision",
+        content: "Tenant B backup validation memory."
+      })
+    );
+
+    archiveService.store(
+      "Tenant A restore commands and backup evidence.",
+      "tool_log",
+      "vega",
+      {
+        tenant_id: "tenantA",
+        source_memory_id: "tenant-a-archive-memory",
+        title: "Tenant A backup tool log"
+      }
+    );
+    archiveService.store(
+      "Tenant B restore commands and backup evidence.",
+      "tool_log",
+      "vega",
+      {
+        tenant_id: "tenantB",
+        source_memory_id: "tenant-b-archive-memory",
+        title: "Tenant B backup tool log"
+      }
+    );
+
+    const result = await getRegisteredTools(server).deep_recall.handler(
+      {
+        query: "restore commands",
+        project: "vega",
+        tenant_id: "tenantA",
+        include_content: true
+      },
+      {}
+    );
+    const payload = parseToolPayload<{
+      results: Array<{
+        memory_id: string | null;
+        archive_type: string;
+        content?: string;
+      }>;
+    }>(result);
+
+    assert.equal(payload.results.length, 1);
+    assert.equal(payload.results[0]?.memory_id, "tenant-a-archive-memory");
+    assert.equal(payload.results[0]?.archive_type, "tool_log");
+    assert.match(payload.results[0]?.content ?? "", /Tenant A restore commands/);
   } finally {
     repository.close();
     await server.close();

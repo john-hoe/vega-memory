@@ -718,6 +718,7 @@ export function createMCPServer({
     {
       query: z.string().trim().min(1),
       project: z.string().trim().min(1).optional(),
+      tenant_id: z.string().trim().min(1).optional(),
       limit: z.number().int().positive().default(5),
       evidence_limit: z.number().int().positive().optional(),
       include_content: z.boolean().default(true),
@@ -735,7 +736,9 @@ export function createMCPServer({
       }
 
       return runTool(repository, "deep_recall", args, observer, async () => {
-        const result = await Promise.resolve(rawArchiveService.deepRecall(args));
+        const result = await Promise.resolve(
+          rawArchiveService.deepRecall(args, args.tenant_id ?? undefined)
+        );
 
         return {
           result,
@@ -750,6 +753,7 @@ export function createMCPServer({
     "List fact claims, optionally filtered by status or as_of timestamp.",
     {
       project: z.string().trim().min(1),
+      tenant_id: z.string().trim().min(1).optional(),
       status: z.enum(FACT_CLAIM_STATUSES).optional(),
       as_of: z.string().trim().min(1).optional(),
       include_suspected_expired: z.boolean().default(false),
@@ -776,7 +780,8 @@ export function createMCPServer({
                   include_suspected_expired: args.include_suspected_expired,
                   include_conflicts: args.include_conflicts
                 }
-              : undefined
+              : undefined,
+            args.tenant_id ?? undefined
           )
         );
 
@@ -825,6 +830,7 @@ export function createMCPServer({
     {
       project: z.string().trim().min(1),
       as_of: z.string().trim().min(1),
+      tenant_id: z.string().trim().min(1).optional(),
       subject: z.string().trim().min(1).optional(),
       predicate: z.string().trim().min(1).optional(),
       include_suspected_expired: z.boolean().default(false),
@@ -850,7 +856,8 @@ export function createMCPServer({
             {
               include_suspected_expired: args.include_suspected_expired,
               include_conflicts: args.include_conflicts
-            }
+            },
+            args.tenant_id ?? undefined
           )
         );
 
@@ -1042,11 +1049,12 @@ export function createMCPServer({
     "topic_tunnel",
     "Return the cross-project tunnel view for a topic key.",
     {
-      topic_key: z.string().trim().min(1)
+      topic_key: z.string().trim().min(1),
+      tenant_id: z.string().trim().min(1).optional()
     },
     async (args) =>
       runTool(repository, "topic_tunnel", args, observer, async () => {
-        const result = topicService.getTunnelView(args.topic_key, undefined);
+        const result = topicService.getTunnelView(args.topic_key, args.tenant_id ?? undefined);
 
         return {
           result: serializeTunnelView(result),
@@ -1060,11 +1068,16 @@ export function createMCPServer({
     "List cross-project memories attached to the same topic key.",
     {
       topic_key: z.string().trim().min(1),
+      tenant_id: z.string().trim().min(1).optional(),
       type: z.enum(MEMORY_TYPES).optional()
     },
     async (args) =>
       runTool(repository, "topic_cross_project", args, observer, async () => {
-        const result = topicService.getCrossProjectMemories(args.topic_key, args.type, undefined);
+        const result = topicService.getCrossProjectMemories(
+          args.topic_key,
+          args.type,
+          args.tenant_id ?? undefined
+        );
 
         return {
           result: result.map(serializeCrossProjectTopicMemory),
