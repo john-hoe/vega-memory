@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -8,15 +8,12 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 const projectRoot = process.cwd();
-const cliPath = join(projectRoot, "dist", "cli", "index.js");
-const cliModuleUrl = pathToFileURL(cliPath).href;
 const expectedMcpEntryPath = join(projectRoot, "dist", "index.js");
 const childBaseEnv = Object.fromEntries(
   Object.entries(process.env).filter(
     ([key]) => !key.startsWith("VEGA_") && key !== "OLLAMA_BASE_URL" && key !== "OLLAMA_MODEL"
   )
 );
-const cliBootstrap = `process.argv.splice(1, 0, ${JSON.stringify(cliPath)}); await import(${JSON.stringify(cliModuleUrl)});`;
 
 interface CliResult {
   status: number | null;
@@ -27,17 +24,40 @@ interface CliResult {
 const bundledCursorRulesPath = join(projectRoot, "rules", "cursor-memory.mdc");
 const bundledSnapshotPath = join(projectRoot, "data", "vega-memory-snapshot.md");
 
+const getBundledSnapshotSourcePath = (root: string): string | null => {
+  const preferredPath = join(root, "data", "vega-memory-snapshot.md");
+  if (existsSync(preferredPath)) {
+    return preferredPath;
+  }
+
+  const snapshotsDirectory = join(root, "data", "snapshots");
+  if (!existsSync(snapshotsDirectory)) {
+    return null;
+  }
+
+  const latestSnapshot = readdirSync(snapshotsDirectory)
+    .filter((entry) => /^snapshot-\d{4}-\d{2}-\d{2}\.md$/u.test(entry))
+    .sort((left, right) => left.localeCompare(right))
+    .at(-1);
+
+  return latestSnapshot === undefined ? null : join(snapshotsDirectory, latestSnapshot);
+};
+
 const runCli = (
   args: string[],
   homeDirectory: string,
-  envOverrides: Record<string, string | undefined> = {}
+  envOverrides: Record<string, string | undefined> = {},
+  cliProjectRoot = projectRoot
 ): Promise<CliResult> =>
   new Promise((resolve, reject) => {
+    const cliPath = join(cliProjectRoot, "dist", "cli", "index.js");
+    const cliModuleUrl = pathToFileURL(cliPath).href;
+    const cliBootstrap = `process.argv.splice(1, 0, ${JSON.stringify(cliPath)}); await import(${JSON.stringify(cliModuleUrl)});`;
     const child = spawn(
       process.execPath,
       ["--input-type=module", "-e", cliBootstrap, "--", ...args],
       {
-        cwd: projectRoot,
+        cwd: cliProjectRoot,
         env: {
           ...childBaseEnv,
           HOME: homeDirectory,
@@ -180,6 +200,7 @@ test("setup --server fails when the node command is unavailable for Cursor MCP",
 test("setup --server writes Vega, Cursor, rules, and snapshot files with an explicit API key", async () => {
   const homeDirectory = mkdtempSync(join(tmpdir(), "vega-setup-success-"));
   const apiKey = "remote-secret";
+  const bundledSnapshotSourcePath = getBundledSnapshotSourcePath(projectRoot);
   const cursorDirectory = join(homeDirectory, ".cursor");
   const cursorConfigPath = join(cursorDirectory, "mcp.json");
   const cursorRulesPath = join(cursorDirectory, "rules", "memory.mdc");
@@ -260,7 +281,13 @@ test("setup --server writes Vega, Cursor, rules, and snapshot files with an expl
       }
     });
     assert.equal(readFileSync(cursorRulesPath, "utf8"), readFileSync(bundledCursorRulesPath, "utf8"));
-    assert.equal(readFileSync(snapshotPath, "utf8"), readFileSync(bundledSnapshotPath, "utf8"));
+    if (bundledSnapshotSourcePath === null) {
+      assert.equal(existsSync(snapshotPath), false);
+      assert.match(result.stdout, /Bundled snapshot not found; skipping snapshot sync\./);
+    } else {
+      assert.equal(readFileSync(snapshotPath, "utf8"), readFileSync(bundledSnapshotSourcePath, "utf8"));
+      assert.match(result.stdout, /Synced snapshot to .*snapshot\.md\./);
+    }
   } finally {
     await server.stop();
     rmSync(homeDirectory, { recursive: true, force: true });
@@ -300,5 +327,34 @@ test("setup --server auto-generates a vega_ API key when none is provided", asyn
   } finally {
     await server.stop();
     rmSync(homeDirectory, { recursive: true, force: true });
+  }
+});
+
+test("setup --server succeeds when the bundled snapshot is absent", async () => {
+  const homeDirectory = mkdtempSync(join(tmpdir(), "vega-setup-no-snapshot-home-"));
+  const fixtureRoot = mkdtempSync(join(projectRoot, ".tmp-vega-setup-no-snapshot-"));
+  const snapshotPath = join(homeDirectory, ".vega", "snapshot.md");
+  const server = await startHealthServer({
+    requireAuthorization: false
+  });
+
+  cpSync(join(projectRoot, "dist"), join(fixtureRoot, "dist"), { recursive: true });
+  cpSync(join(projectRoot, "rules"), join(fixtureRoot, "rules"), { recursive: true });
+
+  try {
+    const result = await runCli(
+      ["setup", "--server", "127.0.0.1", "--port", String(server.port)],
+      homeDirectory,
+      {},
+      fixtureRoot
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(existsSync(snapshotPath), false);
+    assert.match(result.stdout, /Bundled snapshot not found; skipping snapshot sync\./);
+  } finally {
+    await server.stop();
+    rmSync(homeDirectory, { recursive: true, force: true });
+    rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });

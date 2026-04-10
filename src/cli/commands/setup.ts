@@ -145,7 +145,7 @@ const installCursorRules = (): string => {
   return cursorRulesPath;
 };
 
-const getBundledSnapshotSourcePath = (): string => {
+const getBundledSnapshotSourcePath = (): string | null => {
   const projectRoot = getProjectRoot();
   const preferredPath = join(projectRoot, "data", "vega-memory-snapshot.md");
   if (existsSync(preferredPath)) {
@@ -153,22 +153,27 @@ const getBundledSnapshotSourcePath = (): string => {
   }
 
   const snapshotsDirectory = join(projectRoot, "data", "snapshots");
+  if (!existsSync(snapshotsDirectory)) {
+    return null;
+  }
+
   const latestSnapshot = readdirSync(snapshotsDirectory)
     .filter((entry) => /^snapshot-\d{4}-\d{2}-\d{2}\.md$/u.test(entry))
     .sort((left, right) => left.localeCompare(right))
     .at(-1);
 
-  if (!latestSnapshot) {
-    throw new Error("No bundled snapshot found for Vega setup");
-  }
-
-  return join(snapshotsDirectory, latestSnapshot);
+  return latestSnapshot ? join(snapshotsDirectory, latestSnapshot) : null;
 };
 
-const syncSnapshot = (): string => {
+const syncSnapshot = (): string | null => {
+  const bundledSnapshotPath = getBundledSnapshotSourcePath();
+  if (bundledSnapshotPath === null) {
+    return null;
+  }
+
   const outputPath = getSnapshotOutputPath();
   mkdirSync(getVegaDirectory(), { recursive: true });
-  copyFileSync(getBundledSnapshotSourcePath(), outputPath);
+  copyFileSync(bundledSnapshotPath, outputPath);
   return outputPath;
 };
 
@@ -240,7 +245,11 @@ export function registerSetupCommand(program: Command): void {
           console.log(`Generated API key: ${apiKey}`);
         }
         console.log(`Installed Cursor rules at ${cursorRulesPath}.`);
-        console.log(`Synced snapshot to ${snapshotPath}.`);
+        if (snapshotPath === null) {
+          console.log("Bundled snapshot not found; skipping snapshot sync.");
+        } else {
+          console.log(`Synced snapshot to ${snapshotPath}.`);
+        }
         console.log("Reload Cursor to load the updated MCP configuration.");
       }
     );
