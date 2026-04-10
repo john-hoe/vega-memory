@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { v4 as uuidv4 } from "uuid";
 
+import { ConflictAggregationDetector } from "../core/detectors/conflict-aggregation-detector.js";
 import { DuplicateDetector } from "../core/detectors/duplicate-detector.js";
 import { ExpiredFactDetector } from "../core/detectors/expired-fact-detector.js";
 import { GlobalPromotionDetector } from "../core/detectors/global-promotion-detector.js";
-import type { FactClaim, Memory } from "../core/types.js";
+import { WikiSynthesisDetector } from "../core/detectors/wiki-synthesis-detector.js";
+import type { FactClaim, Memory, MemoryTopic, Topic } from "../core/types.js";
 import { Repository } from "../db/repository.js";
+import { PageManager } from "../wiki/page-manager.js";
 
 const now = "2026-04-10T00:00:00.000Z";
 
@@ -54,6 +58,34 @@ const createFactClaim = (overrides: Partial<FactClaim> = {}): FactClaim => ({
   valid_to: null,
   temporal_precision: "day",
   invalidation_reason: null,
+  created_at: now,
+  updated_at: now,
+  ...overrides
+});
+
+const createTopic = (overrides: Partial<Topic> = {}): Topic => ({
+  id: uuidv4(),
+  tenant_id: null,
+  project: "vega",
+  topic_key: "auth",
+  version: 1,
+  label: "Auth",
+  kind: "topic",
+  description: null,
+  source: "explicit",
+  state: "active",
+  supersedes_topic_id: null,
+  created_at: now,
+  updated_at: now,
+  ...overrides
+});
+
+const createMemoryTopic = (overrides: Partial<MemoryTopic> = {}): MemoryTopic => ({
+  memory_id: "memory-1",
+  topic_id: "topic-1",
+  source: "explicit",
+  confidence: 1,
+  status: "active",
   created_at: now,
   updated_at: now,
   ...overrides
@@ -352,6 +384,210 @@ test("GlobalPromotionDetector ignores already-global memories", () => {
         type: "pitfall",
         scope: "global",
         accessed_projects: ["proj-a", "proj-b"]
+      })
+    );
+
+    const candidates = detector.detect({
+      project: "vega",
+      repository
+    });
+
+    assert.equal(candidates.length, 0);
+  } finally {
+    repository.close();
+  }
+});
+
+test("WikiSynthesisDetector detects topic with 3+ memories", () => {
+  const repository = new Repository(":memory:");
+  const detector = new WikiSynthesisDetector();
+  const topic = createTopic({ id: "topic-auth", topic_key: "auth" });
+
+  try {
+    repository.createTopic(topic);
+    for (const memoryId of ["wiki-1", "wiki-2", "wiki-3"]) {
+      repository.createMemory(
+        createStoredMemory({
+          id: memoryId,
+          title: `Auth memory ${memoryId}`,
+          tags: ["auth", "wiki"]
+        })
+      );
+      repository.createMemoryTopic(
+        createMemoryTopic({
+          memory_id: memoryId,
+          topic_id: topic.id
+        })
+      );
+    }
+
+    const candidates = detector.detect({
+      project: "vega",
+      repository
+    });
+
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0]?.kind, "wiki_synthesis");
+    assert.deepEqual(candidates[0]?.memory_ids, ["wiki-1", "wiki-2", "wiki-3"]);
+  } finally {
+    repository.close();
+  }
+});
+
+test("WikiSynthesisDetector skips topics with fewer than 3 memories", () => {
+  const repository = new Repository(":memory:");
+  const detector = new WikiSynthesisDetector();
+  const topic = createTopic({ id: "topic-auth", topic_key: "auth" });
+
+  try {
+    repository.createTopic(topic);
+    for (const memoryId of ["wiki-1", "wiki-2"]) {
+      repository.createMemory(createStoredMemory({ id: memoryId, title: memoryId }));
+      repository.createMemoryTopic(
+        createMemoryTopic({
+          memory_id: memoryId,
+          topic_id: topic.id
+        })
+      );
+    }
+
+    const candidates = detector.detect({
+      project: "vega",
+      repository
+    });
+
+    assert.equal(candidates.length, 0);
+  } finally {
+    repository.close();
+  }
+});
+
+test("WikiSynthesisDetector skips topics that already have a wiki page", () => {
+  const repository = new Repository(":memory:");
+  const detector = new WikiSynthesisDetector();
+  const pageManager = new PageManager(repository);
+  const topic = createTopic({ id: "topic-auth", topic_key: "auth" });
+
+  try {
+    repository.createTopic(topic);
+    const memoryIds = ["wiki-1", "wiki-2", "wiki-3"];
+
+    for (const memoryId of memoryIds) {
+      repository.createMemory(createStoredMemory({ id: memoryId, title: memoryId }));
+      repository.createMemoryTopic(
+        createMemoryTopic({
+          memory_id: memoryId,
+          topic_id: topic.id
+        })
+      );
+    }
+
+    const page = pageManager.createPage({
+      title: "Auth",
+      content: "Existing wiki synthesis.",
+      summary: "Existing wiki synthesis.",
+      page_type: "project",
+      project: "vega",
+      tags: ["auth"],
+      source_memory_ids: memoryIds
+    });
+    pageManager.updatePage(page.id, { status: "published" }, "publish existing synthesis");
+
+    const candidates = detector.detect({
+      project: "vega",
+      repository
+    });
+
+    assert.equal(candidates.length, 0);
+  } finally {
+    repository.close();
+  }
+});
+
+test("ConflictAggregationDetector groups conflict claims by subject and predicate", () => {
+  const repository = new Repository(":memory:");
+  const detector = new ConflictAggregationDetector();
+
+  try {
+    repository.createMemory(createStoredMemory({ id: "memory-1" }));
+    repository.createMemory(createStoredMemory({ id: "memory-2" }));
+    repository.createFactClaim(
+      createFactClaim({
+        id: "claim-1",
+        source_memory_id: "memory-1",
+        status: "conflict",
+        subject: "vega-memory",
+        predicate: "database",
+        claim_value: "sqlite"
+      })
+    );
+    repository.createFactClaim(
+      createFactClaim({
+        id: "claim-2",
+        source_memory_id: "memory-2",
+        status: "conflict",
+        subject: "vega-memory",
+        predicate: "database",
+        claim_value: "postgres"
+      })
+    );
+
+    const candidates = detector.detect({
+      project: "vega",
+      repository
+    });
+
+    assert.equal(candidates.length, 1);
+    assert.deepEqual(candidates[0]?.fact_claim_ids, ["claim-1", "claim-2"]);
+  } finally {
+    repository.close();
+  }
+});
+
+test("ConflictAggregationDetector groups conflict memories", () => {
+  const repository = new Repository(":memory:");
+  const detector = new ConflictAggregationDetector();
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "conflict-memory-1",
+        title: "Auth rollout conflict",
+        verified: "conflict"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "conflict-memory-2",
+        title: "Auth rollout conflict",
+        verified: "conflict"
+      })
+    );
+
+    const candidates = detector.detect({
+      project: "vega",
+      repository
+    });
+
+    assert.equal(candidates.length, 1);
+    assert.deepEqual(candidates[0]?.memory_ids, ["conflict-memory-1", "conflict-memory-2"]);
+    assert.deepEqual(candidates[0]?.fact_claim_ids, []);
+  } finally {
+    repository.close();
+  }
+});
+
+test("ConflictAggregationDetector ignores single conflict items", () => {
+  const repository = new Repository(":memory:");
+  const detector = new ConflictAggregationDetector();
+
+  try {
+    repository.createMemory(createStoredMemory({ id: "memory-1" }));
+    repository.createFactClaim(
+      createFactClaim({
+        id: "claim-1",
+        source_memory_id: "memory-1",
+        status: "conflict"
       })
     );
 

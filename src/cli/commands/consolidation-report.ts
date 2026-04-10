@@ -1,11 +1,15 @@
 import { Command } from "commander";
 
 import { isConsolidationReportEnabled, type VegaConfig } from "../../config.js";
+import { ConsolidationDashboardService } from "../../core/consolidation-dashboard.js";
+import { ConflictAggregationDetector } from "../../core/detectors/conflict-aggregation-detector.js";
 import { DuplicateDetector } from "../../core/detectors/duplicate-detector.js";
 import { ExpiredFactDetector } from "../../core/detectors/expired-fact-detector.js";
 import { GlobalPromotionDetector } from "../../core/detectors/global-promotion-detector.js";
+import { WikiSynthesisDetector } from "../../core/detectors/wiki-synthesis-detector.js";
 import { ConsolidationReportEngine } from "../../core/consolidation-report-engine.js";
 import type {
+  ConsolidationDashboardMetrics,
   ConsolidationCandidateKind,
   ConsolidationReport,
   ConsolidationReportSection
@@ -72,6 +76,51 @@ export const formatReportAsMarkdown = (report: ConsolidationReport): string => {
   return lines.join("\n");
 };
 
+export const formatDashboardAsMarkdown = (
+  dashboard: ConsolidationDashboardMetrics
+): string =>
+  [
+    `# Consolidation Dashboard: ${dashboard.project}`,
+    `Generated: ${dashboard.generated_at}`,
+    "",
+    "## Memory Stats",
+    `Active: ${dashboard.memory_stats.total_active} | Archived: ${dashboard.memory_stats.total_archived} | Conflicts: ${dashboard.memory_stats.conflict_count}`,
+    `By scope: project=${dashboard.memory_stats.by_scope.project}, global=${dashboard.memory_stats.by_scope.global}`,
+    `By type: ${Object.entries(dashboard.memory_stats.by_type)
+      .map(([type, count]) => `${type}=${count}`)
+      .join(", ") || "(none)"}`,
+    "",
+    "## Fact Claim Stats",
+    `Active: ${dashboard.fact_claim_stats.total_active} | Expired: ${dashboard.fact_claim_stats.expired} | Suspected expired: ${dashboard.fact_claim_stats.suspected_expired} | Conflict: ${dashboard.fact_claim_stats.conflict}`,
+    "",
+    "## Topic Stats",
+    `Topics: ${dashboard.topic_stats.total_topics} | Topics with memories: ${dashboard.topic_stats.topics_with_memories} | Avg memories/topic: ${dashboard.topic_stats.avg_memories_per_topic}`,
+    "",
+    "## Health Indicators",
+    `Duplicate density: ${dashboard.health_indicators.duplicate_density}`,
+    `Stale fact ratio: ${dashboard.health_indicators.stale_fact_ratio}`,
+    `Conflict backlog: ${dashboard.health_indicators.conflict_backlog}`,
+    `Global promotion pending: ${dashboard.health_indicators.global_promotion_pending}`,
+    "",
+    "## Consolidation History",
+    `Last report: ${dashboard.consolidation_history.last_report_at ?? "none"}`,
+    `Reports: ${dashboard.consolidation_history.total_reports_generated} | Candidates found: ${dashboard.consolidation_history.total_candidates_found} | Candidates resolved: ${dashboard.consolidation_history.total_candidates_resolved}`
+  ].join("\n");
+
+const registerDefaultDetectors = (engine: ConsolidationReportEngine): void => {
+  engine.registerDetector(new DuplicateDetector());
+  engine.registerDetector(new ExpiredFactDetector());
+  engine.registerDetector(new GlobalPromotionDetector());
+  engine.registerDetector(new WikiSynthesisDetector());
+  engine.registerDetector(new ConflictAggregationDetector());
+};
+
+const findSection = (
+  sections: ConsolidationReportSection[],
+  kind: ConsolidationCandidateKind
+): ConsolidationReportSection | undefined =>
+  sections.find((section) => section.kind === kind);
+
 export function registerConsolidationReportCommand(
   program: Command,
   repository: Repository,
@@ -93,9 +142,7 @@ export function registerConsolidationReportCommand(
       }
 
       const engine = new ConsolidationReportEngine(repository, config);
-      engine.registerDetector(new DuplicateDetector());
-      engine.registerDetector(new ExpiredFactDetector());
-      engine.registerDetector(new GlobalPromotionDetector());
+      registerDefaultDetectors(engine);
       const report = engine.generateReport(options.project, options.tenant);
 
       if (options.json) {
@@ -105,10 +152,32 @@ export function registerConsolidationReportCommand(
 
       console.log(formatReportAsMarkdown(report));
     });
-}
 
-const findSection = (
-  sections: ConsolidationReportSection[],
-  kind: ConsolidationCandidateKind
-): ConsolidationReportSection | undefined =>
-  sections.find((section) => section.kind === kind);
+  program
+    .command("consolidation-dashboard")
+    .description("Generate consolidation health metrics for a project")
+    .requiredOption("--project <project>", "project name")
+    .option("--tenant <tenant>", "tenant ID")
+    .option("--json", "output as JSON instead of markdown")
+    .action((options: { project: string; tenant?: string; json?: boolean }) => {
+      if (!isConsolidationReportEnabled(config)) {
+        console.error(
+          "consolidation_report feature is disabled. Set features.consolidationReport=true"
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      const dashboard = new ConsolidationDashboardService(repository, config).generateDashboard(
+        options.project,
+        options.tenant
+      );
+
+      if (options.json) {
+        console.log(JSON.stringify(dashboard, null, 2));
+        return;
+      }
+
+      console.log(formatDashboardAsMarkdown(dashboard));
+    });
+}

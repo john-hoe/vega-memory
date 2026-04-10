@@ -878,3 +878,38 @@ export interface ConsolidationReport {
     high_risk: number;
   };
 }
+
+export interface ConsolidationDashboardMetrics {
+  project: string;
+  generated_at: string;
+  memory_stats: {
+    total_active: number;
+    total_archived: number;
+    by_type: Partial<Record<MemoryType, number>>;
+    by_scope: { project: number; global: number };
+    conflict_count: number;
+  };
+  fact_claim_stats: {
+    total_active: number;
+    expired: number;
+    suspected_expired: number;
+    conflict: number;
+  };
+  topic_stats: {
+    total_topics: number;
+    topics_with_memories: number;
+    avg_memories_per_topic: number;
+  };
+  consolidation_history: {
+    last_report_at: string | null;
+    total_reports_generated: number;
+    total_candidates_found: number;
+    total_candidates_resolved: number;
+  };
+  health_indicators: {
+    duplicate_density: number;
+    stale_fact_ratio: number;
+    conflict_backlog: number;
+    global_promotion_pending: number;
+  };
+}

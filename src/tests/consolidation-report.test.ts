@@ -397,7 +397,7 @@ test("consolidation_report MCP tool returns a report when the feature is enabled
     assert.equal(payload.execution.tenant_id, "tenant-1");
     assert.equal(payload.execution.mode, "dry_run");
     assert.equal(payload.execution.total_candidates, 0);
-    assert.equal(payload.sections.length, 3);
+    assert.equal(payload.sections.length, 5);
     assert.equal(payload.summary.total_candidates, 0);
   } finally {
     repository.close();

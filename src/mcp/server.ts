@@ -13,10 +13,13 @@ import {
   type VegaConfig
 } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
+import { ConsolidationDashboardService } from "../core/consolidation-dashboard.js";
 import { ConsolidationReportEngine } from "../core/consolidation-report-engine.js";
+import { ConflictAggregationDetector } from "../core/detectors/conflict-aggregation-detector.js";
 import { DuplicateDetector } from "../core/detectors/duplicate-detector.js";
 import { ExpiredFactDetector } from "../core/detectors/expired-fact-detector.js";
 import { GlobalPromotionDetector } from "../core/detectors/global-promotion-detector.js";
+import { WikiSynthesisDetector } from "../core/detectors/wiki-synthesis-detector.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
 import { GraphReportService } from "../core/graph-report.js";
@@ -271,6 +274,16 @@ const serializeTunnelView = (result: TunnelView) => ({
 });
 
 const serializeConsolidationReport = (report: ConsolidationReport) => report;
+
+const registerDefaultConsolidationDetectors = (
+  engine: ConsolidationReportEngine
+): void => {
+  engine.registerDetector(new DuplicateDetector());
+  engine.registerDetector(new ExpiredFactDetector());
+  engine.registerDetector(new GlobalPromotionDetector());
+  engine.registerDetector(new WikiSynthesisDetector());
+  engine.registerDetector(new ConflictAggregationDetector());
+};
 
 const resultCountForSessionStart = (result: SessionStartResult): number =>
   result.active_tasks.length +
@@ -670,14 +683,41 @@ export function createMCPServer({
 
       return runTool(repository, "consolidation_report", args, observer, async () => {
         const engine = new ConsolidationReportEngine(repository, config);
-        engine.registerDetector(new DuplicateDetector());
-        engine.registerDetector(new ExpiredFactDetector());
-        engine.registerDetector(new GlobalPromotionDetector());
+        registerDefaultConsolidationDetectors(engine);
         const result = engine.generateReport(args.project, args.tenant_id ?? undefined);
 
         return {
           result: serializeConsolidationReport(result),
           resultCount: result.summary.total_candidates
+        };
+      });
+    }
+  );
+
+  server.tool(
+    "consolidation_dashboard",
+    "Get memory health metrics and consolidation effectiveness indicators.",
+    {
+      project: z.string().trim().min(1),
+      tenant_id: z.string().trim().min(1).optional()
+    },
+    async (args) => {
+      if (!isConsolidationReportEnabled(config)) {
+        return toTextResult(
+          {
+            error: "consolidation_report feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(repository, "consolidation_dashboard", args, observer, async () => {
+        const dashboard = new ConsolidationDashboardService(repository, config);
+        const result = dashboard.generateDashboard(args.project, args.tenant_id ?? undefined);
+
+        return {
+          result,
+          resultCount: 1
         };
       });
     }
