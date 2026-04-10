@@ -6,6 +6,7 @@ import {
   type VegaConfig
 } from "../config.js";
 import type { Repository } from "../db/repository.js";
+import { ConsolidationApprovalService } from "./consolidation-approval.js";
 import { ConsolidationAuditService } from "./consolidation-audit.js";
 import { registerDefaultConsolidationDetectors } from "./consolidation-defaults.js";
 import { ConsolidationExecutor, isAutoExecutableConsolidationAction } from "./consolidation-executor.js";
@@ -62,6 +63,7 @@ export class ConsolidationScheduler {
     const candidates = report.sections.flatMap((section) => section.candidates);
     const errors = [...report.execution.errors];
     let actionsExecuted = 0;
+    const approvalService = new ConsolidationApprovalService(this.repository);
 
     if (resolvedPolicy.mode === "auto_low_risk") {
       if (isConsolidationAutoExecuteEnabled(this.config)) {
@@ -87,6 +89,14 @@ export class ConsolidationScheduler {
           "Auto execution requested but features.consolidationAutoExecute is disabled"
         );
       }
+    }
+
+    try {
+      approvalService.submitCandidates(runId, candidates, project, tenantId);
+    } catch (error) {
+      errors.push(
+        `approval queue: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
 
     report.execution.errors = errors;

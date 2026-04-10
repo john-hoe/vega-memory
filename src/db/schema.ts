@@ -152,6 +152,27 @@ export function initializeDatabase(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS consolidation_approvals (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      project TEXT NOT NULL,
+      tenant_id TEXT,
+      candidate_kind TEXT NOT NULL,
+      candidate_action TEXT NOT NULL,
+      candidate_risk TEXT NOT NULL,
+      memory_ids TEXT NOT NULL DEFAULT '[]',
+      fact_claim_ids TEXT NOT NULL DEFAULT '[]',
+      description TEXT NOT NULL,
+      evidence TEXT NOT NULL DEFAULT '[]',
+      score REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      reviewed_by TEXT,
+      reviewed_at TEXT,
+      review_comment TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS graph_content_cache (
       kind TEXT NOT NULL CHECK(kind IN ('code', 'doc')),
       scope_key TEXT NOT NULL,

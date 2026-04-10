@@ -13,6 +13,7 @@ import {
   type VegaConfig
 } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
+import { ConsolidationApprovalService } from "../core/consolidation-approval.js";
 import { ConsolidationDashboardService } from "../core/consolidation-dashboard.js";
 import { registerDefaultConsolidationDetectors } from "../core/consolidation-defaults.js";
 import { ConsolidationReportEngine } from "../core/consolidation-report-engine.js";
@@ -34,6 +35,7 @@ import { searchWikiPages } from "../wiki/search.js";
 import { SynthesisEngine } from "../wiki/synthesis.js";
 import { SESSION_START_MODE_VALUES } from "../core/types.js";
 import type {
+  ApprovalItem,
   AuditContext,
   AsOfQueryOptions,
   CompactResult,
@@ -272,6 +274,27 @@ const serializeTunnelView = (result: TunnelView) => ({
 
 const serializeConsolidationReport = (report: ConsolidationReport) => report;
 
+const serializeApprovalItem = (item: ApprovalItem) => ({
+  id: item.id,
+  run_id: item.run_id,
+  project: item.project,
+  tenant_id: item.tenant_id,
+  candidate_kind: item.candidate_kind,
+  candidate_action: item.candidate_action,
+  candidate_risk: item.candidate_risk,
+  memory_ids: item.memory_ids,
+  fact_claim_ids: item.fact_claim_ids,
+  description: item.description,
+  evidence: item.evidence,
+  score: item.score,
+  status: item.status,
+  reviewed_by: item.reviewed_by,
+  reviewed_at: item.reviewed_at,
+  review_comment: item.review_comment,
+  created_at: item.created_at,
+  updated_at: item.updated_at
+});
+
 const resultCountForSessionStart = (result: SessionStartResult): number =>
   result.active_tasks.length +
   result.preferences.length +
@@ -501,6 +524,7 @@ export function createMCPServer({
   const diagnoseService = new DiagnoseService(repository, config);
   const graphReportService = new GraphReportService(repository);
   const topicService = new TopicService(repository, config);
+  const approvalService = new ConsolidationApprovalService(repository);
   const rawArchiveService = archiveService ?? new ArchiveService(repository, config);
   const claimsService = factClaimService ?? new FactClaimService(repository, config);
   const observer = {
@@ -743,6 +767,115 @@ export function createMCPServer({
           resultCount: result.total_candidates
         };
       });
+    }
+  );
+
+  server.tool(
+    "consolidation_approvals_list",
+    "List consolidation approval items, pending by default.",
+    {
+      project: z.string().trim().min(1),
+      tenant_id: z.string().trim().min(1).optional(),
+      status: z.enum(["pending", "approved", "rejected", "expired"]).default("pending"),
+      limit: z.number().int().positive().max(1000).default(100)
+    },
+    async (args) => {
+      if (!isConsolidationReportEnabled(config)) {
+        return toTextResult(
+          {
+            error: "consolidation_report feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(repository, "consolidation_approvals_list", args, observer, async () => {
+        const result = approvalService
+          .listAll(args.project, args.status, args.tenant_id ?? undefined, args.limit)
+          .map(serializeApprovalItem);
+
+        return {
+          result,
+          resultCount: result.length
+        };
+      });
+    }
+  );
+
+  server.tool(
+    "consolidation_approval_review",
+    "Approve or reject one consolidation approval item.",
+    {
+      item_id: z.string().trim().min(1),
+      status: z.enum(["approved", "rejected"]),
+      reviewed_by: z.string().trim().min(1),
+      comment: z.string().trim().min(1).optional(),
+      auto_execute: z.boolean().optional()
+    },
+    async (args) => {
+      if (!isConsolidationReportEnabled(config)) {
+        return toTextResult(
+          {
+            error: "consolidation_report feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(repository, "consolidation_approval_review", args, observer, async () => {
+        const result = approvalService.review(
+          {
+            item_id: args.item_id,
+            status: args.status,
+            reviewed_by: args.reviewed_by,
+            ...(args.comment ? { comment: args.comment } : {})
+          },
+          args.auto_execute ?? false
+        );
+
+        return {
+          result: serializeApprovalItem(result),
+          resultCount: 1
+        };
+      });
+    }
+  );
+
+  server.tool(
+    "consolidation_approvals_pending_count",
+    "Return the number of pending consolidation approval items for a project.",
+    {
+      project: z.string().trim().min(1),
+      tenant_id: z.string().trim().min(1).optional()
+    },
+    async (args) => {
+      if (!isConsolidationReportEnabled(config)) {
+        return toTextResult(
+          {
+            error: "consolidation_report feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(
+        repository,
+        "consolidation_approvals_pending_count",
+        args,
+        observer,
+        async () => {
+          const pending = approvalService.getPendingCount(args.project, args.tenant_id ?? undefined);
+
+          return {
+            result: {
+              project: args.project,
+              tenant_id: args.tenant_id ?? null,
+              pending
+            },
+            resultCount: 1
+          };
+        }
+      );
     }
   );
 

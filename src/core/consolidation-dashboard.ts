@@ -1,5 +1,6 @@
 import { isFactClaimsEnabled, type VegaConfig } from "../config.js";
 import type { Repository } from "../db/repository.js";
+import { ConsolidationApprovalService } from "./consolidation-approval.js";
 import { ConsolidationAuditService } from "./consolidation-audit.js";
 import { DuplicateDetector } from "./detectors/duplicate-detector.js";
 import { ExpiredFactDetector } from "./detectors/expired-fact-detector.js";
@@ -91,6 +92,7 @@ export class ConsolidationDashboardService {
       tenantId,
       repository: this.repository
     });
+    const approvalService = new ConsolidationApprovalService(this.repository);
     const auditService = new ConsolidationAuditService(this.repository);
     const runs = auditService.listRuns(project, 10_000, tenantId);
     const lastRun = auditService.getLastRun(project, tenantId);
@@ -129,6 +131,11 @@ export class ConsolidationDashboardService {
         total_reports_generated: runs.length,
         total_candidates_found: runs.reduce((sum, run) => sum + run.total_candidates, 0),
         total_candidates_resolved: runs.reduce((sum, run) => sum + run.actions_executed, 0)
+      },
+      approval_stats: {
+        pending: approvalService.getPendingCount(project, tenantId),
+        approved_total: approvalService.listAll(project, "approved", tenantId, 10_000).length,
+        rejected_total: approvalService.listAll(project, "rejected", tenantId, 10_000).length
       },
       health_indicators: {
         duplicate_density:

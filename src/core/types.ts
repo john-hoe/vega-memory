@@ -851,6 +851,8 @@ export const LOW_RISK_CONSOLIDATION_AUTO_ACTIONS = [
 
 export type ConsolidationCandidateRisk = "low" | "medium" | "high";
 
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired";
+
 export type ConsolidationTrigger =
   | "manual"
   | "nightly"
@@ -891,6 +893,34 @@ export interface ConsolidationCandidate {
   description: string;
   evidence: string[];
   score: number;
+}
+
+export interface ApprovalItem {
+  id: string;
+  run_id: string;
+  project: string;
+  tenant_id: string | null;
+  candidate_kind: ConsolidationCandidateKind;
+  candidate_action: ConsolidationCandidateAction;
+  candidate_risk: ConsolidationCandidateRisk;
+  memory_ids: string[];
+  fact_claim_ids: string[];
+  description: string;
+  evidence: string[];
+  score: number;
+  status: ApprovalStatus;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_comment: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApprovalDecision {
+  item_id: string;
+  status: "approved" | "rejected";
+  reviewed_by: string;
+  comment?: string;
 }
 
 export interface ConsolidationReportSection {
@@ -950,6 +980,11 @@ export interface ConsolidationDashboardMetrics {
     total_reports_generated: number;
     total_candidates_found: number;
     total_candidates_resolved: number;
+  };
+  approval_stats: {
+    pending: number;
+    approved_total: number;
+    rejected_total: number;
   };
   health_indicators: {
     duplicate_density: number;

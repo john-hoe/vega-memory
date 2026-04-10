@@ -1,11 +1,13 @@
 import { Command } from "commander";
 
 import { isConsolidationReportEnabled, type VegaConfig } from "../../config.js";
+import { ConsolidationApprovalService } from "../../core/consolidation-approval.js";
 import { ConsolidationDashboardService } from "../../core/consolidation-dashboard.js";
 import { registerDefaultConsolidationDetectors } from "../../core/consolidation-defaults.js";
 import { ConsolidationReportEngine } from "../../core/consolidation-report-engine.js";
 import { ConsolidationScheduler } from "../../core/consolidation-scheduler.js";
 import type {
+  ApprovalItem,
   ConsolidationDashboardMetrics,
   ConsolidationCandidateKind,
   ConsolidationReport,
@@ -74,6 +76,18 @@ export const formatReportAsMarkdown = (report: ConsolidationReport): string => {
   return lines.join("\n");
 };
 
+const formatApprovalItemAsMarkdown = (item: ApprovalItem): string =>
+  [
+    `- ${item.id} [${item.status}] ${item.description}`,
+    `  kind=${item.candidate_kind} action=${item.candidate_action} risk=${item.candidate_risk} score=${item.score}`,
+    item.memory_ids.length > 0 ? `  memories=${item.memory_ids.join(", ")}` : "",
+    item.fact_claim_ids.length > 0 ? `  fact_claims=${item.fact_claim_ids.join(", ")}` : "",
+    item.reviewed_by ? `  reviewed_by=${item.reviewed_by} at ${item.reviewed_at}` : "",
+    item.review_comment ? `  comment=${item.review_comment}` : ""
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
+
 export const formatDashboardAsMarkdown = (
   dashboard: ConsolidationDashboardMetrics
 ): string =>
@@ -102,7 +116,10 @@ export const formatDashboardAsMarkdown = (
     "",
     "## Consolidation History",
     `Last report: ${dashboard.consolidation_history.last_report_at ?? "none"}`,
-    `Reports: ${dashboard.consolidation_history.total_reports_generated} | Candidates found: ${dashboard.consolidation_history.total_candidates_found} | Candidates resolved: ${dashboard.consolidation_history.total_candidates_resolved}`
+    `Reports: ${dashboard.consolidation_history.total_reports_generated} | Candidates found: ${dashboard.consolidation_history.total_candidates_found} | Candidates resolved: ${dashboard.consolidation_history.total_candidates_resolved}`,
+    "",
+    "## Approval Queue",
+    `Pending: ${dashboard.approval_stats.pending} | Approved: ${dashboard.approval_stats.approved_total} | Rejected: ${dashboard.approval_stats.rejected_total}`
   ].join("\n");
 
 const formatRunRecordAsMarkdown = (record: ConsolidationRunRecord): string =>
@@ -224,6 +241,102 @@ export function registerConsolidationReportCommand(
         }
 
         console.log(formatRunRecordAsMarkdown(runRecord));
+      }
+    );
+
+  const approvals = program
+    .command("consolidation-approvals")
+    .description("Manage consolidation approval items");
+
+  approvals
+    .command("list")
+    .description("List consolidation approval items")
+    .requiredOption("--project <project>", "project name")
+    .option("--tenant <tenant>", "tenant ID")
+    .option("--status <status>", "status: pending, approved, rejected, expired", "pending")
+    .option("--limit <limit>", "maximum items to return", "100")
+    .option("--json", "output as JSON instead of markdown")
+    .action(
+      (options: {
+        project: string;
+        tenant?: string;
+        status?: ApprovalItem["status"];
+        limit?: string;
+        json?: boolean;
+      }) => {
+        if (!isConsolidationReportEnabled(config)) {
+          console.error(
+            "consolidation_report feature is disabled. Set features.consolidationReport=true"
+          );
+          process.exitCode = 1;
+          return;
+        }
+
+        const approvalService = new ConsolidationApprovalService(repository);
+        const items = approvalService.listAll(
+          options.project,
+          options.status,
+          options.tenant,
+          Number(options.limit ?? "100")
+        );
+
+        if (options.json) {
+          console.log(JSON.stringify(items, null, 2));
+          return;
+        }
+
+        if (items.length === 0) {
+          console.log("(none)");
+          return;
+        }
+
+        console.log(items.map(formatApprovalItemAsMarkdown).join("\n"));
+      }
+    );
+
+  approvals
+    .command("review")
+    .description("Approve or reject a consolidation approval item")
+    .requiredOption("--id <id>", "approval item ID")
+    .requiredOption("--status <status>", "approved or rejected")
+    .requiredOption("--by <name>", "reviewer name")
+    .option("--comment <comment>", "review comment")
+    .option("--auto-execute", "execute supported approved actions immediately")
+    .option("--json", "output as JSON instead of markdown")
+    .action(
+      (options: {
+        id: string;
+        status: "approved" | "rejected";
+        by: string;
+        comment?: string;
+        autoExecute?: boolean;
+        json?: boolean;
+      }) => {
+        if (!isConsolidationReportEnabled(config)) {
+          console.error(
+            "consolidation_report feature is disabled. Set features.consolidationReport=true"
+          );
+          process.exitCode = 1;
+          return;
+        }
+
+        const approvalService = new ConsolidationApprovalService(repository);
+        const item = approvalService.review(
+          {
+            item_id: options.id,
+            status: options.status,
+            reviewed_by: options.by,
+            ...(options.comment ? { comment: options.comment } : {})
+          },
+          options.autoExecute ?? false
+        );
+
+        if (options.json) {
+          console.log(JSON.stringify(item, null, 2));
+          return;
+        }
+
+        console.log(formatApprovalItemAsMarkdown(item));
       }
     );
 }

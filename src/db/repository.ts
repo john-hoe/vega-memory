@@ -2,6 +2,8 @@ import { v4 as uuidv4 } from "uuid";
 
 import { SEMANTIC_RELATION_TYPES, STRUCTURAL_RELATION_TYPES } from "../core/types.js";
 import type {
+  ApprovalItem,
+  ApprovalStatus,
   ArchiveStats,
   AsOfQueryOptions,
   AuditContext,
@@ -188,6 +190,27 @@ interface ConsolidationRunRow {
   errors: string;
   report_json: string | null;
   created_at: string;
+}
+
+interface ApprovalRow {
+  id: string;
+  run_id: string;
+  project: string;
+  tenant_id: string | null;
+  candidate_kind: ApprovalItem["candidate_kind"];
+  candidate_action: ApprovalItem["candidate_action"];
+  candidate_risk: ApprovalItem["candidate_risk"];
+  memory_ids: string;
+  fact_claim_ids: string;
+  description: string;
+  evidence: string;
+  score: number;
+  status: ApprovalStatus;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_comment: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface GraphContentCacheRow {
@@ -424,6 +447,27 @@ const mapConsolidationRunRow = (row: ConsolidationRunRow): ConsolidationRunRecor
   actions_executed: row.actions_executed,
   actions_skipped: row.actions_skipped,
   errors: parseJsonArray(row.errors)
+});
+
+const mapApprovalRow = (row: ApprovalRow): ApprovalItem => ({
+  id: row.id,
+  run_id: row.run_id,
+  project: row.project,
+  tenant_id: row.tenant_id,
+  candidate_kind: row.candidate_kind,
+  candidate_action: row.candidate_action,
+  candidate_risk: row.candidate_risk,
+  memory_ids: parseJsonArray(row.memory_ids),
+  fact_claim_ids: parseJsonArray(row.fact_claim_ids),
+  description: row.description,
+  evidence: parseJsonArray(row.evidence),
+  score: row.score,
+  status: row.status,
+  reviewed_by: row.reviewed_by,
+  reviewed_at: row.reviewed_at,
+  review_comment: row.review_comment,
+  created_at: row.created_at,
+  updated_at: row.updated_at
 });
 
 function mapMemory(row: MemoryRow): Memory {
@@ -3584,6 +3628,155 @@ export class Repository {
       .get(runId);
 
     return (row?.total ?? 0) > 0;
+  }
+
+  insertApprovalItem(item: Omit<ApprovalItem, "updated_at">): void {
+    this.db
+      .prepare<
+        [
+          string,
+          string,
+          string,
+          string | null,
+          ApprovalItem["candidate_kind"],
+          ApprovalItem["candidate_action"],
+          ApprovalItem["candidate_risk"],
+          string,
+          string,
+          string,
+          string,
+          number,
+          ApprovalStatus,
+          string | null,
+          string | null,
+          string | null,
+          string,
+          string
+        ]
+      >(
+        `INSERT INTO consolidation_approvals (
+          id, run_id, project, tenant_id, candidate_kind, candidate_action, candidate_risk,
+          memory_ids, fact_claim_ids, description, evidence, score, status,
+          reviewed_by, reviewed_at, review_comment, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        item.id,
+        item.run_id,
+        item.project,
+        item.tenant_id,
+        item.candidate_kind,
+        item.candidate_action,
+        item.candidate_risk,
+        serializeJsonArray(item.memory_ids),
+        serializeJsonArray(item.fact_claim_ids),
+        item.description,
+        serializeJsonArray(item.evidence),
+        item.score,
+        item.status,
+        item.reviewed_by,
+        item.reviewed_at,
+        item.review_comment,
+        item.created_at,
+        item.created_at
+      );
+  }
+
+  getApprovalItem(id: string): ApprovalItem | null {
+    const row = this.db
+      .prepare<[string], ApprovalRow>(
+        `SELECT *
+         FROM consolidation_approvals
+         WHERE id = ?`
+      )
+      .get(id);
+
+    return row ? mapApprovalRow(row) : null;
+  }
+
+  listApprovalItems(
+    project: string,
+    status?: ApprovalStatus,
+    tenantId?: string | null,
+    limit = 100
+  ): ApprovalItem[] {
+    const clauses = ["project = ?"];
+    const params: unknown[] = [project];
+
+    if (status !== undefined) {
+      clauses.push("status = ?");
+      params.push(status);
+    }
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], ApprovalRow>(
+        `SELECT *
+         FROM consolidation_approvals
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`
+      )
+      .all(...params, normalizePositiveInteger(limit, 100));
+
+    return rows.map(mapApprovalRow);
+  }
+
+  updateApprovalItem(
+    id: string,
+    update: {
+      status: ApprovalStatus;
+      reviewed_by: string;
+      reviewed_at: string;
+      review_comment: string | null;
+    }
+  ): void {
+    this.db
+      .prepare<[ApprovalStatus, string, string, string | null, string, string]>(
+        `UPDATE consolidation_approvals
+         SET status = ?,
+             reviewed_by = ?,
+             reviewed_at = ?,
+             review_comment = ?,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        update.status,
+        update.reviewed_by,
+        update.reviewed_at,
+        update.review_comment,
+        update.reviewed_at,
+        id
+      );
+
+    if (this.getApprovalItem(id) === null) {
+      throw new Error(`Approval item not found: ${id}`);
+    }
+  }
+
+  countPendingApprovals(project: string, tenantId?: string | null): number {
+    const clauses = ["project = ?", "status = 'pending'"];
+    const params: unknown[] = [project];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const row = this.db
+      .prepare<unknown[], CountRow>(
+        `SELECT COUNT(*) AS total
+         FROM consolidation_approvals
+         WHERE ${clauses.join(" AND ")}`
+      )
+      .get(...params);
+
+    return row?.total ?? 0;
   }
 
   countProjectMemoryWritesSince(
