@@ -271,30 +271,36 @@ export class PageManager {
     return row?.rowid ?? null;
   }
 
-  private slugExists(slug: string, excludeId?: string): boolean {
-    if (excludeId) {
-      const row = this.repository.db
-        .prepare<[string, string], { id: string }>(
-          "SELECT id FROM wiki_pages WHERE slug = ? AND id != ?"
-        )
-        .get(slug, excludeId);
+  private slugExists(slug: string, tenantId: string | null = null, excludeId?: string): boolean {
+    const clauses = ["slug = ?", "tenant_id IS ?"];
+    const params: unknown[] = [slug, tenantId];
 
-      return row !== undefined;
+    if (excludeId) {
+      clauses.push("id != ?");
+      params.push(excludeId);
     }
 
     const row = this.repository.db
-      .prepare<[string], { id: string }>("SELECT id FROM wiki_pages WHERE slug = ?")
-      .get(slug);
+      .prepare<unknown[], { id: string }>(
+        `SELECT id
+         FROM wiki_pages
+         WHERE ${clauses.join(" AND ")}`
+      )
+      .get(...params);
 
     return row !== undefined;
   }
 
-  private generateUniqueSlug(value: string, excludeId?: string): string {
+  private generateUniqueSlug(
+    value: string,
+    tenantId: string | null = null,
+    excludeId?: string
+  ): string {
     const baseSlug = normalizeSlugValue(value);
     let slug = baseSlug;
     let suffix = 2;
 
-    while (this.slugExists(slug, excludeId)) {
+    while (this.slugExists(slug, tenantId, excludeId)) {
       slug = `${baseSlug}-${suffix}`;
       suffix += 1;
     }
@@ -302,8 +308,8 @@ export class PageManager {
     return slug;
   }
 
-  generateSlug(title: string): string {
-    return this.generateUniqueSlug(title);
+  generateSlug(title: string, tenantId: string | null = null): string {
+    return this.generateUniqueSlug(title, tenantId);
   }
 
   createPage(params: CreatePageParams): WikiPage {
@@ -318,7 +324,7 @@ export class PageManager {
       params.space_id ?? this.ensureDefaultSpace(tenantId, params.project ?? null);
     const page: WikiPage = {
       id: uuidv4(),
-      slug: this.generateSlug(title),
+      slug: this.generateSlug(title, tenantId),
       title,
       content: params.content,
       summary: params.summary,
@@ -495,7 +501,7 @@ export class PageManager {
       slug:
         updates.slug === undefined
           ? existing.slug
-          : this.generateUniqueSlug(updates.slug, existing.id),
+          : this.generateUniqueSlug(updates.slug, nextTenantId, existing.id),
       title: nextTitle,
       content: updates.content ?? existing.content,
       summary: updates.summary ?? existing.summary,

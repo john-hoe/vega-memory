@@ -146,7 +146,7 @@ test("GET /api/health returns the expanded health payload", async () => {
 });
 
 test("metrics normalize request paths to route patterns", async () => {
-  const harness = await createHarness(undefined, {
+  const harness = await createHarness("top-secret", {
     metricsEnabled: true
   });
 
@@ -158,8 +158,14 @@ test("metrics normalize request paths to route patterns", async () => {
       method: "DELETE"
     });
 
-    const metrics = await (await fetch(`${harness.baseUrl}/metrics`)).text();
+    const metricsResponse = await fetch(`${harness.baseUrl}/metrics`, {
+      headers: {
+        authorization: "Bearer top-secret"
+      }
+    });
+    const metrics = await metricsResponse.text();
 
+    assert.equal(metricsResponse.status, 200);
     assert.match(
       metrics,
       /vega_http_requests_total\{method="DELETE",path="\/api\/memory\/:id",status="200"\} 2/
@@ -171,13 +177,33 @@ test("metrics normalize request paths to route patterns", async () => {
   }
 });
 
-test("GET /metrics returns Prometheus text when metrics are enabled", async () => {
-  const harness = await createHarness(undefined, {
+test("metrics endpoint requires auth by default", async () => {
+  const harness = await createHarness("top-secret", {
     metricsEnabled: true
   });
 
   try {
     const response = await fetch(`${harness.baseUrl}/metrics`);
+    const body = await readJson<{ error: string }>(response);
+
+    assert.equal(response.status, 401);
+    assert.equal(body.error, "Unauthorized");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("metrics endpoint accepts valid bearer token", async () => {
+  const harness = await createHarness("top-secret", {
+    metricsEnabled: true
+  });
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/metrics`, {
+      headers: {
+        authorization: "Bearer top-secret"
+      }
+    });
     const body = await response.text();
 
     assert.equal(response.status, 200);
@@ -233,6 +259,43 @@ test("POST /api/store creates a memory and GET /api/list returns it", async () =
     assert.equal(listed.length, 1);
     assert.equal(listed[0]?.id, stored.id);
     assert.match(listed[0]?.content ?? "", /SQLite/);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("API returns tenant_id in memory response", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenant = tenantService.createTenant("Scoped Tenant", "pro");
+
+  try {
+    await harness.request("/api/store", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${tenant.api_key}`
+      },
+      body: JSON.stringify({
+        content: "Tenant-scoped memory",
+        type: "decision",
+        project: "vega"
+      })
+    });
+    const listResponse = await harness.request("/api/list?project=vega&limit=10", {
+      headers: {
+        authorization: `Bearer ${tenant.api_key}`
+      }
+    });
+    const listed = await readJson<
+      Array<{
+        tenant_id: string | null;
+        summary: string | null;
+      }>
+    >(listResponse);
+
+    assert.equal(listResponse.status, 200);
+    assert.equal(listed[0]?.tenant_id, tenant.id);
+    assert.equal(listed[0]?.summary, null);
   } finally {
     await harness.cleanup();
   }
@@ -1245,7 +1308,7 @@ test("billing counts API request log rows for tenant traffic", async () => {
   }
 });
 
-test("billing routes expose plans, tenant subscription status, cancellation, and signed webhook handling", async () => {
+test("member cannot create or cancel subscription", async () => {
   const harness = await createHarness("top-secret", {
     stripeEnabled: true,
     stripeSecretKey: "sk_test_stub",
@@ -1254,8 +1317,73 @@ test("billing routes expose plans, tenant subscription status, cancellation, and
   const tenantService = new TenantService(harness.repository);
   const tenant = tenantService.createTenant("Billing Tenant", "pro");
   const userService = new UserService(harness.repository);
-  const user = userService.createUser("billing@example.com", "Billing User", "member", tenant.id);
-  const sessionToken = "billing-dashboard-session";
+  const admin = userService.createUser("admin@example.com", "Billing Admin", "admin", tenant.id);
+  const member = userService.createUser("member@example.com", "Billing Member", "member", tenant.id);
+  const adminToken = "billing-admin-session";
+  const memberToken = "billing-member-session";
+
+  registerDashboardSession(harness.config, adminToken, admin);
+  registerDashboardSession(harness.config, memberToken, member);
+
+  try {
+    const subscribeResponse = await fetch(`${harness.baseUrl}/api/billing/subscribe`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: `${DASHBOARD_AUTH_COOKIE}=${adminToken}`
+      },
+      body: JSON.stringify({
+        plan_id: "pro"
+      })
+    });
+    const subscribed = await readJson<{
+      subscription: { id: string };
+    }>(subscribeResponse);
+    const memberCreateResponse = await fetch(`${harness.baseUrl}/api/billing/subscribe`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: `${DASHBOARD_AUTH_COOKIE}=${memberToken}`
+      },
+      body: JSON.stringify({
+        plan_id: "pro"
+      })
+    });
+    const memberCreateBody = await readJson<{ error: string }>(memberCreateResponse);
+    const memberCancelResponse = await fetch(
+      `${harness.baseUrl}/api/billing/subscribe/${subscribed.subscription.id}`,
+      {
+        method: "DELETE",
+        headers: {
+          cookie: `${DASHBOARD_AUTH_COOKIE}=${memberToken}`
+        }
+      }
+    );
+    const memberCancelBody = await readJson<{ error: string }>(memberCancelResponse);
+
+    assert.equal(subscribeResponse.status, 201);
+    assert.equal(memberCreateResponse.status, 403);
+    assert.equal(memberCreateBody.error, "forbidden");
+    assert.equal(memberCancelResponse.status, 403);
+    assert.equal(memberCancelBody.error, "forbidden");
+  } finally {
+    revokeDashboardSession(harness.config, adminToken);
+    revokeDashboardSession(harness.config, memberToken);
+    await harness.cleanup();
+  }
+});
+
+test("admin can manage subscriptions", async () => {
+  const harness = await createHarness("top-secret", {
+    stripeEnabled: true,
+    stripeSecretKey: "sk_test_stub",
+    stripeWebhookSecret: "whsec_stub"
+  });
+  const tenantService = new TenantService(harness.repository);
+  const tenant = tenantService.createTenant("Billing Tenant", "pro");
+  const userService = new UserService(harness.repository);
+  const user = userService.createUser("billing@example.com", "Billing User", "admin", tenant.id);
+  const sessionToken = "billing-admin-session";
 
   registerDashboardSession(harness.config, sessionToken, user);
 

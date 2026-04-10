@@ -4,6 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
+import {
+  DASHBOARD_AUTH_COOKIE,
+  registerDashboardSession,
+  revokeDashboardSession
+} from "../api/auth.js";
 import { createAPIServer } from "../api/server.js";
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
@@ -11,6 +16,7 @@ import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import { TenantService } from "../core/tenant.js";
+import { UserService } from "../core/user.js";
 import { Repository } from "../db/repository.js";
 import { SearchEngine } from "../search/engine.js";
 import { PageManager } from "../wiki/page-manager.js";
@@ -18,6 +24,7 @@ import { PagePermissionService } from "../wiki/permissions.js";
 import { SpaceService } from "../wiki/spaces.js";
 
 interface TestHarness {
+  config: VegaConfig;
   repository: Repository;
   tenantId: string;
   cleanup(): Promise<void>;
@@ -68,6 +75,7 @@ const createHarness = async (): Promise<TestHarness> => {
   const port = await server.start(0);
 
   return {
+    config,
     repository,
     tenantId: tenant.id,
     async cleanup(): Promise<void> {
@@ -245,6 +253,11 @@ test("PagePermissionService resolves direct, role-based, and visibility-based ac
 test("wiki space and permission API routes support create, update, listing, and assignment", async () => {
   const harness = await createHarness();
   const pageManager = new PageManager(harness.repository);
+  const userService = new UserService(harness.repository);
+  const admin = userService.createUser("admin@example.com", "admin", "admin", harness.tenantId);
+  const sessionToken = "wiki-spaces-admin";
+
+  registerDashboardSession(harness.config, sessionToken, admin);
 
   try {
     const createResponse = await harness.request("/api/wiki/spaces", {
@@ -295,6 +308,9 @@ test("wiki space and permission API routes support create, update, listing, and 
     const pages = await readJson<Array<{ id: string; space_id: string | null }>>(pagesResponse);
     const permissionResponse = await harness.request(`/api/wiki/pages/${page.id}/permissions`, {
       method: "POST",
+      headers: {
+        cookie: `${DASHBOARD_AUTH_COOKIE}=${sessionToken}`
+      },
       body: JSON.stringify({
         role: "member",
         level: "write"
@@ -324,6 +340,7 @@ test("wiki space and permission API routes support create, update, listing, and 
       }
     ]);
   } finally {
+    revokeDashboardSession(harness.config, sessionToken);
     await harness.cleanup();
   }
 });

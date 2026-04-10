@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { TenantService } from "../core/tenant.js";
 import { Repository } from "../db/repository.js";
 import { PageManager } from "../wiki/page-manager.js";
+import { SpaceService } from "../wiki/spaces.js";
 
 const createRepository = (): Repository => new Repository(":memory:");
 
@@ -65,6 +67,70 @@ test("createPage auto-deduplicates slugs", () => {
 
     assert.equal(first.slug, "deployment-checklist");
     assert.equal(second.slug, "deployment-checklist-2");
+  } finally {
+    repository.close();
+  }
+});
+
+test("different tenants can use the same slug", () => {
+  const repository = createRepository();
+  const pageManager = new PageManager(repository);
+  const tenantService = new TenantService(repository);
+  const spaceService = new SpaceService(repository);
+
+  try {
+    const tenantA = tenantService.createTenant("Tenant A", "free");
+    const tenantB = tenantService.createTenant("Tenant B", "free");
+    const spaceA = spaceService.createSpace("Tenant A Docs", "tenant-a-docs", tenantA.id);
+    const spaceB = spaceService.createSpace("Tenant B Docs", "tenant-b-docs", tenantB.id);
+    const first = pageManager.createPage({
+      title: "Intro",
+      content: "Tenant A intro",
+      summary: "Tenant A summary.",
+      page_type: "reference",
+      space_id: spaceA.id
+    });
+    const second = pageManager.createPage({
+      title: "Intro",
+      content: "Tenant B intro",
+      summary: "Tenant B summary.",
+      page_type: "reference",
+      space_id: spaceB.id
+    });
+
+    assert.equal(first.slug, "intro");
+    assert.equal(second.slug, "intro");
+  } finally {
+    repository.close();
+  }
+});
+
+test("same tenant gets a unique slug suffix", () => {
+  const repository = createRepository();
+  const pageManager = new PageManager(repository);
+  const tenantService = new TenantService(repository);
+  const spaceService = new SpaceService(repository);
+
+  try {
+    const tenant = tenantService.createTenant("Tenant A", "free");
+    const space = spaceService.createSpace("Tenant Docs", "tenant-docs", tenant.id);
+    const first = pageManager.createPage({
+      title: "Intro",
+      content: "First tenant intro",
+      summary: "First tenant summary.",
+      page_type: "reference",
+      space_id: space.id
+    });
+    const second = pageManager.createPage({
+      title: "Intro",
+      content: "Second tenant intro",
+      summary: "Second tenant summary.",
+      page_type: "reference",
+      space_id: space.id
+    });
+
+    assert.equal(first.slug, "intro");
+    assert.equal(second.slug, "intro-2");
   } finally {
     repository.close();
   }

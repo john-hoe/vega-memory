@@ -53,6 +53,76 @@ const ensureNullableWikiSpaceTenant = (db: Database.Database): void => {
   db.exec("PRAGMA foreign_keys = ON");
 };
 
+const ensureTenantScopedWikiPageSlug = (db: Database.Database): void => {
+  const uniqueSlugIndex = db
+    .prepare<[], { name: string; unique: number }>("PRAGMA index_list(wiki_pages)")
+    .all()
+    .find((index) => {
+      if (index.unique !== 1) {
+        return false;
+      }
+
+      const columns = db
+        .prepare<[], { name: string }>(`PRAGMA index_info(${index.name})`)
+        .all()
+        .map((column) => column.name);
+
+      return columns.length === 1 && columns[0] === "slug";
+    });
+
+  if (!uniqueSlugIndex) {
+    return;
+  }
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS wiki_pages__migrated (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      page_type TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'project',
+      project TEXT,
+      tags TEXT NOT NULL DEFAULT '[]',
+      source_memory_ids TEXT NOT NULL DEFAULT '[]',
+      embedding BLOB,
+      status TEXT NOT NULL DEFAULT 'draft',
+      auto_generated INTEGER NOT NULL DEFAULT 1,
+      reviewed INTEGER NOT NULL DEFAULT 0,
+      version INTEGER NOT NULL DEFAULT 1,
+      space_id TEXT,
+      parent_id TEXT,
+      tenant_id TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      reviewed_at TEXT,
+      published_at TEXT,
+      UNIQUE(slug, tenant_id),
+      FOREIGN KEY (space_id) REFERENCES wiki_spaces(id) ON DELETE SET NULL,
+      FOREIGN KEY (parent_id) REFERENCES wiki_pages(id) ON DELETE SET NULL
+    );
+
+    INSERT INTO wiki_pages__migrated (
+      id, slug, title, content, summary, page_type, scope, project, tags, source_memory_ids,
+      embedding, status, auto_generated, reviewed, version, space_id, parent_id, tenant_id,
+      sort_order, created_at, updated_at, reviewed_at, published_at
+    )
+    SELECT
+      id, slug, title, content, summary, page_type, scope, project, tags, source_memory_ids,
+      embedding, status, auto_generated, reviewed, version, space_id, parent_id, tenant_id,
+      sort_order, created_at, updated_at, reviewed_at, published_at
+    FROM wiki_pages;
+
+    DROP TABLE wiki_pages;
+    ALTER TABLE wiki_pages__migrated RENAME TO wiki_pages;
+  `);
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec("INSERT INTO wiki_pages_fts(wiki_pages_fts) VALUES('rebuild')");
+};
+
 export function initializeDatabase(db: Database.Database): void {
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
@@ -261,7 +331,7 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS wiki_pages (
       id TEXT PRIMARY KEY,
-      slug TEXT UNIQUE NOT NULL,
+      slug TEXT NOT NULL,
       title TEXT NOT NULL,
       content TEXT NOT NULL,
       summary TEXT NOT NULL,
@@ -283,6 +353,7 @@ export function initializeDatabase(db: Database.Database): void {
       updated_at TEXT NOT NULL,
       reviewed_at TEXT,
       published_at TEXT,
+      UNIQUE(slug, tenant_id),
       FOREIGN KEY (space_id) REFERENCES wiki_spaces(id) ON DELETE SET NULL,
       FOREIGN KEY (parent_id) REFERENCES wiki_pages(id) ON DELETE SET NULL
     );
@@ -649,6 +720,7 @@ export function initializeDatabase(db: Database.Database): void {
     "TEXT NOT NULL DEFAULT 'unknown' CHECK(temporal_precision IN ('exact', 'day', 'week', 'month', 'quarter', 'unknown'))"
   );
   ensureNullableWikiSpaceTenant(db);
+  ensureTenantScopedWikiPageSlug(db);
   db.exec(`
     UPDATE wiki_pages
     SET tenant_id = (

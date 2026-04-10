@@ -57,6 +57,7 @@ const parseCookies = (cookieHeader: string | undefined): Record<string, string> 
 const clearRequestAuth = (res: Response): void => {
   delete res.locals.tenantId;
   delete res.locals.user;
+  delete res.locals.requestAuthenticated;
 };
 
 const setRequestUser = (res: Response, user: User | null): void => {
@@ -66,6 +67,15 @@ const setRequestUser = (res: Response, user: User | null): void => {
   }
 
   res.locals.user = user;
+};
+
+const setRequestAuthenticated = (res: Response, authenticated: boolean): void => {
+  if (!authenticated) {
+    delete res.locals.requestAuthenticated;
+    return;
+  }
+
+  res.locals.requestAuthenticated = true;
 };
 
 const getDashboardSessionStore = (config: VegaConfig): Map<string, DashboardSession> => {
@@ -197,19 +207,32 @@ export const getRequestUser = (res: Response): User | null => {
   return typeof user === "object" && user !== null ? (user as User) : null;
 };
 
+export const isRequestAuthenticated = (res: Response): boolean =>
+  res.locals.requestAuthenticated === true;
+
+export const getBearerToken = (req: Request): string | undefined => {
+  const authorization = req.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    return undefined;
+  }
+
+  const token = authorization.slice("Bearer ".length).trim();
+  return token.length > 0 ? token : undefined;
+};
+
 export const isAuthorizedBearerRequest = (
   req: Request,
   res: Response,
   config: VegaConfig,
   repository?: Repository
 ): boolean => {
-  const authorization = req.get("authorization");
-  if (authorization?.startsWith("Bearer ")) {
-    const bearerToken = authorization.slice("Bearer ".length).trim();
+  const bearerToken = getBearerToken(req);
+  if (bearerToken !== undefined) {
 
     if (config.apiKey !== undefined && matchesConfiguredApiKey(bearerToken, config.apiKey)) {
       setRequestUser(res, null);
       setRequestTenantId(res, null);
+      setRequestAuthenticated(res, true);
       return true;
     }
 
@@ -217,12 +240,14 @@ export const isAuthorizedBearerRequest = (
     if (tenant !== null) {
       setRequestUser(res, null);
       setRequestTenantId(res, tenant.id);
+      setRequestAuthenticated(res, true);
       return true;
     }
   }
 
   setRequestUser(res, null);
   setRequestTenantId(res, null);
+  setRequestAuthenticated(res, false);
 
   if (config.apiKey === undefined) {
     return true;
@@ -265,6 +290,7 @@ export const createAuthMiddleware = (config: VegaConfig, repository?: Repository
     if (session !== null && (!hasBearerToken || !bearerAuthorized)) {
       setRequestUser(res, session.user);
       setRequestTenantId(res, session.user?.tenant_id ?? null);
+      setRequestAuthenticated(res, true);
     }
 
     if (config.apiKey !== undefined && !bearerAuthorized && session === null) {

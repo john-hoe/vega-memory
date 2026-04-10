@@ -2,6 +2,10 @@
 /**
  * Vega Memory Remote MCP Client
  * Lightweight MCP server that proxies all tool calls to a remote Vega HTTP API.
+ * Supported tool subset: memory_store, memory_recall, memory_list, memory_update,
+ * memory_delete, session_start, session_end, memory_health, memory_compact.
+ * TODO: Expand this proxy when matching HTTP routes exist for deep_recall,
+ * fact claims, topics/graph, wiki, and consolidation tools.
  * No native dependencies required — works on Windows/Mac/Linux.
  * 
  * Usage: node vega-remote-mcp.mjs

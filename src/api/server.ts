@@ -4,7 +4,12 @@ import type { AddressInfo } from "node:net";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 
 import type { VegaConfig } from "../config.js";
-import { createAuthMiddleware, getRequestTenantId } from "./auth.js";
+import {
+  createAuthMiddleware,
+  getBearerToken,
+  getRequestTenantId,
+  matchesConfiguredApiKey
+} from "./auth.js";
 import { createOidcRouter } from "./oidc.js";
 import { createRouter, type APIRouterServices } from "./routes.js";
 import { StructuredLogger } from "../monitoring/logger.js";
@@ -119,10 +124,18 @@ export function createAPIServer(
 
     next();
   });
-  app.get("/metrics", async (_req, res) => {
+  app.get("/metrics", async (req, res) => {
     if (!(config.metricsEnabled ?? false)) {
       res.status(404).send("metrics disabled");
       return;
+    }
+
+    if ((config.metricsRequireAuth ?? true) && config.apiKey !== undefined) {
+      const token = getBearerToken(req);
+      if (token === undefined || !matchesConfiguredApiKey(token, config.apiKey)) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
     }
 
     res.type("text/plain").send(await metrics.getMetrics());

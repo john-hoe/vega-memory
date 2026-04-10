@@ -24,6 +24,7 @@ import { UserService } from "../core/user.js";
 import { Repository } from "../db/repository.js";
 import { SearchEngine } from "../search/engine.js";
 import { PageManager } from "../wiki/page-manager.js";
+import { PagePermissionService } from "../wiki/permissions.js";
 
 const ensureDataDirectory = (dbPath: string): void => {
   if (dbPath === ":memory:") {
@@ -491,6 +492,7 @@ test("E2E: Vega Memory System", async (t) => {
     await t.test("wiki spaces support comments on tenant-scoped pages", async () => {
       const harness = await createApiHarness();
       const tenant = harness.tenantService.createTenant("Wiki Tenant", "pro");
+      const permissionService = new PagePermissionService(harness.repository);
       const user = new UserService(harness.repository).createUser(
         "alice@example.com",
         "Alice",
@@ -521,6 +523,7 @@ test("E2E: Vega Memory System", async (t) => {
           page_type: "runbook",
           space_id: space.id
         });
+        permissionService.setPermission(page.id, user.id, "write");
         const createCommentResponse = await harness.request(`/api/wiki/pages/${page.id}/comments`, {
           method: "POST",
           headers: tenantHeaders,

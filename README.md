@@ -412,6 +412,13 @@ Same pattern as Claude Code. Add to `AGENTS.md` in your project:
 
 The Codex desktop app supports MCP. For remote setups (e.g., Codex on Windows connecting to Vega on a Mac/Linux server), use the lightweight remote MCP proxy included in `client/vega-remote-mcp.mjs`.
 
+**Supported Tools**
+
+- Available today: `memory_store`, `memory_recall`, `memory_list`, `memory_update`, `memory_delete`, `session_start`, `session_end`, `memory_health`, `memory_compact`
+- `session_start` in the remote proxy is a compatibility surface. The server supports `mode`, but the proxy is still a minimal subset rather than a full MCP mirror.
+- Not yet exposed by the remote proxy: `deep_recall`, fact-claim tools, topic/graph tools, wiki tools, consolidation tools, and newer session variants that require matching HTTP routes.
+- Treat `client/vega-remote-mcp.mjs` as a lightweight compatibility client, not a complete replacement for the local MCP server.
+
 **Step 1: Clone and install on the client machine**
 
 ```powershell

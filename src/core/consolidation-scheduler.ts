@@ -33,6 +33,20 @@ const isDeduplicatedError = (error: string): boolean =>
 
 const ATTEMPT_SUFFIX_PATTERN = /:attempt:\d+$/;
 
+const hasNoErrors = (run: ConsolidationRunRecord): boolean => run.errors.length === 0;
+
+const toUtcDate = (value: string): Date => new Date(value);
+
+const isSameCalendarDay = (left: string, right: Date): boolean => {
+  const candidate = toUtcDate(left);
+
+  return (
+    candidate.getUTCFullYear() === right.getUTCFullYear() &&
+    candidate.getUTCMonth() === right.getUTCMonth() &&
+    candidate.getUTCDate() === right.getUTCDate()
+  );
+};
+
 export class ConsolidationScheduler {
   constructor(
     private readonly repository: Repository,
@@ -177,20 +191,44 @@ export class ConsolidationScheduler {
       return false;
     }
 
+    const auditService = new ConsolidationAuditService(this.repository);
+    if (this.hasSuccessfulRunInCurrentWindow(trigger, project, tenantId ?? null, auditService)) {
+      return false;
+    }
+
     if (trigger !== "after_writes") {
       return true;
     }
 
-    const lastRun = new ConsolidationAuditService(this.repository).getLastRun(
-      project,
-      tenantId
-    );
+    const lastRun = auditService.getLastRun(project, tenantId);
     const since = lastRun?.completed_at ?? "1970-01-01T00:00:00.000Z";
     const writes = this.repository.countProjectMemoryWritesSince(project, since, tenantId);
     const threshold =
       policy?.min_writes_threshold ?? this.getDefaultPolicy().min_writes_threshold;
 
     return writes >= threshold;
+  }
+
+  private hasSuccessfulRunInCurrentWindow(
+    trigger: ConsolidationPolicy["trigger"],
+    project: string,
+    tenantId: string | null,
+    auditService: ConsolidationAuditService
+  ): boolean {
+    if (trigger !== "nightly" && trigger !== "after_session_end") {
+      return false;
+    }
+
+    const now = new Date();
+    const recentRuns = auditService.listRuns(project, 50, tenantId);
+
+    return recentRuns.some((run) => {
+      if (!hasNoErrors(run)) {
+        return false;
+      }
+
+      return isSameCalendarDay(run.completed_at, now);
+    });
   }
 
   private resolvePolicy(policy?: Partial<ConsolidationPolicy>): ConsolidationPolicy {

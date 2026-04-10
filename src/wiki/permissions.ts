@@ -77,7 +77,8 @@ export class PagePermissionService {
     pageId: string,
     userId: string | undefined,
     userRole: string | undefined,
-    requiredLevel: PagePermission["level"]
+    requiredLevel: PagePermission["level"],
+    isAuthenticated = Boolean(userId?.trim() || userRole?.trim())
   ): boolean {
     const normalizedPageId = normalizeIdentifier(pageId, "page_id");
     const normalizedRequiredLevel = normalizeLevel(requiredLevel);
@@ -107,13 +108,13 @@ export class PagePermissionService {
       return false;
     }
 
-    const visibility = this.repository.getWikiPageSpaceVisibility(normalizedPageId);
+    const visibility = this.repository.getWikiPageSpaceVisibility(normalizedPageId) ?? "internal";
     if (visibility === "public") {
       return true;
     }
 
     if (visibility === "internal") {
-      return normalizedUserId !== undefined || normalizedUserRole !== undefined;
+      return isAuthenticated;
     }
 
     return false;

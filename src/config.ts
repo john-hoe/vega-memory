@@ -68,6 +68,7 @@ export interface VegaConfig {
   corsOrigins?: string[];
   databaseType?: "sqlite" | "postgres";
   metricsEnabled?: boolean;
+  metricsRequireAuth?: boolean;
   sentryDsn?: string;
   logLevel?: "debug" | "info" | "warn" | "error";
   logFormat?: "json" | "text";
@@ -552,6 +553,7 @@ export const loadConfig = (): VegaConfig => {
     corsOrigins: parseStringArray(process.env.VEGA_CORS_ORIGINS),
     databaseType: parseDatabaseType(process.env.VEGA_DATABASE_TYPE),
     metricsEnabled: parseBoolean(process.env.VEGA_METRICS_ENABLED, false),
+    metricsRequireAuth: parseBoolean(process.env.VEGA_METRICS_REQUIRE_AUTH, true),
     sentryDsn: process.env.VEGA_SENTRY_DSN || undefined,
     logLevel: parseLogLevel(process.env.VEGA_LOG_LEVEL),
     logFormat: parseLogFormat(process.env.VEGA_LOG_FORMAT),

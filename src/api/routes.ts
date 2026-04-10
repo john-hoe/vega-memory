@@ -4,7 +4,7 @@ import { StripeService } from "../billing/stripe.js";
 import { GdprService } from "../compliance/gdpr.js";
 import { isDeepRecallAvailable, type VegaConfig } from "../config.js";
 import { WebhookService } from "../integrations/webhooks.js";
-import { getRequestTenantId, getRequestUser } from "./auth.js";
+import { getRequestTenantId, getRequestUser, isRequestAuthenticated } from "./auth.js";
 import { requireRole, requireTenantAccess } from "./permissions.js";
 import { AnalyticsService } from "../core/analytics.js";
 import { ArchiveService } from "../core/archive-service.js";
@@ -88,8 +88,10 @@ const serializeMemory = (memory: Memory) => ({
   id: memory.id,
   type: memory.type,
   project: memory.project,
+  tenant_id: memory.tenant_id ?? null,
   title: memory.title,
   content: memory.content,
+  summary: memory.summary ?? null,
   importance: memory.importance,
   source: memory.source,
   tags: memory.tags,
@@ -560,6 +562,28 @@ const assertPageAccess = (page: WikiPage, res: Response, spaceService: SpaceServ
   }
 };
 
+const assertPagePermission = (
+  pagePermissionService: PagePermissionService,
+  page: WikiPage,
+  requiredLevel: "read" | "write" | "admin",
+  isAuthenticated: boolean,
+  user?: Pick<User, "id" | "role"> | null
+): void => {
+  const actor = user ?? null;
+
+  if (
+    !pagePermissionService.canAccess(
+      page.id,
+      actor?.id,
+      actor?.role,
+      requiredLevel,
+      isAuthenticated
+    )
+  ) {
+    throw new ApiError(403, "forbidden");
+  }
+};
+
 const resolveActorUser = (
   candidate: unknown,
   res: Response,
@@ -656,6 +680,7 @@ export function createRouter(services: APIRouterServices): Router {
 
   router.post(
     "/api/billing/subscribe",
+    requireRole("admin"),
     handleRoute(async (req, res) => {
       const body = requireBody(req.body);
       const tenantId = requireTenantId(res, body.tenant_id);
@@ -699,6 +724,7 @@ export function createRouter(services: APIRouterServices): Router {
 
   router.delete(
     "/api/billing/subscribe/:id",
+    requireRole("admin"),
     handleRoute(async (req, res) => {
       const subscriptionId = requireString(req.params.id, "id");
       const subscription = await stripeService.getSubscription(subscriptionId);
@@ -1394,6 +1420,13 @@ export function createRouter(services: APIRouterServices): Router {
         throw new ApiError(404, `Wiki page not found: ${slug}`);
       }
 
+      assertPagePermission(
+        pagePermissionService,
+        page,
+        "read",
+        isRequestAuthenticated(res),
+        getRequestUser(res)
+      );
       res.status(200).json(pageManager.getVersions(page.id).map(serializeWikiPageVersion));
     })
   );
@@ -1420,6 +1453,14 @@ export function createRouter(services: APIRouterServices): Router {
           assertSpaceAccess(spaceService.getSpace(page.space_id), tenantId, page.space_id);
         }
       }
+
+      assertPagePermission(
+        pagePermissionService,
+        page,
+        "admin",
+        isRequestAuthenticated(res),
+        getRequestUser(res)
+      );
 
       if ((userId === undefined && role === undefined) || (userId !== undefined && role !== undefined)) {
         throw new ApiError(400, "provide exactly one of user_id or role");
@@ -1452,6 +1493,7 @@ export function createRouter(services: APIRouterServices): Router {
 
       assertPageAccess(page, res, spaceService);
       const actor = resolveActorUser(body.user_id, res, services.repository);
+      assertPagePermission(pagePermissionService, page, "write", true, actor);
 
       const comment = commentService.addComment(
         page.id,
@@ -1475,6 +1517,13 @@ export function createRouter(services: APIRouterServices): Router {
       }
 
       assertPageAccess(page, res, spaceService);
+      assertPagePermission(
+        pagePermissionService,
+        page,
+        "read",
+        isRequestAuthenticated(res),
+        getRequestUser(res)
+      );
 
       res.status(200).json(
         commentService
@@ -1560,6 +1609,13 @@ export function createRouter(services: APIRouterServices): Router {
         throw new ApiError(404, `Wiki page not found: ${slug}`);
       }
 
+      assertPagePermission(
+        pagePermissionService,
+        page.page,
+        "read",
+        isRequestAuthenticated(res),
+        getRequestUser(res)
+      );
       res.status(200).json(serializePageWithBacklinks(page));
     })
   );

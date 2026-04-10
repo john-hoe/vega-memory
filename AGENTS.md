@@ -59,3 +59,11 @@ Treat Vega Memory as a two-stage adapter protocol:
 - `L2`: Multi-step synthesis, planning, architecture, or cross-lane coordination turns.
 - `L3`: Audit packets, provenance review, or cold-evidence expansion.
 - Trigger `session_end` as soon as Hermes emits a delegation handoff packet or durable turn summary that another agent will consume. Do not wait for the entire multi-agent workflow to finish if the current orchestrator turn has ended.
+
+## Long Audit / Review Discipline
+
+For full-repo audits, large-scope reviews, or tasks that consolidate findings into a GitHub issue:
+
+- Do NOT treat issue creation, issue comment updates, finishing one module, or finding one batch of issues as completion.
+- Treat the task as complete only when the requested scope has been audited end-to-end and confirmed findings have been consolidated into the same repair backlog.
+- If forced to pause because of context limits, tool failures, or external blockers, leave a resume packet with completion percentage, completed scope, remaining scope, and the exact next module or file to continue from.

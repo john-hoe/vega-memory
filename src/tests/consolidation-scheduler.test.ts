@@ -5,9 +5,15 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import type { VegaConfig } from "../config.js";
+import { ConsolidationAuditService } from "../core/consolidation-audit.js";
 import { runConsolidationAcrossProjects } from "../core/consolidation-runner.js";
 import { ConsolidationScheduler } from "../core/consolidation-scheduler.js";
-import type { ConsolidationReport, FactClaim, Memory } from "../core/types.js";
+import type {
+  ConsolidationReport,
+  ConsolidationRunRecord,
+  FactClaim,
+  Memory
+} from "../core/types.js";
 import { CONSOLIDATION_CANDIDATE_KINDS } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 
@@ -79,6 +85,24 @@ const createFactClaim = (overrides: Partial<FactClaim> = {}): FactClaim => ({
   invalidation_reason: null,
   created_at: now,
   updated_at: now,
+  ...overrides
+});
+
+const createRunRecord = (
+  overrides: Partial<ConsolidationRunRecord> = {}
+): ConsolidationRunRecord => ({
+  run_id: "run-1",
+  project: "vega",
+  tenant_id: null,
+  trigger: "nightly",
+  mode: "dry_run",
+  started_at: "2026-04-10T00:00:00.000Z",
+  completed_at: "2026-04-10T00:00:01.000Z",
+  duration_ms: 1000,
+  total_candidates: 0,
+  actions_executed: 0,
+  actions_skipped: 0,
+  errors: [],
   ...overrides
 });
 
@@ -622,6 +646,62 @@ test("shouldTrigger default threshold still works", () => {
     );
 
     assert.equal(scheduler.shouldTrigger("after_writes", "vega"), true);
+  } finally {
+    repository.close();
+  }
+});
+
+test("nightly trigger skips if already ran today", () => {
+  const repository = new Repository(":memory:");
+  const scheduler = new ConsolidationScheduler(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true
+    }
+  });
+  const auditService = new ConsolidationAuditService(repository);
+
+  try {
+    const now = new Date();
+    const completedAt = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 1, 0, 0, 0)
+    ).toISOString();
+    auditService.recordRun(
+      createRunRecord({
+        run_id: "nightly-today",
+        completed_at: completedAt
+      })
+    );
+
+    assert.equal(scheduler.shouldTrigger("nightly", "vega"), false);
+  } finally {
+    repository.close();
+  }
+});
+
+test("nightly trigger allows if last run was yesterday", () => {
+  const repository = new Repository(":memory:");
+  const scheduler = new ConsolidationScheduler(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true
+    }
+  });
+  const auditService = new ConsolidationAuditService(repository);
+
+  try {
+    const now = new Date();
+    const completedAt = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1, 23, 0, 0, 0)
+    ).toISOString();
+    auditService.recordRun(
+      createRunRecord({
+        run_id: "nightly-yesterday",
+        completed_at: completedAt
+      })
+    );
+
+    assert.equal(scheduler.shouldTrigger("nightly", "vega"), true);
   } finally {
     repository.close();
   }

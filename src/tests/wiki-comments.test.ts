@@ -22,6 +22,7 @@ import { SearchEngine } from "../search/engine.js";
 import { CommentService } from "../wiki/comments.js";
 import { NotificationService } from "../wiki/notifications.js";
 import { PageManager } from "../wiki/page-manager.js";
+import { PagePermissionService } from "../wiki/permissions.js";
 import { SpaceService } from "../wiki/spaces.js";
 
 interface ApiHarness {
@@ -173,6 +174,7 @@ test("wiki comment and notification API routes support session users", async () 
   const userService = new UserService(harness.repository);
   const spaceService = new SpaceService(harness.repository);
   const pageManager = new PageManager(harness.repository);
+  const permissionService = new PagePermissionService(harness.repository);
   const aliceToken = "wiki-comments-alice";
   const bobToken = "wiki-comments-bob";
   const adminToken = "wiki-comments-admin";
@@ -193,6 +195,7 @@ test("wiki comment and notification API routes support session users", async () 
       page_type: "reference",
       space_id: space.id
     });
+    permissionService.setRolePermission(page.id, "member", "write");
 
     registerDashboardSession(harness.config, aliceToken, alice);
     registerDashboardSession(harness.config, bobToken, bob);
@@ -211,7 +214,9 @@ test("wiki comment and notification API routes support session users", async () 
       user_id: string;
       mentions: string[];
     }>(createResponse);
-    const listResponse = await harness.request(`/api/wiki/pages/${page.id}/comments`);
+    const listResponse = await harness.request(`/api/wiki/pages/${page.id}/comments`, {
+      headers: withSession(aliceToken)
+    });
     const listedComments = await readJson<
       Array<{
         id: string;
@@ -282,7 +287,9 @@ test("wiki comment and notification API routes support session users", async () 
     });
     const deleteBody = await readJson<{ action: string }>(deleteResponse);
     const commentsAfterDelete = await readJson<Array<{ id: string }>>(
-      await harness.request(`/api/wiki/pages/${page.id}/comments`)
+      await harness.request(`/api/wiki/pages/${page.id}/comments`, {
+        headers: withSession(aliceToken)
+      })
     );
 
     assert.equal(createResponse.status, 201);
@@ -329,6 +336,57 @@ test("wiki comment and notification API routes support session users", async () 
     }
     if (admin !== undefined) {
       revokeDashboardSession(harness.config, adminToken);
+    }
+    await harness.cleanup();
+  }
+});
+
+test("write-protected page rejects unauthorized write", async () => {
+  const harness = await createApiHarness();
+  const tenantService = new TenantService(harness.repository);
+  const userService = new UserService(harness.repository);
+  const spaceService = new SpaceService(harness.repository);
+  const pageManager = new PageManager(harness.repository);
+  const permissionService = new PagePermissionService(harness.repository);
+  const aliceToken = "wiki-perm-alice";
+  const bobToken = "wiki-perm-bob";
+  let alice: User | undefined;
+  let bob: User | undefined;
+
+  try {
+    const tenant = tenantService.createTenant("Permission Tenant", "pro");
+    alice = userService.createUser("alice@example.com", "alice", "member", tenant.id);
+    bob = userService.createUser("bob@example.com", "bob", "member", tenant.id);
+    const privateSpace = spaceService.createSpace("Private Docs", "private-docs", tenant.id, "private");
+    const page = pageManager.createPage({
+      title: "Locked Page",
+      content: "Protected content",
+      summary: "Protected summary",
+      page_type: "reference",
+      space_id: privateSpace.id
+    });
+
+    permissionService.setPermission(page.id, alice.id, "write");
+    registerDashboardSession(harness.config, aliceToken, alice);
+    registerDashboardSession(harness.config, bobToken, bob);
+
+    const response = await harness.request(`/api/wiki/pages/${page.id}/comments`, {
+      method: "POST",
+      headers: withSession(bobToken),
+      body: JSON.stringify({
+        content: "This should be rejected"
+      })
+    });
+    const body = await readJson<{ error: string }>(response);
+
+    assert.equal(response.status, 403);
+    assert.equal(body.error, "forbidden");
+  } finally {
+    if (alice !== undefined) {
+      revokeDashboardSession(harness.config, aliceToken);
+    }
+    if (bob !== undefined) {
+      revokeDashboardSession(harness.config, bobToken);
     }
     await harness.cleanup();
   }

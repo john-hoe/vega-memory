@@ -10,12 +10,15 @@ import { CompactService } from "../core/compact.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
+import { TenantService } from "../core/tenant.js";
 import { Repository } from "../db/repository.js";
 import { SearchEngine } from "../search/engine.js";
 import { PageManager } from "../wiki/page-manager.js";
+import { SpaceService } from "../wiki/spaces.js";
 
 interface TestHarness {
   baseUrl: string;
+  repository: Repository;
   pageManager: PageManager;
   cleanup(): Promise<void>;
   request(path: string, init?: RequestInit): Promise<Response>;
@@ -68,6 +71,7 @@ const createHarness = async (): Promise<TestHarness> => {
 
   return {
     baseUrl,
+    repository,
     pageManager,
     async cleanup(): Promise<void> {
       await server.stop();
@@ -150,6 +154,13 @@ test("GET /api/wiki/pages returns wiki page list", async () => {
 
 test("GET /api/wiki/pages/:slug returns page with backlinks", async () => {
   const harness = await createHarness();
+  const tenant = new TenantService(harness.repository).createTenant("Docs Tenant", "free");
+  const publicSpace = new SpaceService(harness.repository).createSpace(
+    "Public Docs",
+    "public-docs",
+    tenant.id,
+    "public"
+  );
 
   try {
     const source = harness.pageManager.createPage({
@@ -157,14 +168,16 @@ test("GET /api/wiki/pages/:slug returns page with backlinks", async () => {
       content: "WAL mode is the default write strategy.",
       summary: "SQLite decisions.",
       page_type: "decision_log",
-      project: "vega"
+      project: "vega",
+      space_id: publicSpace.id
     });
     const target = harness.pageManager.createPage({
       title: "WAL Runbook",
       content: "Enable WAL mode before production traffic.",
       summary: "Runbook for WAL mode.",
       page_type: "runbook",
-      project: "vega"
+      project: "vega",
+      space_id: publicSpace.id
     });
 
     harness.pageManager.addCrossReference(source.id, target.id, "See the WAL runbook.");
@@ -219,8 +232,71 @@ test("GET /api/wiki/pages/:slug returns 404 for missing page", async () => {
   }
 });
 
+test("private page rejects unauthenticated read", async () => {
+  const harness = await createHarness();
+  const tenant = new TenantService(harness.repository).createTenant("Private Tenant", "free");
+  const privateSpace = new SpaceService(harness.repository).createSpace(
+    "Private Docs",
+    "private-docs",
+    tenant.id,
+    "private"
+  );
+
+  try {
+    const page = harness.pageManager.createPage({
+      title: "Private Runbook",
+      content: "Restricted content.",
+      summary: "Restricted summary.",
+      page_type: "runbook",
+      space_id: privateSpace.id
+    });
+    const response = await harness.request(`/api/wiki/pages/${page.slug}`);
+    const body = await readJson<{ error: string }>(response);
+
+    assert.equal(response.status, 403);
+    assert.equal(body.error, "forbidden");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("public page allows unauthenticated read", async () => {
+  const harness = await createHarness();
+  const tenant = new TenantService(harness.repository).createTenant("Public Tenant", "free");
+  const publicSpace = new SpaceService(harness.repository).createSpace(
+    "Public Docs",
+    "public-docs",
+    tenant.id,
+    "public"
+  );
+
+  try {
+    const page = harness.pageManager.createPage({
+      title: "Public Runbook",
+      content: "Anyone can read this.",
+      summary: "Public summary.",
+      page_type: "runbook",
+      space_id: publicSpace.id
+    });
+    const response = await harness.request(`/api/wiki/pages/${page.slug}`);
+    const body = await readJson<{ page: { id: string } }>(response);
+
+    assert.equal(response.status, 200);
+    assert.equal(body.page.id, page.id);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("GET /api/wiki/pages/:slug/versions returns version history", async () => {
   const harness = await createHarness();
+  const tenant = new TenantService(harness.repository).createTenant("Versions Tenant", "free");
+  const publicSpace = new SpaceService(harness.repository).createSpace(
+    "Public Versions",
+    "public-versions",
+    tenant.id,
+    "public"
+  );
 
   try {
     const page = harness.pageManager.createPage({
@@ -228,7 +304,8 @@ test("GET /api/wiki/pages/:slug/versions returns version history", async () => {
       content: "Use a local cache.",
       summary: "Initial cache plan.",
       page_type: "topic",
-      project: "vega"
+      project: "vega",
+      space_id: publicSpace.id
     });
 
     harness.pageManager.updatePage(
