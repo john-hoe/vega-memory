@@ -53,10 +53,10 @@ test("MetricsCollector renders histogram buckets, sum, and count", async () => {
 
   const metrics = await collector.getMetrics();
 
-  assert.match(metrics, /request_duration_seconds\{route="\/api\/health",le="0.1"\} 0/);
-  assert.match(metrics, /request_duration_seconds\{route="\/api\/health",le="0.5"\} 1/);
-  assert.match(metrics, /request_duration_seconds\{route="\/api\/health",le="1"\} 2/);
-  assert.match(metrics, /request_duration_seconds\{route="\/api\/health",le="\+Inf"\} 2/);
+  assert.match(metrics, /request_duration_seconds_bucket\{route="\/api\/health",le="0.1"\} 0/);
+  assert.match(metrics, /request_duration_seconds_bucket\{route="\/api\/health",le="0.5"\} 1/);
+  assert.match(metrics, /request_duration_seconds_bucket\{route="\/api\/health",le="1"\} 2/);
+  assert.match(metrics, /request_duration_seconds_bucket\{route="\/api\/health",le="\+Inf"\} 2/);
   assert.match(metrics, /request_duration_seconds_sum\{route="\/api\/health"\} 1/);
   assert.match(metrics, /request_duration_seconds_count\{route="\/api\/health"\} 2/);
 });

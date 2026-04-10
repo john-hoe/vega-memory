@@ -10,9 +10,17 @@ spec:
   containers:
     - name: curl
       image: curlimages/curl:8.8.0
+      env:
+        - name: VEGA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.existingSecret | default (printf "%s-secrets" (include "vega-memory.fullname" .)) }}
+              key: {{ .Values.existingSecretKey }}
       command:
         - sh
         - -ec
         - >
-          curl -fsS http://{{ include "vega-memory.fullname" . }}:{{ .Values.service.port }}/api/health
+          curl -fsS
+          -H "Authorization: Bearer ${VEGA_API_KEY}"
+          http://{{ include "vega-memory.fullname" . }}:{{ .Values.service.port }}/api/health
   restartPolicy: Never

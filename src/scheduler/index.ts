@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { createAPIServer } from "../api/server.js";
 import {
+  assertSafeProductionApiKey,
   loadConfig,
   requireDatabaseEncryptionKey,
   type VegaConfig
@@ -119,6 +120,8 @@ export const startSchedulerApiServer = async (
     }
   | null
 > => {
+  assertSafeProductionApiKey(config);
+
   if (config.apiKey === undefined) {
     writeLog(
       "HTTP API disabled: VEGA_API_KEY not configured. Set VEGA_API_KEY to enable remote access."

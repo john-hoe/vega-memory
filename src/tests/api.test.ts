@@ -145,6 +145,32 @@ test("GET /api/health returns the expanded health payload", async () => {
   }
 });
 
+test("metrics normalize request paths to route patterns", async () => {
+  const harness = await createHarness(undefined, {
+    metricsEnabled: true
+  });
+
+  try {
+    await harness.request("/api/memory/550e8400-e29b-41d4-a716-446655440000", {
+      method: "DELETE"
+    });
+    await harness.request("/api/memory/550e8400-e29b-41d4-a716-446655440001", {
+      method: "DELETE"
+    });
+
+    const metrics = await (await fetch(`${harness.baseUrl}/metrics`)).text();
+
+    assert.match(
+      metrics,
+      /vega_http_requests_total\{method="DELETE",path="\/api\/memory\/:id",status="200"\} 2/
+    );
+    assert.equal(metrics.includes('/api/memory/550e8400-e29b-41d4-a716-446655440000'), false);
+    assert.equal(metrics.includes('/api/memory/550e8400-e29b-41d4-a716-446655440001'), false);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("GET /metrics returns Prometheus text when metrics are enabled", async () => {
   const harness = await createHarness(undefined, {
     metricsEnabled: true

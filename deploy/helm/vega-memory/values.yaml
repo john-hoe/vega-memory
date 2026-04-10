@@ -9,7 +9,7 @@ existingSecret: ""
 existingSecretKey: VEGA_API_KEY
 secret:
   create: true
-  apiKey: dev-api-key
+  apiKey: ""
 
 service:
   type: ClusterIP
@@ -40,6 +40,7 @@ autoscaling:
   targetMemoryUtilization: 80
 
 env:
+  NODE_ENV: production
   VEGA_DB_PATH: /data/memory.db
   VEGA_API_PORT: "3000"
 

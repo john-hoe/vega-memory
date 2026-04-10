@@ -9,11 +9,14 @@
   kubectl get svc {{ include "vega-memory.fullname" . }}
 {{- end }}
 
-2. Verify the API is healthy:
-  curl -fsS http://127.0.0.1:3000/api/health
+2. Export the API key from the configured Secret:
+  export VEGA_API_KEY=$(kubectl get secret {{ .Values.existingSecret | default (printf "%s-secrets" (include "vega-memory.fullname" .)) }} -o jsonpath='{.data.{{ .Values.existingSecretKey }}}' | base64 --decode)
 
-3. Run the Helm test:
+3. Verify the API is healthy:
+  curl -fsS -H "Authorization: Bearer ${VEGA_API_KEY}" http://127.0.0.1:3000/api/health
+
+4. Run the Helm test:
   helm test {{ .Release.Name }}
 
-4. Rotate or supply the API key via Secret before production use:
+5. Supply a strong API key before install or upgrade:
   helm upgrade {{ .Release.Name }} {{ .Chart.Name }} --set secret.apiKey='<strong-random-value>'

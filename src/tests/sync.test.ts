@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -246,6 +246,78 @@ test("PendingQueue.count returns correct count", () => {
 
     assert.equal(queue.count(), 2);
   } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("dequeue skips malformed lines and returns valid ones", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-pending-malformed-"));
+  const queue = new PendingQueue(tempDir);
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+
+  console.warn = (...args: unknown[]): void => {
+    warnings.push(args.map((arg) => String(arg)).join(" "));
+  };
+
+  try {
+    writeFileSync(
+      join(tempDir, "2026-04-04T00-00-00-000Z-batch.jsonl"),
+      [
+        JSON.stringify({
+          type: "store",
+          params: {
+            content: "valid operation",
+            type: "decision",
+            project: "vega"
+          },
+          timestamp: "2026-04-04T00:00:00.000Z"
+        }),
+        "{not-json",
+        JSON.stringify({
+          type: "delete",
+          params: {
+            id: "memory-1"
+          },
+          timestamp: "2026-04-04T00:00:01.000Z"
+        }),
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const operations = queue.dequeue();
+
+    assert.equal(operations.length, 2);
+    assert.equal(operations[0]?.type, "store");
+    assert.equal(operations[1]?.type, "delete");
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0] ?? "", /\[pending-queue\] skipping malformed entry:/);
+  } finally {
+    console.warn = originalWarn;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("count works with corrupted queue files", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-pending-corrupted-count-"));
+  const queue = new PendingQueue(tempDir);
+  const originalWarn = console.warn;
+
+  console.warn = () => {};
+
+  try {
+    writeFileSync(
+      join(tempDir, "2026-04-04T00-00-00-000Z-batch.jsonl"),
+      ['{"type":"store","params":{},"timestamp":"2026-04-04T00:00:00.000Z"}', "{bad-json}"].join(
+        "\n"
+      ),
+      "utf8"
+    );
+
+    assert.equal(queue.count(), 1);
+  } finally {
+    console.warn = originalWarn;
     rmSync(tempDir, { recursive: true, force: true });
   }
 });

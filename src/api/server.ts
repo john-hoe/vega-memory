@@ -16,6 +16,32 @@ const isAddressInfo = (value: string | AddressInfo | null): value is AddressInfo
 
 const shouldLogApiRequest = (path: string): boolean => path.startsWith("/api") && path !== "/api/health";
 
+const UUID_SEGMENT_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const normalizePathSegment = (segment: string): string => {
+  if (UUID_SEGMENT_PATTERN.test(segment)) {
+    return ":id";
+  }
+
+  if (/^\d+$/.test(segment)) {
+    return ":n";
+  }
+
+  return segment;
+};
+
+export const getMetricsPathLabel = (req: Request): string => {
+  if (req.route?.path && typeof req.route.path === "string") {
+    return `${req.baseUrl}${req.route.path}` || req.route.path;
+  }
+
+  return req.path
+    .split("/")
+    .map((segment) => normalizePathSegment(segment))
+    .join("/");
+};
+
 export function createAPIServer(
   services: Omit<APIRouterServices, "config">,
   config: VegaConfig
@@ -64,14 +90,16 @@ export function createAPIServer(
     const startedAt = Date.now();
     res.once("finish", () => {
       const durationSeconds = (Date.now() - startedAt) / 1000;
+      const metricsPath = getMetricsPathLabel(req);
+
       requestCounter.inc({
         method: req.method.toUpperCase(),
-        path: req.path,
+        path: metricsPath,
         status: String(res.statusCode)
       });
       requestLatency.observe(durationSeconds, {
         method: req.method.toUpperCase(),
-        path: req.path
+        path: metricsPath
       });
       services.repository.logPerformance({
         timestamp: new Date().toISOString(),

@@ -361,14 +361,14 @@ export class MetricsCollector {
           .forEach((entry) => {
             definition.buckets.forEach((bucket, index) => {
               lines.push(
-                renderMetricLine(definition.name, entry.bucketCounts[index], {
+                renderMetricLine(`${definition.name}_bucket`, entry.bucketCounts[index], {
                   ...entry.labels,
                   le: String(bucket)
                 })
               );
             });
             lines.push(
-              renderMetricLine(definition.name, entry.count, {
+              renderMetricLine(`${definition.name}_bucket`, entry.count, {
                 ...entry.labels,
                 le: "+Inf"
               })

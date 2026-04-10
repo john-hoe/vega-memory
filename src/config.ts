@@ -139,6 +139,11 @@ export interface VegaConfig {
 
 export const DB_ENCRYPTION_KEY_MISSING_MESSAGE =
   "VEGA_DB_ENCRYPTION is enabled but no encryption key is configured. Run vega init-encryption first.";
+export const KNOWN_INSECURE_API_KEYS = new Set<string>(["dev-api-key"]);
+export const PRODUCTION_API_KEY_REQUIRED_MESSAGE =
+  "VEGA_API_KEY must be configured when NODE_ENV=production.";
+export const PRODUCTION_API_KEY_INSECURE_MESSAGE =
+  "VEGA_API_KEY uses a known insecure default and must be overridden when NODE_ENV=production.";
 
 export const DEFAULT_FEATURE_FLAGS: VegaFeatureFlags = {
   factClaims: false,
@@ -640,4 +645,24 @@ export const requireDatabaseEncryptionKey = (
   }
 
   return encryptionKey ?? undefined;
+};
+
+export const isKnownInsecureApiKey = (apiKey: string | undefined): boolean =>
+  apiKey !== undefined && KNOWN_INSECURE_API_KEYS.has(apiKey);
+
+export const assertSafeProductionApiKey = (
+  config: Pick<VegaConfig, "apiKey">,
+  nodeEnv = process.env.NODE_ENV
+): void => {
+  if (nodeEnv !== "production") {
+    return;
+  }
+
+  if (config.apiKey === undefined) {
+    throw new Error(PRODUCTION_API_KEY_REQUIRED_MESSAGE);
+  }
+
+  if (isKnownInsecureApiKey(config.apiKey)) {
+    throw new Error(PRODUCTION_API_KEY_INSECURE_MESSAGE);
+  }
 };

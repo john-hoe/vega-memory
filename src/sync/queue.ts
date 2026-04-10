@@ -63,7 +63,16 @@ export class PendingQueue {
           .split(/\r?\n/)
           .map((line) => line.trim())
           .filter(Boolean)
-          .map((line) => parsePendingOperation(line, batchFile));
+          .flatMap((line) => {
+            try {
+              return [parsePendingOperation(line, batchFile)];
+            } catch {
+              console.warn(
+                `[pending-queue] skipping malformed entry: ${line.slice(0, 100)}`
+              );
+              return [];
+            }
+          });
       });
 
     return operations.sort((left, right) => {

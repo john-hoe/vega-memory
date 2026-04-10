@@ -4,7 +4,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { loadConfig } from "../config.js";
+import {
+  assertSafeProductionApiKey,
+  loadConfig,
+  PRODUCTION_API_KEY_INSECURE_MESSAGE,
+  PRODUCTION_API_KEY_REQUIRED_MESSAGE
+} from "../config.js";
 
 const assertConfigSubset = (
   actual: Record<string, unknown>,
@@ -779,4 +784,18 @@ test("loadConfig reads regression guard overrides from process.env", () => {
   } finally {
     Object.assign(process.env, previous);
   }
+});
+
+test("assertSafeProductionApiKey rejects missing API key in production", () => {
+  assert.throws(
+    () => assertSafeProductionApiKey({ apiKey: undefined }, "production"),
+    new Error(PRODUCTION_API_KEY_REQUIRED_MESSAGE)
+  );
+});
+
+test("assertSafeProductionApiKey rejects insecure default API key in production", () => {
+  assert.throws(
+    () => assertSafeProductionApiKey({ apiKey: "dev-api-key" }, "production"),
+    new Error(PRODUCTION_API_KEY_INSECURE_MESSAGE)
+  );
 });
