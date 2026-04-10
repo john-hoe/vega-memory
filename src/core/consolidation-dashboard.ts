@@ -166,23 +166,7 @@ export class ConsolidationDashboardService {
     };
   }
 
-  /**
-   * Count approved approval items that were actually executed.
-   * An item is considered executed if its review_comment contains execution
-   * traces from auto_execute, execute(), or retry() success paths.
-   */
-  private countExecutedApprovals(
-    project: string,
-    tenantId?: string | null
-  ): number {
-    const approved = this.repository.listApprovalItems(project, "approved", tenantId);
-
-    return approved.filter(
-      (item) =>
-        item.review_comment !== null &&
-        (item.review_comment.includes("[retried: success") ||
-          item.review_comment.includes("approved_pending_execution") ||
-          item.review_comment.includes("[executed"))
-    ).length;
+  private countExecutedApprovals(project: string, tenantId?: string | null): number {
+    return this.repository.countExecutedApprovalItems(project, tenantId);
   }
 }

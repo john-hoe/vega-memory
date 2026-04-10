@@ -240,6 +240,7 @@ export function initializeDatabase(db: Database.Database): void {
       reviewed_by TEXT,
       reviewed_at TEXT,
       review_comment TEXT,
+      executed_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -721,6 +722,7 @@ export function initializeDatabase(db: Database.Database): void {
     "temporal_precision",
     "TEXT NOT NULL DEFAULT 'unknown' CHECK(temporal_precision IN ('exact', 'day', 'week', 'month', 'quarter', 'unknown'))"
   );
+  ensureColumn(db, "consolidation_approvals", "executed_at", "TEXT");
   ensureNullableWikiSpaceTenant(db);
   ensureTenantScopedWikiPageSlug(db);
   db.exec(`

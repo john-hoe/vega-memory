@@ -211,6 +211,7 @@ interface ApprovalRow {
   reviewed_by: string | null;
   reviewed_at: string | null;
   review_comment: string | null;
+  executed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -512,6 +513,7 @@ const mapApprovalRow = (row: ApprovalRow): ApprovalItem => ({
   reviewed_by: row.reviewed_by,
   reviewed_at: row.reviewed_at,
   review_comment: row.review_comment,
+  executed_at: row.executed_at ?? null,
   created_at: row.created_at,
   updated_at: row.updated_at
 });
@@ -3773,6 +3775,7 @@ export class Repository {
           string | null,
           string | null,
           string | null,
+          string | null,
           string,
           string
         ]
@@ -3780,8 +3783,8 @@ export class Repository {
         `INSERT INTO consolidation_approvals (
           id, run_id, project, tenant_id, candidate_kind, candidate_action, candidate_risk,
           memory_ids, fact_claim_ids, description, evidence, score, status,
-          reviewed_by, reviewed_at, review_comment, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          reviewed_by, reviewed_at, review_comment, executed_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         item.id,
@@ -3800,6 +3803,7 @@ export class Repository {
         item.reviewed_by,
         item.reviewed_at,
         item.review_comment,
+        item.executed_at,
         item.created_at,
         item.created_at
       );
@@ -3882,15 +3886,17 @@ export class Repository {
       reviewed_by: string;
       reviewed_at: string;
       review_comment: string | null;
+      executed_at?: string | null;
     }
   ): void {
     this.db
-      .prepare<[ApprovalStatus, string, string, string | null, string, string]>(
+      .prepare<[ApprovalStatus, string, string, string | null, string | null, string, string]>(
         `UPDATE consolidation_approvals
          SET status = ?,
              reviewed_by = ?,
              reviewed_at = ?,
              review_comment = ?,
+             executed_at = COALESCE(?, executed_at),
              updated_at = ?
          WHERE id = ?`
       )
@@ -3899,6 +3905,7 @@ export class Repository {
         update.reviewed_by,
         update.reviewed_at,
         update.review_comment,
+        update.executed_at ?? null,
         update.reviewed_at,
         id
       );
@@ -3935,6 +3942,26 @@ export class Repository {
   ): number {
     const clauses = ["project = ?", "status = ?"];
     const params: unknown[] = [project, status];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const row = this.db
+      .prepare<unknown[], CountRow>(
+        `SELECT COUNT(*) AS total
+         FROM consolidation_approvals
+         WHERE ${clauses.join(" AND ")}`
+      )
+      .get(...params);
+
+    return row?.total ?? 0;
+  }
+
+  countExecutedApprovalItems(project: string, tenantId?: string | null): number {
+    const clauses = ["project = ?", "executed_at IS NOT NULL"];
+    const params: unknown[] = [project];
 
     if (tenantId !== undefined) {
       clauses.push("tenant_id IS ?");

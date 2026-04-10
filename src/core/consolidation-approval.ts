@@ -178,6 +178,7 @@ export class ConsolidationApprovalService {
       reviewed_by: null,
       reviewed_at: null,
       review_comment: null,
+      executed_at: null,
       created_at: createdAt
     };
 
@@ -248,7 +249,8 @@ export class ConsolidationApprovalService {
           : appendReviewComment(
               decision.comment ?? null,
               formatExecutionFailureComment(execution.error ?? "unknown error")
-            )
+            ),
+        executed_at: execution.success ? new Date().toISOString() : null
       });
     } else {
       this.repository.updateApprovalItem(decision.item_id, {
@@ -316,7 +318,8 @@ export class ConsolidationApprovalService {
       status: execution.success ? "approved" : "execution_failed",
       reviewed_by: retriedBy,
       reviewed_at: retriedAt,
-      review_comment: updatedComment
+      review_comment: updatedComment,
+      executed_at: execution.success ? new Date().toISOString() : null
     });
 
     const updated = this.requireApprovalItem(itemId);
@@ -370,7 +373,8 @@ export class ConsolidationApprovalService {
       status: execution.success ? "approved" : "execution_failed",
       reviewed_by: executedBy,
       reviewed_at: executedAt,
-      review_comment: updatedComment
+      review_comment: updatedComment,
+      executed_at: execution.success ? new Date().toISOString() : null
     });
 
     const updated = this.requireApprovalItem(itemId);

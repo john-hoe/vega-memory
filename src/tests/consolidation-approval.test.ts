@@ -1265,3 +1265,47 @@ test("MCP lists approved_pending_execution items", async () => {
     await server.close();
   }
 });
+
+test("executed_at is set on successful auto_execute", () => {
+  const repository = new Repository(":memory:");
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-1",
+        title: "Auth cache v1",
+        content: "Original auth cache note.",
+        updated_at: "2026-04-09T00:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-2",
+        title: "Auth cache v2",
+        content: "Updated auth cache note.",
+        updated_at: "2026-04-10T00:00:00.000Z"
+      })
+    );
+
+    const item = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({ memory_ids: ["memory-1", "memory-2"] }),
+      "vega"
+    );
+
+    const reviewed = approvalService.review(
+      {
+        item_id: item.id,
+        status: "approved",
+        reviewed_by: "alice"
+      },
+      true
+    );
+
+    assert.ok(reviewed.executed_at !== null, "executed_at should be set after successful auto_execute");
+    assert.equal(reviewed.status, "approved");
+  } finally {
+    repository.close();
+  }
+});
