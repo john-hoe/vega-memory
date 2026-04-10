@@ -52,6 +52,7 @@ export interface VegaFeatureFlags {
   topicRecall: boolean;
   deepRecall: boolean;
   codeGraph: boolean;
+  consolidationReport: boolean;
 }
 
 export interface VegaConfig {
@@ -141,7 +142,8 @@ export const DEFAULT_FEATURE_FLAGS: VegaFeatureFlags = {
   rawArchive: true,
   topicRecall: false,
   deepRecall: true,
-  codeGraph: false
+  codeGraph: false,
+  consolidationReport: false
 };
 
 export const resolveFeatureFlags = (
@@ -175,6 +177,9 @@ export const isDeepRecallAvailable = (config?: Pick<VegaConfig, "features">): bo
 
 export const isCodeGraphEnabled = (config?: Pick<VegaConfig, "features">): boolean =>
   resolveFeatureFlags(config).codeGraph;
+
+export const isConsolidationReportEnabled = (config?: Pick<VegaConfig, "features">): boolean =>
+  resolveFeatureFlags(config).consolidationReport;
 
 const parseNumber = (value: string | undefined, fallback: number): number => {
   if (value === undefined) {
@@ -411,7 +416,11 @@ const parseFeatureFlags = (): VegaFeatureFlags => ({
     DEFAULT_FEATURE_FLAGS.topicRecall
   ),
   deepRecall: parseBoolean(process.env.VEGA_FEATURE_DEEP_RECALL, DEFAULT_FEATURE_FLAGS.deepRecall),
-  codeGraph: parseBoolean(process.env.VEGA_FEATURE_CODE_GRAPH, DEFAULT_FEATURE_FLAGS.codeGraph)
+  codeGraph: parseBoolean(process.env.VEGA_FEATURE_CODE_GRAPH, DEFAULT_FEATURE_FLAGS.codeGraph),
+  consolidationReport: parseBoolean(
+    process.env.VEGA_FEATURE_CONSOLIDATION_REPORT,
+    DEFAULT_FEATURE_FLAGS.consolidationReport
+  )
 });
 
 const getConfigFilePath = (): string => join(homedir(), ".vega", "config.json");

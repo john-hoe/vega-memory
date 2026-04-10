@@ -819,3 +819,62 @@ export interface WhiteLabelSettings {
   footerText: string;
   customCss: string | null;
 }
+
+export type ConsolidationCandidateKind =
+  | "duplicate_merge"
+  | "expired_fact"
+  | "global_promotion"
+  | "wiki_synthesis"
+  | "conflict_aggregation";
+
+export type ConsolidationCandidateAction =
+  | "merge"
+  | "archive"
+  | "mark_expired"
+  | "promote_global"
+  | "synthesize_wiki"
+  | "review_conflict";
+
+export type ConsolidationCandidateRisk = "low" | "medium" | "high";
+
+export interface ConsolidationCandidate {
+  kind: ConsolidationCandidateKind;
+  action: ConsolidationCandidateAction;
+  risk: ConsolidationCandidateRisk;
+  memory_ids: string[];
+  fact_claim_ids: string[];
+  description: string;
+  evidence: string[];
+  score: number;
+}
+
+export interface ConsolidationReportSection {
+  kind: ConsolidationCandidateKind;
+  label: string;
+  candidates: ConsolidationCandidate[];
+}
+
+export interface ConsolidationReportExecutionLog {
+  run_id: string;
+  project: string;
+  tenant_id: string | null;
+  started_at: string;
+  completed_at: string;
+  duration_ms: number;
+  total_candidates: number;
+  candidates_by_kind: Partial<Record<ConsolidationCandidateKind, number>>;
+  errors: string[];
+  mode: "dry_run";
+}
+
+export interface ConsolidationReport {
+  version: 1;
+  execution: ConsolidationReportExecutionLog;
+  sections: ConsolidationReportSection[];
+  summary: {
+    total_candidates: number;
+    low_risk: number;
+    medium_risk: number;
+    high_risk: number;
+  };
+}

@@ -11,6 +11,7 @@ import { registerArchiveCommands } from "./commands/archive.js";
 import { registerAuditCommand } from "./commands/audit.js";
 import { registerBenchmarkCommand } from "./commands/benchmark.js";
 import { registerCompressionCommand } from "./commands/compress.js";
+import { registerConsolidationReportCommand } from "./commands/consolidation-report.js";
 import { registerDiagnoseCommand } from "./commands/diagnose.js";
 import { registerEncryptionCommand } from "./commands/encryption.js";
 import { registerDocGeneratorCommand } from "./commands/generate-docs.js";
@@ -187,6 +188,7 @@ async function main(): Promise<void> {
   registerIngestCommand(program, ingestionService);
   registerDiagnoseCommand(program, repository, config);
   registerMaintenanceCommands(program, repository, compactService, config);
+  registerConsolidationReportCommand(program, repository, config);
   registerImportExportCommands(program, repository, memoryService, config);
   registerNoteCommand(program, ingestionService);
   registerQualityCommand(program, qualityService);

@@ -6,8 +6,14 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { isDeepRecallAvailable, isFactClaimsEnabled, type VegaConfig } from "../config.js";
+import {
+  isConsolidationReportEnabled,
+  isDeepRecallAvailable,
+  isFactClaimsEnabled,
+  type VegaConfig
+} from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
+import { ConsolidationReportEngine } from "../core/consolidation-report-engine.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
 import { GraphReportService } from "../core/graph-report.js";
@@ -28,6 +34,7 @@ import type {
   AuditContext,
   AsOfQueryOptions,
   CompactResult,
+  ConsolidationReport,
   CrossProjectTopicMemory,
   DeepRecallRequest,
   DeepRecallResponse,
@@ -259,6 +266,8 @@ const serializeTunnelView = (result: TunnelView) => ({
   common_pitfalls: result.common_pitfalls,
   common_decisions: result.common_decisions
 });
+
+const serializeConsolidationReport = (report: ConsolidationReport) => report;
 
 const resultCountForSessionStart = (result: SessionStartResult): number =>
   result.active_tasks.length +
@@ -637,6 +646,35 @@ export function createMCPServer({
           resultCount: 1
         };
       })
+  );
+
+  server.tool(
+    "consolidation_report",
+    "Generate a dry-run consolidation report analyzing memory quality and recommending cleanup actions.",
+    {
+      project: z.string().trim().min(1),
+      tenant_id: z.string().trim().min(1).optional()
+    },
+    async (args) => {
+      if (!isConsolidationReportEnabled(config)) {
+        return toTextResult(
+          {
+            error: "consolidation_report feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(repository, "consolidation_report", args, observer, async () => {
+        const engine = new ConsolidationReportEngine(repository, config);
+        const result = engine.generateReport(args.project, args.tenant_id ?? undefined);
+
+        return {
+          result: serializeConsolidationReport(result),
+          resultCount: result.summary.total_candidates
+        };
+      });
+    }
   );
 
   server.tool(
