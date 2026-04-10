@@ -22,3 +22,13 @@ output "load_balancer_dns" {
   description = "Public DNS name of the application load balancer."
   value       = module.app.load_balancer_dns
 }
+
+output "application_url" {
+  description = "Preferred public URL for the application."
+  value       = module.app.application_url
+}
+
+output "tls_warning" {
+  description = "Warning emitted when the application is exposed without TLS."
+  value       = module.app.tls_warning
+}

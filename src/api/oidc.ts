@@ -33,6 +33,7 @@ interface OidcClaims {
   nonce?: unknown;
   tenant_id?: unknown;
   tenant?: unknown;
+  org?: unknown;
   tid?: unknown;
 }
 
@@ -423,16 +424,18 @@ const getSessionCookieOptions = (req: Request, maxAge = DASHBOARD_SESSION_MAX_AG
 });
 
 const getClaimTenantId = (claims: OidcClaims): string | undefined =>
-  normalizeOptionalString(claims.tenant_id) ??
   normalizeOptionalString(claims.tenant) ??
+  normalizeOptionalString(claims.org) ??
+  normalizeOptionalString(claims.tenant_id) ??
   normalizeOptionalString(claims.tid);
 
-const resolveProvisioningTenantId = (
+export const resolveProvisioningTenantId = (
   repository: Repository,
   claims: OidcClaims,
   loginState: OidcLoginState
-): string => {
-  const explicitTenantId = loginState.tenantId ?? getClaimTenantId(claims);
+): string | null => {
+  const explicitTenantId =
+    normalizeOptionalString(loginState.tenantId) ?? getClaimTenantId(claims);
 
   if (explicitTenantId !== undefined) {
     return explicitTenantId;
@@ -443,7 +446,13 @@ const resolveProvisioningTenantId = (
     return tenants[0].id;
   }
 
-  return "default";
+  if (tenants.length > 1) {
+    throw new Error(
+      "Cannot determine tenant for OIDC user in multi-tenant deployment. Provide tenant context via login state or token claim."
+    );
+  }
+
+  return null;
 };
 
 const upsertOidcUser = (
@@ -492,6 +501,13 @@ const upsertOidcUser = (
   }
 
   const tenantId = resolveProvisioningTenantId(repository, claims, loginState);
+
+  if (tenantId === null) {
+    throw new Error(
+      "Cannot provision OIDC user because no tenant exists. Create a tenant first or provide tenant context via login state or token claim."
+    );
+  }
+
   const createdUser = userService.createUser(email, name, "member", tenantId);
 
   userService.updateUser(createdUser.id, {

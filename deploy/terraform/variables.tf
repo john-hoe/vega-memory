@@ -37,6 +37,12 @@ variable "domain_name" {
   type        = string
 }
 
+variable "certificate_arn" {
+  description = "ACM certificate ARN for enabling HTTPS on the application ALB. Leave empty to keep HTTP-only routing."
+  type        = string
+  default     = ""
+}
+
 variable "image_tag" {
   description = "Container image tag to deploy."
   type        = string

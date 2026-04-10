@@ -18,6 +18,12 @@ variable "domain_name" {
   type        = string
 }
 
+variable "certificate_arn" {
+  description = "ACM certificate ARN for enabling HTTPS on the ALB. Leave empty to keep HTTP-only routing."
+  type        = string
+  default     = ""
+}
+
 variable "vpc_id" {
   description = "VPC ID for the application resources."
   type        = string

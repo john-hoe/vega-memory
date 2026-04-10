@@ -65,6 +65,7 @@ module "app" {
   environment        = var.environment
   region             = var.region
   domain_name        = var.domain_name
+  certificate_arn    = var.certificate_arn
   vpc_id             = module.vpc.vpc_id
   public_subnet_ids  = module.vpc.public_subnet_ids
   private_subnet_ids = module.vpc.private_subnet_ids

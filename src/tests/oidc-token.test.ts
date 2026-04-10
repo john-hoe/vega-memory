@@ -6,7 +6,9 @@ import {
 } from "node:crypto";
 import test from "node:test";
 
-import { verifyIdToken } from "../api/oidc.js";
+import { resolveProvisioningTenantId, verifyIdToken } from "../api/oidc.js";
+import { TenantService } from "../core/tenant.js";
+import { Repository } from "../db/repository.js";
 
 const encodeBase64Url = (value: string | Buffer): string =>
   Buffer.from(value)
@@ -223,6 +225,93 @@ test("accepts valid ID token", async () => {
       assert.equal(verified.sub, "user-1");
       assert.equal(verified.email, "alice@example.com");
       assert.equal(verified.name, "Alice");
+    }
+  );
+});
+
+test("resolveProvisioningTenantId prefers tenant from login state", () => {
+  const repository = new Repository(":memory:");
+  const tenantService = new TenantService(repository);
+  const firstTenant = tenantService.createTenant("Alpha", "pro");
+  tenantService.createTenant("Beta", "pro");
+
+  assert.equal(
+    resolveProvisioningTenantId(
+      repository,
+      {
+        tenant: "claim-tenant"
+      },
+      {
+        createdAt: Date.now(),
+        returnTo: "/",
+        nonce: "nonce-login-state",
+        tenantId: firstTenant.id
+      }
+    ),
+    firstTenant.id
+  );
+});
+
+test("resolveProvisioningTenantId uses tenant claim from token", () => {
+  const repository = new Repository(":memory:");
+  const tenantService = new TenantService(repository);
+  tenantService.createTenant("Alpha", "pro");
+  tenantService.createTenant("Beta", "pro");
+
+  assert.equal(
+    resolveProvisioningTenantId(
+      repository,
+      {
+        org: "org-tenant"
+      },
+      {
+        createdAt: Date.now(),
+        returnTo: "/",
+        nonce: "nonce-token-claim"
+      }
+    ),
+    "org-tenant"
+  );
+});
+
+test("resolveProvisioningTenantId auto-resolves the only tenant", () => {
+  const repository = new Repository(":memory:");
+  const tenant = new TenantService(repository).createTenant("Solo", "pro");
+
+  assert.equal(
+    resolveProvisioningTenantId(
+      repository,
+      {},
+      {
+        createdAt: Date.now(),
+        returnTo: "/",
+        nonce: "nonce-single-tenant"
+      }
+    ),
+    tenant.id
+  );
+});
+
+test("resolveProvisioningTenantId rejects multi-tenant provisioning without context", () => {
+  const repository = new Repository(":memory:");
+  const tenantService = new TenantService(repository);
+  tenantService.createTenant("Alpha", "pro");
+  tenantService.createTenant("Beta", "pro");
+
+  assert.throws(
+    () =>
+      resolveProvisioningTenantId(
+        repository,
+        {},
+        {
+          createdAt: Date.now(),
+          returnTo: "/",
+          nonce: "nonce-multi-tenant"
+        }
+      ),
+    {
+      message:
+        "Cannot determine tenant for OIDC user in multi-tenant deployment. Provide tenant context via login state or token claim."
     }
   );
 });
