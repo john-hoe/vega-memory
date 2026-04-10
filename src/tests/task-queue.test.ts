@@ -189,9 +189,12 @@ test("TaskQueue honors delays before processing a job", async () => {
     delayed: 1
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 40));
-
-  const result = await queue.getJob(delayed.id);
+  // CI runners can be slow — poll until completed instead of fixed sleep
+  let result = await queue.getJob(delayed.id);
+  for (let i = 0; i < 20 && result?.status !== "completed"; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    result = await queue.getJob(delayed.id);
+  }
 
   assert.equal(result?.status, "completed");
   assert.equal(result?.result, "m-delay");
