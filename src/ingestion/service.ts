@@ -1,4 +1,5 @@
 import type { VegaConfig } from "../config.js";
+import { buildSourceContext } from "../core/device.js";
 import type { StoreParams, StoreResult } from "../core/types.js";
 import { PageManager } from "../wiki/page-manager.js";
 import { SynthesisEngine } from "../wiki/synthesis.js";
@@ -133,7 +134,8 @@ export class IngestionService {
       project: project ?? "global",
       title: normalizeTitle(topic),
       tags: [...new Set([topic, ...(tags ?? [])])],
-      source: "explicit"
+      source: "explicit",
+      sourceContext: buildSourceContext("user", "cli")
     });
 
     return stored.id;

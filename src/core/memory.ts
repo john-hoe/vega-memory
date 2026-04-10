@@ -395,7 +395,8 @@ export class MemoryService {
           status: "active",
           verified: "conflict",
           scope,
-          accessed_projects: [params.project]
+          accessed_projects: [params.project],
+          source_context: params.sourceContext ?? null
         },
         auditContext
       );
@@ -465,7 +466,8 @@ export class MemoryService {
           updated_at: timestamp,
           accessed_at: timestamp,
           verified,
-          accessed_projects: unique([...matched.memory.accessed_projects, params.project])
+          accessed_projects: unique([...matched.memory.accessed_projects, params.project]),
+          source_context: matched.memory.source_context ?? params.sourceContext ?? null
         },
         { auditContext }
       );
@@ -528,7 +530,8 @@ export class MemoryService {
         status: "active",
         verified,
         scope,
-        accessed_projects: [params.project]
+        accessed_projects: [params.project],
+        source_context: params.sourceContext ?? null
       },
       auditContext
     );

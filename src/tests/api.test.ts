@@ -233,16 +233,27 @@ test("POST /api/store creates a memory and GET /api/list returns it", async () =
   try {
     const storeResponse = await harness.request("/api/store", {
       method: "POST",
+      headers: {
+        "user-agent": "vega-api-test/1.0"
+      },
       body: JSON.stringify({
         content: "Use SQLite for local memory storage",
         type: "decision",
-        project: "vega"
+        project: "vega",
+        source_actor: "codex"
       })
     });
     const stored = await readJson<{
       id: string;
       action: string;
       title: string;
+      memory: {
+        source_context: {
+          actor: string;
+          channel: string;
+          client_info: string;
+        } | null;
+      } | null;
     }>(storeResponse);
     const listResponse = await harness.request("/api/list?project=vega&limit=10");
     const listed = await readJson<
@@ -250,15 +261,23 @@ test("POST /api/store creates a memory and GET /api/list returns it", async () =
         id: string;
         content: string;
         project: string;
+        source_context: {
+          actor: string;
+          channel: string;
+        } | null;
       }>
     >(listResponse);
 
     assert.equal(storeResponse.status, 200);
     assert.equal(stored.action, "created");
+    assert.equal(stored.memory?.source_context?.actor, "codex");
+    assert.equal(stored.memory?.source_context?.channel, "http");
+    assert.equal(stored.memory?.source_context?.client_info, "vega-api-test/1.0");
     assert.equal(listResponse.status, 200);
     assert.equal(listed.length, 1);
     assert.equal(listed[0]?.id, stored.id);
     assert.match(listed[0]?.content ?? "", /SQLite/);
+    assert.equal(listed[0]?.source_context?.channel, "http");
   } finally {
     await harness.cleanup();
   }

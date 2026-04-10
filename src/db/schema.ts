@@ -148,7 +148,8 @@ export function initializeDatabase(db: Database.Database): void {
       status TEXT DEFAULT 'active',
       verified TEXT DEFAULT 'unverified',
       scope TEXT DEFAULT 'project',
-      accessed_projects TEXT DEFAULT '[]'
+      accessed_projects TEXT DEFAULT '[]',
+      source_context TEXT
     );
 
     CREATE TABLE IF NOT EXISTS memory_versions (
@@ -683,6 +684,7 @@ export function initializeDatabase(db: Database.Database): void {
 
   ensureColumn(db, "memories", "tenant_id", "TEXT");
   ensureColumn(db, "memories", "summary", "TEXT");
+  ensureColumn(db, "memories", "source_context", "TEXT");
   ensureColumn(db, "entities", "metadata", "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn(
     db,

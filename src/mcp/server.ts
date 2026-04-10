@@ -18,6 +18,7 @@ import { ConsolidationDashboardService } from "../core/consolidation-dashboard.j
 import { registerDefaultConsolidationDetectors } from "../core/consolidation-defaults.js";
 import { ConsolidationReportEngine } from "../core/consolidation-report-engine.js";
 import { ConsolidationScheduler } from "../core/consolidation-scheduler.js";
+import { buildSourceContext } from "../core/device.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
 import { GraphReportService } from "../core/graph-report.js";
@@ -122,7 +123,8 @@ const serializeMemory = (memory: Memory) => ({
   status: memory.status,
   verified: memory.verified,
   scope: memory.scope,
-  accessed_projects: memory.accessed_projects
+  accessed_projects: memory.accessed_projects,
+  source_context: memory.source_context ?? null
 });
 
 const serializeSessionStartResult = (result: SessionStartResult) => ({
@@ -957,18 +959,28 @@ export function createMCPServer({
       tags: z.array(z.string().trim().min(1)).optional(),
       importance: z.number().min(0).max(1).optional(),
       source: z.enum(MEMORY_SOURCES).default("auto"),
-      preserve_raw: z.boolean().optional()
+      preserve_raw: z.boolean().optional(),
+      source_actor: z.string().trim().min(1).optional(),
+      source_client: z.string().trim().min(1).optional()
     },
     async (args) =>
       runTool(repository, "memory_store", args, observer, async () => {
+        const { source_actor, source_client, ...storeArgs } = args;
         const result = await memoryService.store({
-          ...args,
+          ...storeArgs,
           project: args.project ?? "global",
-          auditContext: MCP_AUDIT_CONTEXT
+          auditContext: MCP_AUDIT_CONTEXT,
+          sourceContext: buildSourceContext(source_actor ?? "unknown", "mcp", {
+            client_info: source_client
+          })
         });
+        const memory = repository.getMemory(result.id);
 
         return {
-          result,
+          result: {
+            ...result,
+            memory: memory === null ? null : serializeMemory(memory)
+          },
           resultCount: 1
         };
       })
@@ -1013,6 +1025,7 @@ export function createMCPServer({
             verified: entry.memory.verified,
             scope: entry.memory.scope,
             accessed_projects: entry.memory.accessed_projects,
+            source_context: entry.memory.source_context ?? null,
             similarity: entry.similarity,
             finalScore: entry.finalScore
           })),

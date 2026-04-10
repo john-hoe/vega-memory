@@ -13,6 +13,7 @@ import { Repository } from "../db/repository.js";
 import { isOllamaAvailable } from "../embedding/ollama.js";
 import { PageManager } from "../wiki/page-manager.js";
 import { ArchiveService } from "./archive-service.js";
+import { buildSourceContext } from "./device.js";
 import { ExtractionService } from "./extraction.js";
 import { FactClaimService } from "./fact-claim-service.js";
 import { GraphReportService } from "./graph-report.js";
@@ -505,6 +506,7 @@ export class SessionService {
     const extracted = ollamaAvailable
       ? await this.extractWithThreshold(summary, project)
       : [];
+    const sourceContext = buildSourceContext("session", "internal");
 
     if (extracted.length > 0) {
       for (const candidate of extracted) {
@@ -515,7 +517,8 @@ export class SessionService {
           title: candidate.title,
           tags: candidate.tags,
           source: "auto",
-          auditContext
+          auditContext,
+          sourceContext
         });
 
         if (stored.id && (stored.action === "created" || stored.action === "conflict")) {
@@ -538,7 +541,8 @@ export class SessionService {
             type,
             project,
             source: "auto",
-            auditContext
+            auditContext,
+            sourceContext
           });
 
           if (stored.id && (stored.action === "created" || stored.action === "conflict")) {

@@ -32,6 +32,7 @@ import type {
   RelationType,
   Session,
   SessionStartMode,
+  MemorySourceContext,
   Topic,
   TopicRecallOptions
 } from "../core/types.js";
@@ -62,6 +63,7 @@ interface MemoryRow {
   verified: Memory["verified"];
   scope: Memory["scope"];
   accessed_projects: string;
+  source_context: string | null;
 }
 
 interface AuditRow {
@@ -415,8 +417,52 @@ function parseJsonObject(value: string): Record<string, unknown> {
     : {};
 }
 
+function parseOptionalJsonObject(value: string | null): Record<string, unknown> | null {
+  if (value === null) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function serializeJsonArray(value: string[]): string {
   return JSON.stringify(value);
+}
+
+function serializeOptionalJsonObject(value: object | null | undefined): string | null {
+  return value === null || value === undefined ? null : JSON.stringify(value);
+}
+
+function mapMemorySourceContext(value: string | null): MemorySourceContext | null {
+  const parsed = parseOptionalJsonObject(value);
+
+  if (
+    parsed === null ||
+    typeof parsed.actor !== "string" ||
+    typeof parsed.channel !== "string" ||
+    typeof parsed.device_id !== "string" ||
+    typeof parsed.device_name !== "string" ||
+    typeof parsed.platform !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    actor: parsed.actor,
+    channel: parsed.channel,
+    device_id: parsed.device_id,
+    device_name: parsed.device_name,
+    platform: parsed.platform,
+    ...(typeof parsed.session_id === "string" ? { session_id: parsed.session_id } : {}),
+    ...(typeof parsed.client_info === "string" ? { client_info: parsed.client_info } : {})
+  };
 }
 
 function serializeJsonObject(value: Record<string, unknown>): string {
@@ -475,7 +521,8 @@ function mapMemory(row: MemoryRow): Memory {
     ...row,
     summary: row.summary ?? null,
     tags: parseJsonArray(row.tags),
-    accessed_projects: parseJsonArray(row.accessed_projects)
+    accessed_projects: parseJsonArray(row.accessed_projects),
+    source_context: mapMemorySourceContext(row.source_context)
   };
 }
 
@@ -814,13 +861,15 @@ export class Repository {
         Memory["status"],
         Memory["verified"],
         Memory["scope"],
-        string
+        string,
+        string | null
       ]
     >(
       `INSERT INTO memories (
         id, tenant_id, type, project, title, content, summary, embedding, importance, source,
-        tags, created_at, updated_at, accessed_at, status, verified, scope, accessed_projects
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        tags, created_at, updated_at, accessed_at, status, verified, scope, accessed_projects,
+        source_context
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertFts = this.db.prepare<[number, string, string, string]>(
       "INSERT INTO memories_fts(rowid, title, content, tags) VALUES (?, ?, ?, ?)"
@@ -846,7 +895,8 @@ export class Repository {
         memory.status,
         memory.verified,
         memory.scope,
-        serializeJsonArray(memory.accessed_projects)
+        serializeJsonArray(memory.accessed_projects),
+        serializeOptionalJsonObject(memory.source_context ?? null)
       );
       const row = getRowId.get(memory.id);
 
@@ -948,13 +998,14 @@ export class Repository {
         Memory["verified"],
         Memory["scope"],
         string,
+        string | null,
         string
       ]
     >(
       `UPDATE memories
        SET type = ?, tenant_id = ?, project = ?, title = ?, content = ?, summary = ?, embedding = ?, importance = ?,
            source = ?, tags = ?, updated_at = ?, accessed_at = ?, access_count = ?,
-           status = ?, verified = ?, scope = ?, accessed_projects = ?
+           status = ?, verified = ?, scope = ?, accessed_projects = ?, source_context = ?
        WHERE id = ?`
     );
     const deleteFts = this.db.prepare<[number, string, string, string]>(
@@ -987,6 +1038,7 @@ export class Repository {
         nextMemory.verified,
         nextMemory.scope,
         serializeJsonArray(nextMemory.accessed_projects),
+        serializeOptionalJsonObject(nextMemory.source_context ?? null),
         id
       );
 

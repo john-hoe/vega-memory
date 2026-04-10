@@ -77,6 +77,7 @@ const EXPECTED_RECALL_KEYS = [
   "verified",
   "scope",
   "accessed_projects",
+  "source_context",
   "similarity",
   "finalScore"
 ];

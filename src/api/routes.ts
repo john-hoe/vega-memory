@@ -10,6 +10,7 @@ import { AnalyticsService } from "../core/analytics.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { AuditService, buildAuditFiltersForQuery } from "../core/audit-service.js";
 import { CompactService } from "../core/compact.js";
+import { buildSourceContext } from "../core/device.js";
 import { getHealthReport } from "../core/health.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
@@ -102,7 +103,8 @@ const serializeMemory = (memory: Memory) => ({
   status: memory.status,
   verified: memory.verified,
   scope: memory.scope,
-  accessed_projects: memory.accessed_projects
+  accessed_projects: memory.accessed_projects,
+  source_context: memory.source_context ?? null
 });
 
 const serializeAuditEntry = (entry: AuditEntry) => ({
@@ -767,6 +769,7 @@ export function createRouter(services: APIRouterServices): Router {
     handleRoute(async (req, res) => {
       const body = requireBody(req.body);
       const tenantId = getRequestTenantId(res);
+      const userAgentHeader = req.headers["user-agent"] as string | string[] | undefined;
       const result = await services.memoryService.store({
         content: requireString(body.content, "content"),
         type: parseMemoryType(body.type, "type") ?? (() => {
@@ -785,10 +788,26 @@ export function createRouter(services: APIRouterServices): Router {
           body.preserve_raw === undefined
             ? undefined
             : requireBoolean(body.preserve_raw, "preserve_raw"),
-        auditContext: getRequestAuditContext(req, res)
+        auditContext: getRequestAuditContext(req, res),
+        sourceContext: buildSourceContext(
+          parseSingleValue(body.source_actor, "source_actor") ?? "unknown",
+          "http",
+          {
+            client_info:
+              typeof userAgentHeader === "string"
+                ? userAgentHeader
+                : Array.isArray(userAgentHeader)
+                  ? userAgentHeader.join(" ")
+                  : undefined
+          }
+        )
       });
+      const memory = services.repository.getMemory(result.id);
 
-      res.status(200).json(result);
+      res.status(200).json({
+        ...result,
+        memory: memory === null ? null : serializeMemory(memory)
+      });
     })
   );
 

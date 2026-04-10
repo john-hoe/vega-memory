@@ -1,4 +1,5 @@
 import type { VegaConfig } from "../config.js";
+import { buildSourceContext } from "../core/device.js";
 import type { MemoryType, StoreParams, StoreResult } from "../core/types.js";
 
 export interface DistilledMemory {
@@ -166,7 +167,8 @@ export class ContentDistiller {
         project,
         title: memory.title,
         tags: memory.tags,
-        source: "auto"
+        source: "auto",
+        sourceContext: buildSourceContext("distiller", "internal")
       });
       ids.push(stored.id);
     }

@@ -1,5 +1,6 @@
 import { Command, InvalidArgumentError, Option } from "commander";
 
+import { buildSourceContext } from "../../core/device.js";
 import { MemoryService } from "../../core/memory.js";
 import type { AuditContext, MemorySource, MemoryType } from "../../core/types.js";
 
@@ -61,7 +62,8 @@ export function registerStoreCommand(program: Command, memoryService: MemoryServ
           tags: options.tags,
           importance: options.importance,
           source: options.source,
-          auditContext: CLI_AUDIT_CONTEXT
+          auditContext: CLI_AUDIT_CONTEXT,
+          sourceContext: buildSourceContext("user", "cli")
         });
 
         console.log(`${result.action} ${result.id} ${JSON.stringify(result.title)}`);

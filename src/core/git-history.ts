@@ -3,6 +3,7 @@ import { basename, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { Memory, MemoryType } from "./types.js";
+import { buildSourceContext } from "./device.js";
 import { MemoryService } from "./memory.js";
 import { Repository } from "../db/repository.js";
 
@@ -67,7 +68,8 @@ export class GitHistoryService {
       project,
       tags: ["git", project, hash.slice(0, 7)],
       source: "explicit",
-      skipSimilarityCheck: true
+      skipSimilarityCheck: true,
+      sourceContext: buildSourceContext("git", "internal")
     });
 
     return true;

@@ -7,6 +7,7 @@ import { imageSize } from "image-size";
 import { createWorker } from "tesseract.js";
 
 import type { Memory } from "./types.js";
+import { buildSourceContext } from "./device.js";
 import { MemoryService } from "./memory.js";
 import { Repository } from "../db/repository.js";
 
@@ -270,7 +271,8 @@ export class ImageMemoryService {
       tags,
       importance: SCREENSHOT_MEMORY_IMPORTANCE,
       source: "explicit",
-      skipSimilarityCheck: true
+      skipSimilarityCheck: true,
+      sourceContext: buildSourceContext("image", "internal")
     });
 
     this.repository.setMetadata(metadataKey, result.id);

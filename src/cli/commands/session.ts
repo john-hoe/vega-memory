@@ -35,7 +35,8 @@ const serializeMemory = (memory: Memory) => ({
   status: memory.status,
   verified: memory.verified,
   scope: memory.scope,
-  accessed_projects: memory.accessed_projects
+  accessed_projects: memory.accessed_projects,
+  source_context: memory.source_context ?? null
 });
 
 const serializeSessionStart = (result: SessionStartResult) => ({

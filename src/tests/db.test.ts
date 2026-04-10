@@ -44,6 +44,7 @@ function createMemory(overrides: Partial<Memory> = {}): Memory {
     verified: "unverified",
     scope: "project",
     accessed_projects: ["vega"],
+    source_context: null,
     ...rest,
     summary
   };
@@ -264,6 +265,26 @@ test("fact claim repository supports as_of filters and legal transitions", () =>
       () => repository.updateFactClaimStatus("fact-expired", "active", undefined, undefined, "user"),
       /Illegal fact claim transition/
     );
+  } finally {
+    repository.close();
+  }
+});
+
+test("existing memories without source_context return null", () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "legacy-memory",
+        source_context: undefined
+      })
+    );
+
+    const stored = repository.getMemory("legacy-memory");
+
+    assert.ok(stored);
+    assert.equal(stored.source_context, null);
   } finally {
     repository.close();
   }

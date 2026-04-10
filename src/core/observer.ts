@@ -2,6 +2,7 @@ import { basename } from "node:path";
 
 import type { VegaConfig } from "../config.js";
 import type { StoreResult } from "./types.js";
+import { buildSourceContext } from "./device.js";
 import { MemoryService } from "./memory.js";
 
 const SHELL_TOOL_PATTERN = /(^|[_\s-])(shell|bash|zsh|terminal|exec)([_\s-]|$)/i;
@@ -121,7 +122,8 @@ export class ObserverService {
       title: `Shell failure: ${truncate(command, 80)}`,
       tags: ["shell", "error", "failure"],
       source: "auto",
-      skipSimilarityCheck: true
+      skipSimilarityCheck: true,
+      sourceContext: buildSourceContext("observer", "internal")
     });
 
     return this.toStoredId(result);
@@ -139,7 +141,8 @@ export class ObserverService {
       project,
       title: truncate(errorSnippet, 80),
       tags: ["error-pattern"],
-      source: "auto"
+      source: "auto",
+      sourceContext: buildSourceContext("observer", "internal")
     });
 
     return this.toStoredId(result);
@@ -168,7 +171,8 @@ export class ObserverService {
       title: `File update: ${basename(filePath)}`,
       tags: ["file", "write", basename(filePath).toLowerCase()],
       source: "auto",
-      skipSimilarityCheck: true
+      skipSimilarityCheck: true,
+      sourceContext: buildSourceContext("observer", "internal")
     });
 
     return this.toStoredId(result);

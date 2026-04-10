@@ -60,6 +60,13 @@ const createTag = (text) => {
   return tag;
 };
 
+const createSourceBadge = (text, subtle = false) => {
+  const badge = document.createElement("span");
+  badge.className = subtle ? "source-badge subtle" : "source-badge";
+  badge.textContent = text;
+  return badge;
+};
+
 const resetDetail = () => {
   elements.detailBody.replaceChildren();
   appendTextElement(
@@ -170,13 +177,16 @@ const renderDetail = (memory) => {
   }
 
   const contentSection = document.createElement("div");
+  contentSection.className = "detail-section";
+  appendTextElement(contentSection, "h4", "Content");
   const content = document.createElement("div");
   content.className = "detail-content";
   content.textContent = memory.content || "";
   contentSection.appendChild(content);
 
   const tagsSection = document.createElement("div");
-  appendTextElement(tagsSection, "div", "Tags", "label");
+  tagsSection.className = "detail-section";
+  appendTextElement(tagsSection, "h4", "Tags");
   const tagList = document.createElement("div");
   tagList.className = "tag-list";
   const tags = Array.isArray(memory.tags) && memory.tags.length > 0 ? memory.tags : ["none"];
@@ -185,7 +195,64 @@ const renderDetail = (memory) => {
   }
   tagsSection.appendChild(tagList);
 
-  elements.detailBody.replaceChildren(titleBlock, metadata, contentSection, tagsSection);
+  const sourceSection = document.createElement("div");
+  sourceSection.className = "detail-section";
+  sourceSection.id = "source-context";
+
+  if (memory.source_context) {
+    appendTextElement(sourceSection, "h4", "Source");
+
+    const sourceInfo = document.createElement("div");
+    sourceInfo.className = "source-info";
+
+    const actorLabel = document.createElement("span");
+    actorLabel.className = "label";
+    actorLabel.textContent = "Actor:";
+    const actorValue = document.createElement("span");
+    actorValue.id = "source-actor";
+    actorValue.textContent = memory.source_context.actor;
+
+    const channelLabel = document.createElement("span");
+    channelLabel.className = "label";
+    channelLabel.textContent = "Channel:";
+    const channelValue = document.createElement("span");
+    channelValue.id = "source-channel";
+    channelValue.textContent = memory.source_context.channel;
+
+    const deviceLabel = document.createElement("span");
+    deviceLabel.className = "label";
+    deviceLabel.textContent = "Device:";
+    const deviceValue = document.createElement("span");
+    deviceValue.id = "source-device";
+    deviceValue.textContent = `${memory.source_context.device_name} (${memory.source_context.device_id?.slice(0, 8) ?? "unknown"})`;
+
+    const platformLabel = document.createElement("span");
+    platformLabel.className = "label";
+    platformLabel.textContent = "Platform:";
+    const platformValue = document.createElement("span");
+    platformValue.id = "source-platform";
+    platformValue.textContent = memory.source_context.platform;
+
+    sourceInfo.append(
+      actorLabel,
+      actorValue,
+      document.createElement("br"),
+      channelLabel,
+      channelValue,
+      document.createElement("br"),
+      deviceLabel,
+      deviceValue,
+      document.createElement("br"),
+      platformLabel,
+      platformValue
+    );
+
+    sourceSection.appendChild(sourceInfo);
+  } else {
+    sourceSection.style.display = "none";
+  }
+
+  elements.detailBody.replaceChildren(titleBlock, metadata, contentSection, tagsSection, sourceSection);
 };
 
 const selectMemory = (memoryId) => {
@@ -209,6 +276,24 @@ const buildEmptyTableRow = (message) => {
 const buildCell = (text) => {
   const cell = document.createElement("td");
   cell.textContent = text;
+  return cell;
+};
+
+const buildTitleCell = (memory) => {
+  const cell = document.createElement("td");
+  const wrapper = document.createElement("div");
+  wrapper.className = "memory-title-cell";
+  appendTextElement(wrapper, "div", memory.title || "Untitled Memory", "memory-title");
+
+  if (memory.source_context) {
+    const meta = document.createElement("div");
+    meta.className = "memory-title-meta";
+    meta.appendChild(createSourceBadge(memory.source_context.channel));
+    meta.appendChild(createSourceBadge(memory.source_context.device_name, true));
+    wrapper.appendChild(meta);
+  }
+
+  cell.appendChild(wrapper);
   return cell;
 };
 
@@ -237,7 +322,7 @@ const renderTable = () => {
       row.classList.add("selected");
     }
 
-    row.appendChild(buildCell(memory.title || "Untitled Memory"));
+    row.appendChild(buildTitleCell(memory));
     row.appendChild(buildTagCell(memory.type || "-", "type-tag"));
     row.appendChild(buildTagCell(memory.project || "-", "project-tag"));
     row.appendChild(

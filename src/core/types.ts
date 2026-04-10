@@ -92,6 +92,16 @@ export type TopicKind = "topic" | "room";
 
 export type TopicState = "active" | "superseded";
 
+export interface MemorySourceContext {
+  actor: string;
+  channel: string;
+  device_id: string;
+  device_name: string;
+  platform: string;
+  session_id?: string;
+  client_info?: string;
+}
+
 export interface Memory {
   id: string;
   tenant_id?: string | null;
@@ -112,6 +122,7 @@ export interface Memory {
   verified: VerifiedStatus;
   scope: MemoryScope;
   accessed_projects: string[];
+  source_context?: MemorySourceContext | null;
 }
 
 export interface FactClaim {
@@ -577,6 +588,7 @@ export interface StoreParams {
   preserve_raw?: boolean;
   skipSimilarityCheck?: boolean;
   auditContext?: AuditContext;
+  sourceContext?: MemorySourceContext | null;
 }
 
 export interface StoreResult {

@@ -4,6 +4,7 @@ import { extname, resolve } from "node:path";
 import { Command, InvalidArgumentError, Option } from "commander";
 
 import type { VegaConfig } from "../../config.js";
+import { buildSourceContext } from "../../core/device.js";
 import { ARCHIVED_EXPORT_METADATA_KEY } from "../../core/lifecycle.js";
 import { MemoryService } from "../../core/memory.js";
 import type {
@@ -542,7 +543,8 @@ export function registerImportExportCommands(
             tags: entry.tags,
             importance: entry.importance,
             source: entry.source,
-            auditContext: CLI_AUDIT_CONTEXT
+            auditContext: CLI_AUDIT_CONTEXT,
+            sourceContext: buildSourceContext("user", "cli")
           });
           continue;
         }

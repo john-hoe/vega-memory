@@ -8,6 +8,7 @@ import { createAdapterTokenReport, buildAdapterTokenReportMarkdown } from "../ad
 import { createAPIServer } from "../api/server.js";
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
+import { resetDeviceIdentityCacheForTests } from "../core/device.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
@@ -216,10 +217,13 @@ test("Claude Code MCP workflow supports L1 session_start, recall, store, and ses
     config
   });
   const restoreFetch = installEmbeddingMock();
+  const previousVegaHome = process.env.VEGA_HOME;
 
   mkdirSync(workingDirectory, { recursive: true });
 
   try {
+    process.env.VEGA_HOME = join(tempDir, ".vega");
+    resetDeviceIdentityCacheForTests();
     repository.createMemory(
       createStoredMemory("shared", {
         id: "pref-claude",
@@ -319,20 +323,35 @@ test("Claude Code MCP workflow supports L1 session_start, recall, store, and ses
 
     assert.equal(recall.some((memory) => memory.id === "recall-claude"), true);
 
-    const stored = parseToolPayload<{ id: string; action: string }>(
+    const stored = parseToolPayload<{
+      id: string;
+      action: string;
+      memory: {
+        source_context: {
+          actor: string;
+          channel: string;
+          client_info: string;
+        } | null;
+      } | null;
+    }>(
       await tools.memory_store.handler(
         {
           content: "Validated the Claude Code adapter workflow.",
           type: "task_state",
           project,
           title: "VM2-013 Claude workflow",
-          source: "explicit"
+          source: "explicit",
+          source_actor: "codex",
+          source_client: "adapter-integration-test/1.0"
         },
         {}
       )
     );
 
     assert.equal(stored.action, "created");
+    assert.equal(stored.memory?.source_context?.actor, "codex");
+    assert.equal(stored.memory?.source_context?.channel, "mcp");
+    assert.equal(stored.memory?.source_context?.client_info, "adapter-integration-test/1.0");
     assert.ok(repository.getMemory(stored.id));
 
     await tools.session_end.handler(
@@ -352,6 +371,8 @@ test("Claude Code MCP workflow supports L1 session_start, recall, store, and ses
     assert.equal(sessionCount, 1);
     assert.equal(repository.getMemory("task-claude")?.importance, 0.2);
   } finally {
+    resetDeviceIdentityCacheForTests();
+    process.env.VEGA_HOME = previousVegaHome;
     restoreFetch();
     await server.close();
     repository.close();

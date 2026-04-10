@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { basename, dirname, extname, relative, resolve } from "node:path";
 
 import type { CodeSymbol, GraphDirectoryStatus, Memory, StructuredGraph } from "./types.js";
+import { buildSourceContext } from "./device.js";
 import { GraphSidecarService } from "./graph-sidecar.js";
 import { MemoryService } from "./memory.js";
 import { SidecarReconciler } from "./sidecar-reconciler.js";
@@ -430,7 +431,8 @@ export class CodeIndexService {
           tags,
           importance: INDEXED_MEMORY_IMPORTANCE,
           source: "explicit",
-          skipSimilarityCheck: true
+          skipSimilarityCheck: true,
+          sourceContext: buildSourceContext("indexer", "internal")
         });
         const created = this.repository.getMemory(result.id);
         if (created) {

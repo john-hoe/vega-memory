@@ -1,4 +1,5 @@
 import type { Memory } from "../core/types.js";
+import { buildSourceContext } from "../core/device.js";
 import { MemoryService } from "../core/memory.js";
 import { Repository } from "../db/repository.js";
 import type { InsightCandidate } from "./patterns.js";
@@ -108,7 +109,8 @@ export class InsightGenerator {
         type: "insight",
         project: candidate.project,
         tags: candidate.tags,
-        source: "auto"
+        source: "auto",
+        sourceContext: buildSourceContext("insights", "internal")
       });
       const stored = this.repository.getMemory(result.id);
 
