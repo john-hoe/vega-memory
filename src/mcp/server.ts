@@ -14,6 +14,9 @@ import {
 } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { ConsolidationReportEngine } from "../core/consolidation-report-engine.js";
+import { DuplicateDetector } from "../core/detectors/duplicate-detector.js";
+import { ExpiredFactDetector } from "../core/detectors/expired-fact-detector.js";
+import { GlobalPromotionDetector } from "../core/detectors/global-promotion-detector.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
 import { GraphReportService } from "../core/graph-report.js";
@@ -667,6 +670,9 @@ export function createMCPServer({
 
       return runTool(repository, "consolidation_report", args, observer, async () => {
         const engine = new ConsolidationReportEngine(repository, config);
+        engine.registerDetector(new DuplicateDetector());
+        engine.registerDetector(new ExpiredFactDetector());
+        engine.registerDetector(new GlobalPromotionDetector());
         const result = engine.generateReport(args.project, args.tenant_id ?? undefined);
 
         return {

@@ -1,6 +1,9 @@
 import { Command } from "commander";
 
 import { isConsolidationReportEnabled, type VegaConfig } from "../../config.js";
+import { DuplicateDetector } from "../../core/detectors/duplicate-detector.js";
+import { ExpiredFactDetector } from "../../core/detectors/expired-fact-detector.js";
+import { GlobalPromotionDetector } from "../../core/detectors/global-promotion-detector.js";
 import { ConsolidationReportEngine } from "../../core/consolidation-report-engine.js";
 import type {
   ConsolidationCandidateKind,
@@ -90,6 +93,9 @@ export function registerConsolidationReportCommand(
       }
 
       const engine = new ConsolidationReportEngine(repository, config);
+      engine.registerDetector(new DuplicateDetector());
+      engine.registerDetector(new ExpiredFactDetector());
+      engine.registerDetector(new GlobalPromotionDetector());
       const report = engine.generateReport(options.project, options.tenant);
 
       if (options.json) {
