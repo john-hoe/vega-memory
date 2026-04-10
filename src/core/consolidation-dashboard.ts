@@ -141,7 +141,8 @@ export class ConsolidationDashboardService {
         total_reports_generated: runs.length,
         total_candidates_found: runs.reduce((sum, run) => sum + run.total_candidates, 0),
         total_candidates_resolved:
-          runs.reduce((sum, run) => sum + run.actions_executed, 0) + approvedApprovalCount
+          runs.reduce((sum, run) => sum + run.actions_executed, 0) +
+          this.countExecutedApprovals(project, tenantId)
       },
       // Future enhancements require historical session/cross-run aggregation that is not stored yet:
       // session_start(light) token trend, deep_recall trigger rate, wiki synthesis hit rate,
@@ -151,6 +152,7 @@ export class ConsolidationDashboardService {
         approved_total: approvedApprovalCount,
         rejected_total: rejectedApprovalCount
       },
+      approved_pending_action: approvedApprovalCount - this.countExecutedApprovals(project, tenantId),
       health_indicators: {
         duplicate_density:
           activeMemories.length === 0
@@ -162,5 +164,25 @@ export class ConsolidationDashboardService {
         global_promotion_pending: promotionCandidates.length
       }
     };
+  }
+
+  /**
+   * Count approved approval items that were actually executed.
+   * An item is considered executed if its review_comment contains execution
+   * traces from auto_execute, execute(), or retry() success paths.
+   */
+  private countExecutedApprovals(
+    project: string,
+    tenantId?: string | null
+  ): number {
+    const approved = this.repository.listApprovalItems(project, "approved", tenantId);
+
+    return approved.filter(
+      (item) =>
+        item.review_comment !== null &&
+        (item.review_comment.includes("[retried: success") ||
+          item.review_comment.includes("approved_pending_execution") ||
+          item.review_comment.includes("[executed:"))
+    ).length;
   }
 }

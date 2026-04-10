@@ -46,16 +46,11 @@ Common status codes:
 - `501` feature is disabled via configuration (e.g., `deep_recall` when `features.deepRecall=false`)
 - `500` internal server error
 
-Feature-gated endpoints return a structured error payload when disabled:
+Feature-gated endpoints return an error when disabled:
 
 ```json
 {
-  "error": {
-    "status": 501,
-    "code": "DEEP_RECALL_NOT_IMPLEMENTED",
-    "message": "deep_recall is reserved for VM2-006 and is not implemented yet",
-    "retryable": false
-  }
+  "error": "deep_recall feature is disabled"
 }
 ```
 

@@ -992,6 +992,7 @@ export interface ConsolidationDashboardMetrics {
     approved_total: number;
     rejected_total: number;
   };
+  approved_pending_action: number;
   health_indicators: {
     duplicate_density: number;
     stale_fact_ratio: number;
