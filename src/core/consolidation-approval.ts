@@ -37,11 +37,20 @@ const appendReviewComment = (
 const formatExecutionFailureComment = (error: string): string =>
   `[execution_failed: ${error}]`;
 
-const formatRetryFailureComment = (
-  retriedBy: string,
-  retriedAt: string,
-  error: string
-): string => `[retry_execution_failed by ${retriedBy} at ${retriedAt}: ${error}]`;
+const formatRetrySuccessComment = (retriedBy: string): string =>
+  `[retried: success by ${retriedBy}]`;
+
+const formatRetryFailureComment = (error: string): string =>
+  `[retry_failed: ${error}]`;
+
+const clearExecutionFailureComment = (comment: string | null): string | null => {
+  if (comment === null) {
+    return null;
+  }
+
+  const cleaned = comment.replace(/\s*\[execution_failed:.*?\]/g, "").trim();
+  return cleaned.length === 0 ? null : cleaned;
+};
 
 const mergeContent = (newer: string, older: string): string => {
   const recent = newer.trim();
@@ -289,14 +298,13 @@ export class ConsolidationApprovalService {
 
     const execution = this.executeApproved(this.requireApprovalItem(itemId));
     const updatedComment = execution.success
-      ? existing.review_comment
+      ? appendReviewComment(
+          clearExecutionFailureComment(existing.review_comment),
+          formatRetrySuccessComment(retriedBy)
+        )
       : appendReviewComment(
           existing.review_comment,
-          formatRetryFailureComment(
-            retriedBy,
-            retriedAt,
-            execution.error ?? "unknown error"
-          )
+          formatRetryFailureComment(execution.error ?? "unknown error")
         );
 
     this.repository.updateApprovalItem(itemId, {
@@ -342,6 +350,27 @@ export class ConsolidationApprovalService {
 
   getPendingCount(project: string, tenantId?: string | null): number {
     return this.repository.countPendingApprovals(project, tenantId);
+  }
+
+  expirePendingForRunPrefix(runIdPrefix: string): number {
+    const pending = this.repository.listApprovalItemsByRunPrefix(runIdPrefix, "pending");
+
+    if (pending.length === 0) {
+      return 0;
+    }
+
+    const expiredAt = now();
+
+    for (const item of pending) {
+      this.repository.updateApprovalItem(item.id, {
+        status: "expired",
+        reviewed_by: "system",
+        reviewed_at: expiredAt,
+        review_comment: "superseded by retry"
+      });
+    }
+
+    return pending.length;
   }
 
   executeApproved(item: ApprovalItem): { success: boolean; error?: string; details?: string } {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { VegaConfig } from "../config.js";
+import { ConsolidationAuditService } from "../core/consolidation-audit.js";
 import { ConsolidationApprovalService } from "../core/consolidation-approval.js";
 import { ConsolidationDashboardService } from "../core/consolidation-dashboard.js";
 import { ConsolidationScheduler } from "../core/consolidation-scheduler.js";
@@ -419,7 +420,7 @@ test("auto_execute failure sets status to execution_failed", () => {
   }
 });
 
-test("retry on execution_failed succeeds", () => {
+test("successful retry clears execution_failed marker from comment", () => {
   const repository = new Repository(":memory:");
   const approvalService = new ConsolidationApprovalService(repository);
 
@@ -462,12 +463,14 @@ test("retry on execution_failed succeeds", () => {
 
     assert.equal(retried.status, "approved");
     assert.equal(repository.getApprovalItem(item.id)?.status, "approved");
+    assert.doesNotMatch(retried.review_comment ?? "", /\[execution_failed:/);
+    assert.match(retried.review_comment ?? "", /\[retried: success by retry-admin\]/);
   } finally {
     repository.close();
   }
 });
 
-test("retry on execution_failed that fails again stays execution_failed", () => {
+test("failed retry appends retry_failed marker", () => {
   const repository = new Repository(":memory:");
   const approvalService = new ConsolidationApprovalService(repository);
 
@@ -494,7 +497,7 @@ test("retry on execution_failed that fails again stays execution_failed", () => 
     assert.equal(retried.status, "execution_failed");
     assert.equal(repository.getApprovalItem(item.id)?.status, "execution_failed");
     assert.match(retried.review_comment ?? "", /\[execution_failed:/);
-    assert.match(retried.review_comment ?? "", /\[retry_execution_failed by retry-admin/);
+    assert.match(retried.review_comment ?? "", /\[retry_failed:/);
   } finally {
     repository.close();
   }
@@ -774,6 +777,206 @@ test("dashboard includes approval stats", () => {
     assert.equal(dashboard.approval_stats.approved_total, 1);
     assert.equal(dashboard.approval_stats.rejected_total, 1);
     assert.equal(repository.getApprovalItem(pending.id)?.status, "pending");
+  } finally {
+    repository.close();
+  }
+});
+
+test("dashboard counts approval-resolved items", () => {
+  const repository = new Repository(":memory:");
+  const auditService = new ConsolidationAuditService(repository);
+  const approvalService = new ConsolidationApprovalService(repository);
+  const dashboardService = new ConsolidationDashboardService(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true,
+      factClaims: true
+    }
+  });
+
+  try {
+    auditService.recordRun({
+      run_id: "run-1",
+      project: "vega",
+      tenant_id: null,
+      trigger: "manual",
+      mode: "dry_run",
+      started_at: now,
+      completed_at: "2026-04-10T00:00:01.000Z",
+      duration_ms: 1000,
+      total_candidates: 2,
+      actions_executed: 0,
+      actions_skipped: 2,
+      errors: []
+    });
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-1",
+        title: "Auth cache v1",
+        content: "Original auth cache note.",
+        updated_at: "2026-04-09T00:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-2",
+        title: "Auth cache v2",
+        content: "Updated auth cache note.",
+        updated_at: "2026-04-10T00:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-3",
+        title: "Auth cache v3",
+        content: "Original worker note.",
+        updated_at: "2026-04-08T00:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-4",
+        title: "Auth cache v4",
+        content: "Updated worker note.",
+        updated_at: "2026-04-11T00:00:00.000Z"
+      })
+    );
+
+    const first = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({
+        memory_ids: ["memory-1", "memory-2"]
+      }),
+      "vega"
+    );
+    const second = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({
+        memory_ids: ["memory-3", "memory-4"]
+      }),
+      "vega"
+    );
+
+    approvalService.review(
+      {
+        item_id: first.id,
+        status: "approved",
+        reviewed_by: "alice"
+      },
+      true
+    );
+    approvalService.review(
+      {
+        item_id: second.id,
+        status: "approved",
+        reviewed_by: "bob"
+      },
+      true
+    );
+
+    const dashboard = dashboardService.generateDashboard("vega");
+
+    assert.ok(dashboard.consolidation_history.total_candidates_resolved >= 2);
+  } finally {
+    repository.close();
+  }
+});
+
+test("dashboard counts both run-executed and approval-executed", () => {
+  const repository = new Repository(":memory:");
+  const auditService = new ConsolidationAuditService(repository);
+  const approvalService = new ConsolidationApprovalService(repository);
+  const dashboardService = new ConsolidationDashboardService(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true,
+      factClaims: true
+    }
+  });
+
+  try {
+    auditService.recordRun({
+      run_id: "run-1",
+      project: "vega",
+      tenant_id: null,
+      trigger: "manual",
+      mode: "auto_low_risk",
+      started_at: now,
+      completed_at: "2026-04-10T00:00:01.000Z",
+      duration_ms: 1000,
+      total_candidates: 5,
+      actions_executed: 3,
+      actions_skipped: 2,
+      errors: []
+    });
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-1",
+        title: "Auth cache v1",
+        content: "Original auth cache note.",
+        updated_at: "2026-04-09T00:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-2",
+        title: "Auth cache v2",
+        content: "Updated auth cache note.",
+        updated_at: "2026-04-10T00:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-3",
+        title: "Auth cache v3",
+        content: "Original worker note.",
+        updated_at: "2026-04-08T00:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-4",
+        title: "Auth cache v4",
+        content: "Updated worker note.",
+        updated_at: "2026-04-11T00:00:00.000Z"
+      })
+    );
+
+    const first = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({
+        memory_ids: ["memory-1", "memory-2"]
+      }),
+      "vega"
+    );
+    const second = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({
+        memory_ids: ["memory-3", "memory-4"]
+      }),
+      "vega"
+    );
+
+    approvalService.review(
+      {
+        item_id: first.id,
+        status: "approved",
+        reviewed_by: "alice"
+      },
+      true
+    );
+    approvalService.review(
+      {
+        item_id: second.id,
+        status: "approved",
+        reviewed_by: "bob"
+      },
+      true
+    );
+
+    const dashboard = dashboardService.generateDashboard("vega");
+
+    assert.equal(dashboard.consolidation_history.total_candidates_resolved, 5);
   } finally {
     repository.close();
   }

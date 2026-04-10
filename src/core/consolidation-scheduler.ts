@@ -31,6 +31,8 @@ const DEDUPLICATED_ERROR_FRAGMENT = "deduplicated";
 const isDeduplicatedError = (error: string): boolean =>
   error.toLowerCase().includes(DEDUPLICATED_ERROR_FRAGMENT);
 
+const ATTEMPT_SUFFIX_PATTERN = /:attempt:\d+$/;
+
 export class ConsolidationScheduler {
   constructor(
     private readonly repository: Repository,
@@ -74,6 +76,7 @@ export class ConsolidationScheduler {
       candidates
     );
     let effectiveRunId = runId;
+    let isRetryRun = false;
 
     if (auditService.isIdempotent(runId)) {
       const existing = auditService.getRun(runId);
@@ -92,6 +95,7 @@ export class ConsolidationScheduler {
 
         const attemptCount = auditService.countRunsForKey(project, runId, tenantId);
         effectiveRunId = `${runId}:attempt:${attemptCount + 1}`;
+        isRetryRun = true;
       }
     }
 
@@ -128,6 +132,11 @@ export class ConsolidationScheduler {
 
     if (resolvedPolicy.mode !== "dry_run") {
       try {
+        if (isRetryRun) {
+          approvalService.expirePendingForRunPrefix(
+            this.getBaseRunId(effectiveRunId)
+          );
+        }
         approvalService.submitCandidates(effectiveRunId, candidates, project, tenantId);
       } catch (error) {
         errors.push(
@@ -202,6 +211,10 @@ export class ConsolidationScheduler {
             ? [...LOW_RISK_CONSOLIDATION_AUTO_ACTIONS]
             : []
     };
+  }
+
+  private getBaseRunId(runId: string): string {
+    return runId.replace(ATTEMPT_SUFFIX_PATTERN, "");
   }
 
   private createDeterministicRunKey(

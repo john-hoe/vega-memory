@@ -429,7 +429,7 @@ test("failed run allows retry", () => {
   }
 });
 
-test("retry creates new approval items when previous run failed", () => {
+test("retry expires old pending approvals before creating new ones", () => {
   const repository = new Repository(":memory:");
   const scheduler = new ConsolidationScheduler(repository, {
     ...baseConfig,
@@ -459,14 +459,59 @@ test("retry creates new approval items when previous run failed", () => {
     const firstApprovalItems = repository.listApprovalItems("vega");
     const second = scheduler.run("vega", null, { mode: "auto_low_risk" });
     const secondApprovalItems = repository.listApprovalItems("vega");
+    const firstAttemptItems = secondApprovalItems.filter((item) => item.run_id === first.run_id);
+    const secondAttemptItems = secondApprovalItems.filter((item) => item.run_id === second.run_id);
+    const pendingItems = secondApprovalItems.filter((item) => item.status === "pending");
+    const expiredItems = secondApprovalItems.filter((item) => item.status === "expired");
 
     assert.equal(firstApprovalItems.length, 1);
     assert.equal(secondApprovalItems.length, 2);
-    assert.equal(
-      secondApprovalItems.filter((item) => item.run_id === second.run_id).length,
-      1
-    );
+    assert.equal(firstAttemptItems.length, 1);
+    assert.equal(firstAttemptItems[0]?.status, "expired");
+    assert.equal(firstAttemptItems[0]?.review_comment, "superseded by retry");
+    assert.equal(secondAttemptItems.length, 1);
+    assert.equal(secondAttemptItems[0]?.status, "pending");
+    assert.equal(pendingItems.length, 1);
+    assert.equal(expiredItems.length, 1);
     assert.notEqual(second.run_id, first.run_id);
+  } finally {
+    repository.close();
+  }
+});
+
+test("non-retry run does not expire anything", () => {
+  const repository = new Repository(":memory:");
+  const scheduler = new ConsolidationScheduler(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true,
+      consolidationAutoExecute: false
+    }
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "dup-1",
+        title: "Alpha memo",
+        embedding: createEmbeddingBuffer([1, 0, 0, 0])
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "dup-2",
+        title: "Beta note",
+        embedding: createEmbeddingBuffer([0.86, 0.51, 0, 0])
+      })
+    );
+
+    scheduler.run("vega", null, { mode: "auto_low_risk" });
+
+    const approvalItems = repository.listApprovalItems("vega");
+
+    assert.equal(approvalItems.length, 1);
+    assert.equal(approvalItems[0]?.status, "pending");
+    assert.equal(approvalItems.some((item) => item.status === "expired"), false);
   } finally {
     repository.close();
   }

@@ -3786,6 +3786,32 @@ export class Repository {
     return rows.map(mapApprovalRow);
   }
 
+  listApprovalItemsByRunPrefix(
+    runIdPrefix: string,
+    status?: ApprovalStatus,
+    limit = 10_000
+  ): ApprovalItem[] {
+    const clauses = ["run_id LIKE ?"];
+    const params: unknown[] = [`${runIdPrefix}%`];
+
+    if (status !== undefined) {
+      clauses.push("status = ?");
+      params.push(status);
+    }
+
+    const rows = this.db
+      .prepare<unknown[], ApprovalRow>(
+        `SELECT *
+         FROM consolidation_approvals
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`
+      )
+      .all(...params, normalizePositiveInteger(limit, 10_000));
+
+    return rows.map(mapApprovalRow);
+  }
+
   updateApprovalItem(
     id: string,
     update: {
@@ -3822,6 +3848,30 @@ export class Repository {
   countPendingApprovals(project: string, tenantId?: string | null): number {
     const clauses = ["project = ?", "status = 'pending'"];
     const params: unknown[] = [project];
+
+    if (tenantId !== undefined) {
+      clauses.push("tenant_id IS ?");
+      params.push(tenantId);
+    }
+
+    const row = this.db
+      .prepare<unknown[], CountRow>(
+        `SELECT COUNT(*) AS total
+         FROM consolidation_approvals
+         WHERE ${clauses.join(" AND ")}`
+      )
+      .get(...params);
+
+    return row?.total ?? 0;
+  }
+
+  countApprovalItemsByStatus(
+    project: string,
+    status: ApprovalStatus,
+    tenantId?: string | null
+  ): number {
+    const clauses = ["project = ?", "status = ?"];
+    const params: unknown[] = [project, status];
 
     if (tenantId !== undefined) {
       clauses.push("tenant_id IS ?");

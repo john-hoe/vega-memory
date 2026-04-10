@@ -96,6 +96,16 @@ export class ConsolidationDashboardService {
     const auditService = new ConsolidationAuditService(this.repository);
     const runs = auditService.listRuns(project, 10_000, tenantId);
     const lastRun = auditService.getLastRun(project, tenantId);
+    const approvedApprovalCount = this.repository.countApprovalItemsByStatus(
+      project,
+      "approved",
+      tenantId
+    );
+    const rejectedApprovalCount = this.repository.countApprovalItemsByStatus(
+      project,
+      "rejected",
+      tenantId
+    );
 
     return {
       project,
@@ -130,15 +140,16 @@ export class ConsolidationDashboardService {
         last_report_at: lastRun?.completed_at ?? null,
         total_reports_generated: runs.length,
         total_candidates_found: runs.reduce((sum, run) => sum + run.total_candidates, 0),
-        total_candidates_resolved: runs.reduce((sum, run) => sum + run.actions_executed, 0)
+        total_candidates_resolved:
+          runs.reduce((sum, run) => sum + run.actions_executed, 0) + approvedApprovalCount
       },
       // Future enhancements require historical session/cross-run aggregation that is not stored yet:
       // session_start(light) token trend, deep_recall trigger rate, wiki synthesis hit rate,
       // and auto-execution error count.
       approval_stats: {
         pending: approvalService.getPendingCount(project, tenantId),
-        approved_total: approvalService.listAll(project, "approved", tenantId, 10_000).length,
-        rejected_total: approvalService.listAll(project, "rejected", tenantId, 10_000).length
+        approved_total: approvedApprovalCount,
+        rejected_total: rejectedApprovalCount
       },
       health_indicators: {
         duplicate_density:
