@@ -43,6 +43,11 @@ const formatRetrySuccessComment = (retriedBy: string): string =>
 const formatRetryFailureComment = (error: string): string =>
   `[retry_failed: ${error}]`;
 
+const formatExecuteSuccessComment = (executedBy: string, details?: string): string =>
+  details && details.trim().length > 0
+    ? `[executed: success by ${executedBy}] ${details}`
+    : `[executed: success by ${executedBy}]`;
+
 const clearExecutionFailureComment = (comment: string | null): string | null => {
   if (comment === null) {
     return null;
@@ -319,6 +324,60 @@ export class ConsolidationApprovalService {
       timestamp: retriedAt,
       actor: retriedBy,
       action: "consolidation_approval_retried",
+      memory_id: updated.memory_ids[0] ?? null,
+      detail: JSON.stringify({
+        approval_id: updated.id,
+        previous_status: existing.status,
+        status: updated.status,
+        success: execution.success,
+        error: execution.error ?? null,
+        details: execution.details ?? null
+      }),
+      ip: null,
+      tenant_id: updated.tenant_id
+    });
+
+    return updated;
+  }
+
+  execute(itemId: string, executedBy: string): ApprovalItem {
+    const existing = this.requireApprovalItem(itemId);
+
+    if (existing.status !== "approved") {
+      throw new Error(`Approval item ${itemId} is ${existing.status}; only approved items can be executed`);
+    }
+
+    const executedAt = now();
+    this.repository.updateApprovalItem(itemId, {
+      status: "approved_pending_execution",
+      reviewed_by: executedBy,
+      reviewed_at: executedAt,
+      review_comment: existing.review_comment
+    });
+
+    const execution = this.executeApproved(this.requireApprovalItem(itemId));
+    const updatedComment = execution.success
+      ? appendReviewComment(
+          existing.review_comment,
+          formatExecuteSuccessComment(executedBy, execution.details)
+        )
+      : appendReviewComment(
+          existing.review_comment,
+          formatExecutionFailureComment(execution.error ?? "unknown error")
+        );
+
+    this.repository.updateApprovalItem(itemId, {
+      status: execution.success ? "approved" : "execution_failed",
+      reviewed_by: executedBy,
+      reviewed_at: executedAt,
+      review_comment: updatedComment
+    });
+
+    const updated = this.requireApprovalItem(itemId);
+    this.repository.logAudit({
+      timestamp: executedAt,
+      actor: executedBy,
+      action: "consolidation_approval_execute_requested",
       memory_id: updated.memory_ids[0] ?? null,
       detail: JSON.stringify({
         approval_id: updated.id,

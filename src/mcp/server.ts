@@ -879,6 +879,34 @@ export function createMCPServer({
   );
 
   server.tool(
+    "consolidation_approval_execute",
+    "Execute an already-approved consolidation item.",
+    {
+      item_id: z.string().trim().min(1),
+      executed_by: z.string().trim().min(1)
+    },
+    async (args) => {
+      if (!isConsolidationReportEnabled(config)) {
+        return toTextResult(
+          {
+            error: "consolidation_report feature is disabled"
+          },
+          true
+        );
+      }
+
+      return runTool(repository, "consolidation_approval_execute", args, observer, async () => {
+        const result = approvalService.execute(args.item_id, args.executed_by);
+
+        return {
+          result: serializeApprovalItem(result),
+          resultCount: 1
+        };
+      });
+    }
+  );
+
+  server.tool(
     "consolidation_approvals_pending_count",
     "Return the number of pending consolidation approval items for a project.",
     {

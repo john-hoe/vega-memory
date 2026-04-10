@@ -105,3 +105,28 @@ test("StripeService verifies webhook signatures and updates subscriptions", asyn
     /Invalid Stripe webhook signature/
   );
 });
+
+test("StripeService rejects webhook when no secret configured", async () => {
+  const service = new StripeService({
+    enabled: true,
+    secretKey: "sk_test_stub"
+  });
+
+  await assert.rejects(
+    service.handleWebhook(JSON.stringify({ type: "ping" }), "signature"),
+    /webhook secret is not configured/
+  );
+});
+
+test("StripeService rejects webhook with empty signature", async () => {
+  const service = new StripeService({
+    enabled: true,
+    secretKey: "sk_test_stub",
+    webhookSecret: "whsec_stub"
+  });
+
+  await assert.rejects(
+    service.handleWebhook(JSON.stringify({ type: "ping" }), "   "),
+    /Missing webhook signature header/
+  );
+});

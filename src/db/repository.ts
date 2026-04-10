@@ -3690,6 +3690,17 @@ export class Repository {
       .map((row) => row.project);
   }
 
+  listDistinctProjectTenantPairs(): Array<{ project: string; tenant_id: string | null }> {
+    return this.db
+      .prepare<[], { project: string; tenant_id: string | null }>(
+        `SELECT DISTINCT project, tenant_id
+         FROM memories
+         WHERE status = 'active'
+         ORDER BY project, tenant_id`
+      )
+      .all();
+  }
+
   insertApprovalItem(item: Omit<ApprovalItem, "updated_at">): void {
     this.db
       .prepare<

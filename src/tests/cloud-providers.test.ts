@@ -146,6 +146,136 @@ test("GDriveProvider supports upload download list and delete", async () => {
   );
 });
 
+test("GDriveProvider keeps old backup when new upload fails", async () => {
+  const key = "backup.db";
+  const files = [{ id: "file-old", name: key, data: Buffer.from("old-data") }];
+  const provider = new GDriveProvider(
+    {
+      folderId: "folder-123",
+      credentialsPath: "/tmp/gdrive-creds.json",
+      enabled: true
+    },
+    async () => ({
+      files: {
+        async create() {
+          throw new Error("upload failed");
+        },
+        async get(args: Record<string, unknown>) {
+          const match = files.find((entry) => entry.id === args.fileId);
+          return { data: match?.data };
+        },
+        async list(args: Record<string, unknown>) {
+          const q = String(args.q ?? "");
+          if (q.includes("name =")) {
+            return {
+              data: {
+                files: files.map((entry) => ({
+                  id: entry.id,
+                  name: entry.name
+                }))
+              }
+            };
+          }
+
+          return {
+            data: {
+              files: files.map((entry) => ({
+                id: entry.id,
+                name: entry.name,
+                size: entry.data.byteLength,
+                modifiedTime: new Date(0).toISOString(),
+                md5Checksum: "checksum"
+              }))
+            }
+          };
+        },
+        async delete() {
+          assert.fail("delete should not be called when create fails");
+        }
+      }
+    })
+  );
+
+  await assert.rejects(provider.upload(key, Buffer.from("new-data")), /upload failed/);
+  assert.equal(files.length, 1);
+  assert.equal(files[0]?.id, "file-old");
+  assert.deepEqual(await provider.download(key), Buffer.from("old-data"));
+});
+
+test("GDriveProvider successful upload replaces old backup after create succeeds", async () => {
+  const key = "backup.db";
+  const files: Array<{ id: string; name: string; data: Buffer }> = [
+    { id: "file-old", name: key, data: Buffer.from("old-data") }
+  ];
+  let createCount = 0;
+  const provider = new GDriveProvider(
+    {
+      folderId: "folder-123",
+      credentialsPath: "/tmp/gdrive-creds.json",
+      enabled: true
+    },
+    async () => ({
+      files: {
+        async create(args: Record<string, unknown>) {
+          createCount += 1;
+          const requestBody = args.requestBody as { name?: string };
+          const media = args.media as { body?: Buffer };
+          const id = `file-new-${createCount}`;
+          files.push({
+            id,
+            name: String(requestBody.name),
+            data: Buffer.from(media.body ?? "")
+          });
+          return { data: { id } };
+        },
+        async get(args: Record<string, unknown>) {
+          const match = files.find((entry) => entry.id === args.fileId);
+          return { data: match?.data };
+        },
+        async list(args: Record<string, unknown>) {
+          const q = String(args.q ?? "");
+          if (q.includes("name =")) {
+            return {
+              data: {
+                files: files
+                  .filter((entry) => entry.name === key)
+                  .map((entry) => ({
+                    id: entry.id,
+                    name: entry.name
+                  }))
+              }
+            };
+          }
+
+          return {
+            data: {
+              files: files.map((entry) => ({
+                id: entry.id,
+                name: entry.name,
+                size: entry.data.byteLength,
+                modifiedTime: new Date(0).toISOString(),
+                md5Checksum: "checksum"
+              }))
+            }
+          };
+        },
+        async delete(args: Record<string, unknown>) {
+          const index = files.findIndex((entry) => entry.id === args.fileId);
+          if (index >= 0) {
+            files.splice(index, 1);
+          }
+          return {};
+        }
+      }
+    })
+  );
+
+  assert.equal(await provider.upload(key, Buffer.from("new-data")), key);
+  assert.equal(files.length, 1);
+  assert.equal(files[0]?.id, "file-new-1");
+  assert.deepEqual(await provider.download(key), Buffer.from("new-data"));
+});
+
 test("ICloudProvider supports upload download list and delete", async () => {
   const directory = mkdtempSync(join(tmpdir(), "vega-icloud-"));
   await exerciseProvider(

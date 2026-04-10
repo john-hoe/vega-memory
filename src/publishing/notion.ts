@@ -308,14 +308,17 @@ export class NotionPublisher {
     });
 
     const childIds = await this.listBlockChildren(pageId);
+    await this.appendBlockChildren(pageId, contentBlocks);
 
     for (const childId of childIds) {
-      await this.request(`/blocks/${encodeNotionPathSegment(childId)}`, {
-        method: "DELETE"
-      });
+      try {
+        await this.request(`/blocks/${encodeNotionPathSegment(childId)}`, {
+          method: "DELETE"
+        });
+      } catch {
+        // Best-effort cleanup after the replacement content is already safe.
+      }
     }
-
-    await this.appendBlockChildren(pageId, contentBlocks);
 
     return pageId;
   }

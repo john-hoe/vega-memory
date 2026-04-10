@@ -298,8 +298,12 @@ export class StripeService {
   }
 
   private verifyWebhookSignature(payload: string, signature: string): void {
-    if (!this.config.webhookSecret || signature.trim().length === 0) {
-      return;
+    if (!this.config.webhookSecret) {
+      throw new Error("Stripe webhook secret is not configured; rejecting webhook");
+    }
+
+    if (signature.trim().length === 0) {
+      throw new Error("Missing webhook signature header");
     }
 
     if (signature.startsWith("t=")) {

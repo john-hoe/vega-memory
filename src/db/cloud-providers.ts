@@ -243,12 +243,7 @@ export class GDriveProvider implements CloudStorageProvider {
     ensureConfigured(this.isConfigured(), "Google Drive provider");
     const client = await this.getClient();
     const existingId = await this.findFileId(key);
-
-    if (existingId !== null) {
-      await client.files.delete({ fileId: existingId });
-    }
-
-    await client.files.create({
+    const created = await client.files.create({
       requestBody: {
         name: key,
         parents: [this.config.folderId as string]
@@ -258,6 +253,16 @@ export class GDriveProvider implements CloudStorageProvider {
         body: Buffer.from(data)
       }
     });
+
+    if (existingId !== null) {
+      try {
+        await client.files.delete({ fileId: existingId });
+      } catch {
+        if (typeof created.data.id !== "string" || created.data.id.trim().length === 0) {
+          throw new Error(`Failed to replace existing Google Drive object: ${key}`);
+        }
+      }
+    }
 
     return key;
   }

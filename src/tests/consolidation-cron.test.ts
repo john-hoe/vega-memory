@@ -251,3 +251,96 @@ test("ConsolidationCron handles per-project errors gracefully", async () => {
     repository.close();
   }
 });
+
+test("ConsolidationCron runs separately for each tenant in the same project", async () => {
+  const repository = new Repository(":memory:");
+  const cron = new ConsolidationCron(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true
+    }
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-a-memory",
+        project: "project-x",
+        tenant_id: "tenant-a",
+        accessed_projects: ["project-x"]
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-b-memory",
+        project: "project-x",
+        tenant_id: "tenant-b",
+        accessed_projects: ["project-x"]
+      })
+    );
+
+    cron.start(20);
+
+    await waitFor(
+      () =>
+        repository.getLastConsolidationRun("project-x", "tenant-a") !== null &&
+        repository.getLastConsolidationRun("project-x", "tenant-b") !== null
+    );
+
+    const runs = repository.listConsolidationRuns("project-x", 10);
+
+    assert.equal(runs.length, 2);
+    assert.equal(runs.some((run) => run.tenant_id === "tenant-a"), true);
+    assert.equal(runs.some((run) => run.tenant_id === "tenant-b"), true);
+  } finally {
+    cron.stop();
+    repository.close();
+  }
+});
+
+test("ConsolidationCron does not mix tenant IDs across runs", async () => {
+  const repository = new Repository(":memory:");
+  const cron = new ConsolidationCron(repository, {
+    ...baseConfig,
+    features: {
+      consolidationReport: true
+    }
+  });
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-a-memory",
+        project: "shared-project",
+        tenant_id: "tenant-a",
+        accessed_projects: ["shared-project"]
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-b-memory",
+        project: "shared-project",
+        tenant_id: "tenant-b",
+        accessed_projects: ["shared-project"]
+      })
+    );
+
+    cron.start(20);
+
+    await waitFor(
+      () =>
+        repository.getLastConsolidationRun("shared-project", "tenant-a") !== null &&
+        repository.getLastConsolidationRun("shared-project", "tenant-b") !== null
+    );
+
+    const tenantARun = repository.getLastConsolidationRun("shared-project", "tenant-a");
+    const tenantBRun = repository.getLastConsolidationRun("shared-project", "tenant-b");
+
+    assert.equal(tenantARun?.tenant_id, "tenant-a");
+    assert.equal(tenantBRun?.tenant_id, "tenant-b");
+    assert.notEqual(tenantARun?.run_id, tenantBRun?.run_id);
+  } finally {
+    cron.stop();
+    repository.close();
+  }
+});

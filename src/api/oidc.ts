@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createPublicKey, randomBytes, verify as verifySignature } from "node:crypto";
 
 import { Router, type CookieOptions, type Request, type Response } from "express";
 
@@ -19,6 +19,7 @@ interface OidcDiscoveryDocument {
   issuer: string;
   authorization_endpoint: string;
   token_endpoint: string;
+  jwks_uri: string;
 }
 
 interface OidcClaims {
@@ -26,19 +27,49 @@ interface OidcClaims {
   email?: unknown;
   name?: unknown;
   iss?: unknown;
+  aud?: unknown;
+  exp?: unknown;
+  iat?: unknown;
+  nonce?: unknown;
   tenant_id?: unknown;
   tenant?: unknown;
   tid?: unknown;
+}
+
+interface OidcJwtHeader {
+  alg?: unknown;
+  kid?: unknown;
 }
 
 interface OidcLoginState {
   createdAt: number;
   returnTo: string;
   tenantId?: string;
+  nonce: string;
+}
+
+interface OidcJwk {
+  kid?: string;
+  alg?: string;
+  use?: string;
+  kty?: string;
+  n?: string;
+  e?: string;
+}
+
+interface VerifyIdTokenOptions {
+  issuer: string;
+  audience: string;
+  jwksUri: string;
+  nonce?: string;
 }
 
 const OIDC_STATE_TTL_MS = 10 * 60 * 1000;
+const OIDC_JWKS_TTL_MS = 60 * 60 * 1000;
+const OIDC_CLOCK_SKEW_SECONDS = 60;
+const OIDC_MAX_TOKEN_AGE_SECONDS = 60 * 60;
 const oidcStates = new WeakMap<VegaConfig, Map<string, OidcLoginState>>();
+const oidcJwksCache = new Map<string, { expiresAt: number; keys: OidcJwk[] }>();
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -122,17 +153,22 @@ const createLoginState = (
   config: VegaConfig,
   returnTo: string,
   tenantId?: string
-): string => {
+): { state: string; nonce: string } => {
   pruneStateStore(config);
   const state = randomBytes(24).toString("hex");
+  const nonce = randomBytes(24).toString("hex");
 
   getStateStore(config).set(state, {
     createdAt: Date.now(),
     returnTo,
+    nonce,
     ...(tenantId === undefined ? {} : { tenantId })
   });
 
-  return state;
+  return {
+    state,
+    nonce
+  };
 };
 
 const getDiscoveryUrl = (issuerUrl: string): string =>
@@ -154,7 +190,8 @@ const fetchDiscoveryDocument = async (oidcConfig: OidcConfig): Promise<OidcDisco
   if (
     !isRecord(document) ||
     typeof document.authorization_endpoint !== "string" ||
-    typeof document.token_endpoint !== "string"
+    typeof document.token_endpoint !== "string" ||
+    typeof document.jwks_uri !== "string"
   ) {
     throw new Error("OIDC discovery document is invalid");
   }
@@ -165,8 +202,26 @@ const fetchDiscoveryDocument = async (oidcConfig: OidcConfig): Promise<OidcDisco
         ? document.issuer
         : oidcConfig.issuerUrl.replace(/\/+$/u, ""),
     authorization_endpoint: document.authorization_endpoint,
-    token_endpoint: document.token_endpoint
+    token_endpoint: document.token_endpoint,
+    jwks_uri: document.jwks_uri
   };
+};
+
+const decodeJwtPart = <T extends object>(part: string, label: string): T => {
+  if (part.length === 0) {
+    throw new Error(`OIDC JWT ${label} is missing`);
+  }
+
+  const normalized = part.replace(/-/gu, "+").replace(/_/gu, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  const decoded = Buffer.from(padded, "base64").toString("utf8");
+  const parsed = JSON.parse(decoded) as unknown;
+
+  if (!isRecord(parsed)) {
+    throw new Error(`OIDC JWT ${label} is invalid`);
+  }
+
+  return parsed as T;
 };
 
 const decodeJwtPayload = (jwt: string): OidcClaims => {
@@ -176,21 +231,152 @@ const decodeJwtPayload = (jwt: string): OidcClaims => {
     throw new Error("OIDC id_token is malformed");
   }
 
-  const payload = parts[1];
-  if (!payload) {
-    throw new Error("OIDC id_token payload is missing");
+  return decodeJwtPart<OidcClaims>(parts[1] ?? "", "payload");
+};
+
+const decodeJwtHeader = (jwt: string): OidcJwtHeader => {
+  const parts = jwt.split(".");
+
+  if (parts.length !== 3) {
+    throw new Error("OIDC id_token is malformed");
   }
 
-  const normalized = payload.replace(/-/gu, "+").replace(/_/gu, "/");
-  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-  const decoded = Buffer.from(padded, "base64").toString("utf8");
-  const claims = JSON.parse(decoded) as unknown;
+  return decodeJwtPart<OidcJwtHeader>(parts[0] ?? "", "header");
+};
 
-  if (!isRecord(claims)) {
-    throw new Error("OIDC id_token payload is invalid");
+const normalizeAudience = (audience: unknown): string[] => {
+  if (typeof audience === "string") {
+    return [audience];
   }
 
-  return claims as OidcClaims;
+  if (Array.isArray(audience) && audience.every((entry) => typeof entry === "string")) {
+    return audience;
+  }
+
+  return [];
+};
+
+const normalizeNumericClaim = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const getJwks = async (jwksUri: string): Promise<OidcJwk[]> => {
+  const cached = oidcJwksCache.get(jwksUri);
+  const now = Date.now();
+
+  if (cached && cached.expiresAt > now) {
+    return cached.keys;
+  }
+
+  const response = await fetch(jwksUri, {
+    headers: {
+      accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`OIDC JWKS fetch failed with status ${response.status}`);
+  }
+
+  const document = (await response.json()) as unknown;
+
+  if (!isRecord(document) || !Array.isArray(document.keys)) {
+    throw new Error("OIDC JWKS response is invalid");
+  }
+
+  const keys = document.keys.filter((entry): entry is OidcJwk => isRecord(entry));
+  oidcJwksCache.set(jwksUri, {
+    expiresAt: now + OIDC_JWKS_TTL_MS,
+    keys
+  });
+
+  return keys;
+};
+
+export const verifyIdToken = async (
+  token: string,
+  options: VerifyIdTokenOptions
+): Promise<OidcClaims> => {
+  const header = decodeJwtHeader(token);
+  const claims = decodeJwtPayload(token);
+  const parts = token.split(".");
+  const signingInput = `${parts[0]}.${parts[1]}`;
+  const signature = parts[2];
+
+  if (!signature) {
+    throw new Error("OIDC id_token signature is missing");
+  }
+
+  if (header.alg !== "RS256") {
+    throw new Error(`Unsupported OIDC id_token algorithm: ${String(header.alg ?? "unknown")}`);
+  }
+
+  if (typeof header.kid !== "string" || header.kid.trim().length === 0) {
+    throw new Error("OIDC id_token header is missing kid");
+  }
+
+  const jwks = await getJwks(options.jwksUri);
+  const jwk = jwks.find(
+    (entry) =>
+      entry.kid === header.kid &&
+      entry.kty === "RSA" &&
+      (entry.use === undefined || entry.use === "sig")
+  );
+
+  if (!jwk) {
+    throw new Error(`OIDC JWKS key not found for kid ${header.kid}`);
+  }
+
+  const publicKey = createPublicKey({
+    key: jwk as unknown as import("node:crypto").JsonWebKey,
+    format: "jwk"
+  });
+  const isValidSignature = verifySignature(
+    "RSA-SHA256",
+    Buffer.from(signingInput, "utf8"),
+    publicKey,
+    Buffer.from(signature.replace(/-/gu, "+").replace(/_/gu, "/"), "base64")
+  );
+
+  if (!isValidSignature) {
+    throw new Error("OIDC id_token signature is invalid");
+  }
+
+  const issuer = normalizeOptionalString(claims.iss);
+  if (issuer !== options.issuer) {
+    throw new Error("OIDC id_token issuer is invalid");
+  }
+
+  const audiences = normalizeAudience(claims.aud);
+  if (!audiences.includes(options.audience)) {
+    throw new Error("OIDC id_token audience is invalid");
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const expiresAt = normalizeNumericClaim(claims.exp);
+  if (expiresAt === null || expiresAt <= nowSeconds - OIDC_CLOCK_SKEW_SECONDS) {
+    throw new Error("OIDC id_token is expired");
+  }
+
+  const issuedAt = normalizeNumericClaim(claims.iat);
+  if (issuedAt === null) {
+    throw new Error("OIDC id_token is missing iat");
+  }
+
+  if (issuedAt > nowSeconds + OIDC_CLOCK_SKEW_SECONDS) {
+    throw new Error("OIDC id_token iat is in the future");
+  }
+
+  if (nowSeconds - issuedAt > OIDC_MAX_TOKEN_AGE_SECONDS + OIDC_CLOCK_SKEW_SECONDS) {
+    throw new Error("OIDC id_token iat is too old");
+  }
+
+  if (options.nonce !== undefined) {
+    if (normalizeOptionalString(claims.nonce) !== options.nonce) {
+      throw new Error("OIDC id_token nonce is invalid");
+    }
+  }
+
+  return claims;
 };
 
 const exchangeAuthorizationCode = async (
@@ -326,6 +512,14 @@ const handleOidcError = (res: Response, error: unknown): void => {
   });
 };
 
+const redirectOidcError = (res: Response, error: unknown): void => {
+  const message = error instanceof Error ? error.message : String(error);
+  const redirectUrl = new URL("/dashboard/login", "http://localhost");
+
+  redirectUrl.searchParams.set("error", message);
+  res.redirect(302, `${redirectUrl.pathname}${redirectUrl.search}`);
+};
+
 export const createOidcRouter = (config: VegaConfig, repository: Repository): Router => {
   const router = Router();
 
@@ -343,7 +537,7 @@ export const createOidcRouter = (config: VegaConfig, repository: Repository): Ro
       const discovery = await fetchDiscoveryDocument(oidcConfig);
       const returnTo = normalizeReturnTo(req.query.return_to);
       const tenantId = normalizeOptionalString(req.query.tenant_id);
-      const state = createLoginState(config, returnTo, tenantId);
+      const { state, nonce } = createLoginState(config, returnTo, tenantId);
       const redirectUrl = new URL(discovery.authorization_endpoint);
 
       redirectUrl.searchParams.set("response_type", "code");
@@ -351,10 +545,11 @@ export const createOidcRouter = (config: VegaConfig, repository: Repository): Ro
       redirectUrl.searchParams.set("redirect_uri", oidcConfig.callbackUrl);
       redirectUrl.searchParams.set("scope", "openid email profile");
       redirectUrl.searchParams.set("state", state);
+      redirectUrl.searchParams.set("nonce", nonce);
 
       res.redirect(302, redirectUrl.toString());
     } catch (error) {
-      handleOidcError(res, error);
+      redirectOidcError(res, error);
     }
   });
 
@@ -384,7 +579,12 @@ export const createOidcRouter = (config: VegaConfig, repository: Repository): Ro
 
       const discovery = await fetchDiscoveryDocument(oidcConfig);
       const tokenResponse = await exchangeAuthorizationCode(oidcConfig, discovery, code);
-      const claims = decodeJwtPayload(tokenResponse.id_token);
+      const claims = await verifyIdToken(tokenResponse.id_token, {
+        issuer: discovery.issuer,
+        audience: oidcConfig.clientId,
+        jwksUri: discovery.jwks_uri,
+        nonce: loginState.nonce
+      });
       const provider = normalizeOptionalString(claims.iss) ?? discovery.issuer;
       const user = upsertOidcUser(repository, provider, claims, loginState);
       const sessionToken = randomBytes(32).toString("hex");

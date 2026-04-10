@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -1218,8 +1219,12 @@ test("billing counts API request log rows for tenant traffic", async () => {
   }
 });
 
-test("billing routes expose plans, tenant subscription status, cancellation, and unauthenticated webhook handling", async () => {
-  const harness = await createHarness("top-secret");
+test("billing routes expose plans, tenant subscription status, cancellation, and signed webhook handling", async () => {
+  const harness = await createHarness("top-secret", {
+    stripeEnabled: true,
+    stripeSecretKey: "sk_test_stub",
+    stripeWebhookSecret: "whsec_stub"
+  });
   const tenantService = new TenantService(harness.repository);
   const tenant = tenantService.createTenant("Billing Tenant", "pro");
   const userService = new UserService(harness.repository);
@@ -1265,20 +1270,24 @@ test("billing routes expose plans, tenant subscription status, cancellation, and
       }
     );
     const canceled = await readJson<{ id: string; status: string }>(cancelResponse);
+    const webhookPayload = JSON.stringify({
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: subscribed.subscription.id
+        }
+      }
+    });
+    const webhookSignature = createHmac("sha256", "whsec_stub")
+      .update(webhookPayload)
+      .digest("hex");
     const webhookResponse = await fetch(`${harness.baseUrl}/api/billing/webhook`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "stripe-signature": "sig_stub"
+        "stripe-signature": webhookSignature
       },
-      body: JSON.stringify({
-        type: "customer.subscription.updated",
-        data: {
-          object: {
-            id: subscribed.subscription.id
-          }
-        }
-      })
+      body: webhookPayload
     });
     const webhookBody = await readJson<{
       event: string;
@@ -1300,7 +1309,7 @@ test("billing routes expose plans, tenant subscription status, cancellation, and
 
     assert.equal(statusResponse.status, 200);
     assert.equal(statusBody.tenant_id, tenant.id);
-    assert.equal(statusBody.configured, false);
+    assert.equal(statusBody.configured, true);
     assert.equal(statusBody.subscription?.id, subscribed.subscription.id);
 
     assert.equal(cancelResponse.status, 200);

@@ -516,6 +516,91 @@ test("retry on non-execution_failed throws", () => {
   }
 });
 
+test("execute approved item succeeds", () => {
+  const repository = new Repository(":memory:");
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-1",
+        title: "Auth cache v1",
+        content: "Original auth cache note.",
+        updated_at: "2026-04-09T00:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-2",
+        title: "Auth cache v2",
+        content: "Updated auth cache note.",
+        updated_at: "2026-04-10T00:00:00.000Z"
+      })
+    );
+
+    const item = approvalService.submitForApproval("run-1", createCandidate(), "vega");
+    approvalService.review({
+      item_id: item.id,
+      status: "approved",
+      reviewed_by: "review-admin",
+      comment: "approved for later execution"
+    });
+
+    const executed = approvalService.execute(item.id, "ops-admin");
+
+    assert.equal(executed.status, "approved");
+    assert.equal(repository.getApprovalItem(item.id)?.status, "approved");
+    assert.match(executed.review_comment ?? "", /\[executed: success by ops-admin\]/);
+    assert.match(executed.review_comment ?? "", /Merged 1 memory record\(s\)/);
+  } finally {
+    repository.close();
+  }
+});
+
+test("execute non-approved item throws", () => {
+  const repository = new Repository(":memory:");
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    const item = approvalService.submitForApproval("run-1", createCandidate(), "vega");
+
+    assert.throws(
+      () => approvalService.execute(item.id, "ops-admin"),
+      /only approved items can be executed/
+    );
+  } finally {
+    repository.close();
+  }
+});
+
+test("execute failed item records failure", () => {
+  const repository = new Repository(":memory:");
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    const item = approvalService.submitForApproval(
+      "run-1",
+      createCandidate({
+        memory_ids: ["missing-1", "missing-2"]
+      }),
+      "vega"
+    );
+    approvalService.review({
+      item_id: item.id,
+      status: "approved",
+      reviewed_by: "review-admin"
+    });
+
+    const executed = approvalService.execute(item.id, "ops-admin");
+
+    assert.equal(executed.status, "execution_failed");
+    assert.equal(repository.getApprovalItem(item.id)?.status, "execution_failed");
+    assert.match(executed.review_comment ?? "", /\[execution_failed:/);
+  } finally {
+    repository.close();
+  }
+});
+
 test("audit records both original failure and retry", () => {
   const repository = new Repository(":memory:");
   const approvalService = new ConsolidationApprovalService(repository);
@@ -1039,6 +1124,57 @@ test("MCP tool reviews approval", async () => {
     assert.equal(result.isError, undefined);
     assert.equal(payload.status, "approved");
     assert.equal(repository.getApprovalItem(item.id)?.status, "approved");
+  } finally {
+    repository.close();
+    await server.close();
+  }
+});
+
+test("MCP tool executes approved approval", async () => {
+  const { repository, server } = createServerHarness({
+    features: {
+      consolidationReport: true
+    }
+  });
+  const approvalService = new ConsolidationApprovalService(repository);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-1",
+        title: "Auth cache v1",
+        content: "Original auth cache note.",
+        updated_at: "2026-04-09T00:00:00.000Z"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "memory-2",
+        title: "Auth cache v2",
+        content: "Updated auth cache note.",
+        updated_at: "2026-04-10T00:00:00.000Z"
+      })
+    );
+
+    const item = approvalService.submitForApproval("run-1", createCandidate(), "vega");
+    approvalService.review({
+      item_id: item.id,
+      status: "approved",
+      reviewed_by: "review-admin"
+    });
+
+    const result = await getRegisteredTools(server).consolidation_approval_execute.handler(
+      {
+        item_id: item.id,
+        executed_by: "ops-admin"
+      },
+      {}
+    );
+    const payload = parseToolPayload<{ id: string; status: string; review_comment: string | null }>(result);
+
+    assert.equal(result.isError, undefined);
+    assert.equal(payload.status, "approved");
+    assert.match(payload.review_comment ?? "", /\[executed: success by ops-admin\]/);
   } finally {
     repository.close();
     await server.close();

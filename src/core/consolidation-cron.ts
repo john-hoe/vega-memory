@@ -53,15 +53,15 @@ export class ConsolidationCron {
   private runAll(): void {
     try {
       const scheduler = new ConsolidationScheduler(this.repository, this.config);
-      const projects = this.repository.listDistinctProjects();
+      const pairs = this.repository.listDistinctProjectTenantPairs();
 
-      for (const project of projects) {
-        if (!scheduler.shouldTrigger("nightly", project)) {
+      for (const { project, tenant_id } of pairs) {
+        if (!scheduler.shouldTrigger("nightly", project, tenant_id)) {
           continue;
         }
 
         try {
-          const run = scheduler.run(project, null, {
+          const run = scheduler.run(project, tenant_id, {
             trigger: "nightly",
             mode: isConsolidationAutoExecuteEnabled(this.config)
               ? "auto_low_risk"
@@ -70,7 +70,7 @@ export class ConsolidationCron {
           saveConsolidationReportArtifact(this.repository, this.config, run);
         } catch (error) {
           console.error(
-            `[consolidation-cron] ${project}: ${error instanceof Error ? error.message : String(error)}`
+            `[consolidation-cron] ${project}${tenant_id === null ? "" : ` (${tenant_id})`}: ${error instanceof Error ? error.message : String(error)}`
           );
         }
       }

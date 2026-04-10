@@ -419,6 +419,38 @@ export function registerConsolidationReportCommand(
     );
 
   approvals
+    .command("execute")
+    .description("Execute an already-approved consolidation approval item")
+    .requiredOption("--id <id>", "approval item ID")
+    .requiredOption("--by <name>", "executor name")
+    .option("--json", "output as JSON instead of markdown")
+    .action(
+      (options: {
+        id: string;
+        by: string;
+        json?: boolean;
+      }) => {
+        if (!isConsolidationReportEnabled(config)) {
+          console.error(
+            "consolidation_report feature is disabled. Set features.consolidationReport=true"
+          );
+          process.exitCode = 1;
+          return;
+        }
+
+        const approvalService = new ConsolidationApprovalService(repository);
+        const item = approvalService.execute(options.id, options.by);
+
+        if (options.json) {
+          console.log(JSON.stringify(item, null, 2));
+          return;
+        }
+
+        console.log(formatApprovalItemAsMarkdown(item));
+      }
+    );
+
+  approvals
     .command("retry")
     .description("Retry execution of a failed consolidation approval item")
     .requiredOption("--id <id>", "approval item ID")

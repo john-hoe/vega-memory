@@ -68,12 +68,12 @@ export const runConsolidationAcrossProjects = (
   const scheduler = new ConsolidationScheduler(repository, config);
   const mode = options.mode ?? "dry_run";
   const trigger = options.trigger ?? "nightly";
-  const projects = repository.listDistinctProjects();
+  const pairs = repository.listDistinctProjectTenantPairs();
   const runs: ConsolidationRunRecord[] = [];
   const savedReports: string[] = [];
 
-  for (const project of projects) {
-    const run = scheduler.run(project, null, { mode, trigger });
+  for (const { project, tenant_id } of pairs) {
+    const run = scheduler.run(project, tenant_id, { mode, trigger });
     runs.push(run);
 
     if (options.saveReports) {
@@ -88,7 +88,7 @@ export const runConsolidationAcrossProjects = (
   return {
     mode,
     trigger,
-    total_projects: projects.length,
+    total_projects: pairs.length,
     runs,
     saved_reports: savedReports
   };

@@ -740,3 +740,40 @@ test("consolidation-run-all lists and runs all projects", () => {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("consolidation-run-all runs each project and tenant pair separately", () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-a-memory",
+        project: "shared-project",
+        tenant_id: "tenant-a",
+        accessed_projects: ["shared-project"]
+      })
+    );
+    repository.createMemory(
+      createStoredMemory({
+        id: "tenant-b-memory",
+        project: "shared-project",
+        tenant_id: "tenant-b",
+        accessed_projects: ["shared-project"]
+      })
+    );
+
+    const result = runConsolidationAcrossProjects(repository, {
+      ...baseConfig,
+      features: {
+        consolidationReport: true
+      }
+    });
+
+    assert.equal(result.total_projects, 2);
+    assert.equal(result.runs.length, 2);
+    assert.equal(result.runs.some((run) => run.project === "shared-project" && run.tenant_id === "tenant-a"), true);
+    assert.equal(result.runs.some((run) => run.project === "shared-project" && run.tenant_id === "tenant-b"), true);
+  } finally {
+    repository.close();
+  }
+});

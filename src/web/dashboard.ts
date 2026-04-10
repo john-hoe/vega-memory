@@ -364,6 +364,17 @@ export function mountDashboard(
     res.redirect("/");
   });
 
+  app.get("/dashboard/login", (req, res) => {
+    const settings = whiteLabelConfig.load();
+    const error =
+      typeof req.query.error === "string" && req.query.error.trim().length > 0
+        ? req.query.error.trim()
+        : undefined;
+
+    setDashboardHeaders(res);
+    res.type("html").send(renderLoginPage(settings, error));
+  });
+
   app.post("/dashboard/logout", (req, res) => {
     revokeDashboardSession(config, getDashboardSessionToken(req));
     res.clearCookie(DASHBOARD_AUTH_COOKIE, getDashboardCookieOptions(req));

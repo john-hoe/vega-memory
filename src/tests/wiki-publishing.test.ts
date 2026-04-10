@@ -380,6 +380,182 @@ test("NotionPublisher.publishAll retries database schema fetch after a transient
   }
 });
 
+test("NotionPublisher retains old content when append fails during update", async () => {
+  const repository = new Repository(":memory:");
+  const pageManager = new PageManager(repository);
+  const deletedBlockIds: string[] = [];
+  const page = createPublishedPage(pageManager, "Update Topic", "topic", "Updated content");
+  repository.setMetadata(`notion_page_id:${page.id}`, "notion-page-1");
+  const restoreFetch = withFetchMock(async (input, init) => {
+    const url = String(input);
+
+    if (url.endsWith("/databases/notion-db")) {
+      return new Response(
+        JSON.stringify({
+          properties: {
+            Title: { type: "title" },
+            Type: { type: "rich_text" },
+            Project: { type: "rich_text" },
+            Status: { type: "rich_text" },
+            Tags: { type: "multi_select" }
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (url.endsWith("/pages/notion-page-1")) {
+      return new Response(JSON.stringify({ id: "notion-page-1" }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json"
+        }
+      });
+    }
+
+    if (url.includes("/blocks/notion-page-1/children?")) {
+      return new Response(
+        JSON.stringify({
+          results: [{ id: "old-block-1" }, { id: "old-block-2" }],
+          has_more: false,
+          next_cursor: null
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (url.endsWith("/blocks/notion-page-1/children")) {
+      return new Response("append failed", { status: 500 });
+    }
+
+    if (url.endsWith("/blocks/old-block-1") || url.endsWith("/blocks/old-block-2")) {
+      deletedBlockIds.push(url.split("/").pop() ?? "");
+      return new Response(undefined, { status: 204 });
+    }
+
+    throw new Error(`Unexpected fetch call: ${url} ${String(init?.method ?? "GET")}`);
+  });
+
+  try {
+    const publisher = new NotionPublisher(pageManager, {
+      apiKey: "secret",
+      databaseId: "notion-db"
+    });
+
+    await assert.rejects(publisher.publishPage(page), /append failed/);
+    assert.deepEqual(deletedBlockIds, []);
+    assert.equal(repository.getMetadata(`notion_page_id:${page.id}`), "notion-page-1");
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
+test("NotionPublisher successful update appends new content before deleting old blocks", async () => {
+  const repository = new Repository(":memory:");
+  const pageManager = new PageManager(repository);
+  const operations: string[] = [];
+  const deletedBlockIds: string[] = [];
+  const page = createPublishedPage(pageManager, "Replace Topic", "topic", "Replacement body");
+  repository.setMetadata(`notion_page_id:${page.id}`, "notion-page-1");
+  const restoreFetch = withFetchMock(async (input, init) => {
+    const url = String(input);
+
+    if (url.endsWith("/databases/notion-db")) {
+      return new Response(
+        JSON.stringify({
+          properties: {
+            Title: { type: "title" },
+            Type: { type: "rich_text" },
+            Project: { type: "rich_text" },
+            Status: { type: "rich_text" },
+            Tags: { type: "multi_select" }
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (url.endsWith("/pages/notion-page-1")) {
+      operations.push("update-page");
+      return new Response(JSON.stringify({ id: "notion-page-1" }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json"
+        }
+      });
+    }
+
+    if (url.includes("/blocks/notion-page-1/children?")) {
+      operations.push("list-old-blocks");
+      return new Response(
+        JSON.stringify({
+          results: [{ id: "old-block-1" }, { id: "old-block-2" }],
+          has_more: false,
+          next_cursor: null
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (url.endsWith("/blocks/notion-page-1/children")) {
+      operations.push("append-new-blocks");
+      return new Response(JSON.stringify({ results: [] }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json"
+        }
+      });
+    }
+
+    if (url.endsWith("/blocks/old-block-1") || url.endsWith("/blocks/old-block-2")) {
+      operations.push(`delete-${url.split("/").pop() ?? ""}`);
+      deletedBlockIds.push(url.split("/").pop() ?? "");
+      return new Response(undefined, { status: 204 });
+    }
+
+    throw new Error(`Unexpected fetch call: ${url}`);
+  });
+
+  try {
+    const publisher = new NotionPublisher(pageManager, {
+      apiKey: "secret",
+      databaseId: "notion-db"
+    });
+
+    const result = await publisher.publishPage(page);
+
+    assert.equal(result.notionPageId, "notion-page-1");
+    assert.deepEqual(deletedBlockIds, ["old-block-1", "old-block-2"]);
+    assert.equal(operations.indexOf("append-new-blocks") > operations.indexOf("list-old-blocks"), true);
+    assert.equal(operations.indexOf("delete-old-block-1") > operations.indexOf("append-new-blocks"), true);
+    assert.equal(operations.indexOf("delete-old-block-2") > operations.indexOf("append-new-blocks"), true);
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
 test("NotionPublisher handles missing config", () => {
   const repository = new Repository(":memory:");
   const pageManager = new PageManager(repository);
