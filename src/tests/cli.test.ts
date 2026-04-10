@@ -1057,3 +1057,76 @@ test("CLI JSON export/import preserves archived metadata", () => {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("CLI JSON export/import preserves source_context", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-export-source-context-"));
+  const sourceDbPath = join(tempDir, "source.db");
+  const targetDbPath = join(tempDir, "target.db");
+  const exportPath = join(tempDir, "memories.json");
+  const sourceRepository = new Repository(sourceDbPath);
+
+  try {
+    sourceRepository.createMemory({
+      id: "memory-with-source-context",
+      type: "insight",
+      project: "test-project",
+      title: "Source Context Memory",
+      content: "This memory has source context from a specific device.",
+      summary: null,
+      embedding: null,
+      importance: 0.5,
+      source: "explicit",
+      tags: [],
+      created_at: "2026-04-01T00:00:00.000Z",
+      updated_at: "2026-04-01T00:00:00.000Z",
+      accessed_at: "2026-04-01T00:00:00.000Z",
+      status: "active",
+      verified: "verified",
+      scope: "project",
+      accessed_projects: ["test-project"],
+      source_context: {
+        actor: "user",
+        channel: "mcp",
+        device_id: "test-device-123",
+        device_name: "Test MacBook",
+        platform: "darwin",
+        session_id: "session-abc"
+      }
+    });
+
+    runCli(
+      ["export", "--format", "json", "-o", exportPath],
+      {
+        VEGA_DB_PATH: sourceDbPath,
+        OLLAMA_BASE_URL: "http://localhost:99999"
+      }
+    );
+
+    const exportedJson = readFileSync(exportPath, "utf8");
+    assert.match(exportedJson, /"device_id": "test-device-123"/);
+    assert.match(exportedJson, /"device_name": "Test MacBook"/);
+
+    runCli(["import", exportPath], {
+      VEGA_DB_PATH: targetDbPath,
+      OLLAMA_BASE_URL: "http://localhost:99999"
+    });
+
+    const targetRepository = new Repository(targetDbPath);
+
+    try {
+      const imported = targetRepository.getMemory("memory-with-source-context");
+
+      assert.ok(imported);
+      assert.ok(imported.source_context);
+      assert.equal(imported.source_context.device_id, "test-device-123");
+      assert.equal(imported.source_context.device_name, "Test MacBook");
+      assert.equal(imported.source_context.platform, "darwin");
+      assert.equal(imported.source_context.session_id, "session-abc");
+    } finally {
+      targetRepository.close();
+    }
+  } finally {
+    sourceRepository.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

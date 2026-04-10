@@ -953,6 +953,50 @@ test("delete removes memory", async () => {
   }
 });
 
+test("store dedup uses newest source_context over old one", async () => {
+  const restoreFetch = installEmbeddingMock([1, 0]);
+  const repository = new Repository(":memory:");
+  const service = new MemoryService(repository, baseConfig);
+
+  try {
+    await service.store({
+      content: "Deployment checklist before release",
+      type: "project_context",
+      project: "vega",
+      sourceContext: {
+        actor: "user",
+        channel: "mcp",
+        device_id: "device-a",
+        device_name: "Device A",
+        platform: "darwin"
+      }
+    });
+
+    const second = await service.store({
+      content: "Deployment checklist includes smoke tests before release",
+      type: "project_context",
+      project: "vega",
+      sourceContext: {
+        actor: "user",
+        channel: "mcp",
+        device_id: "device-b",
+        device_name: "Device B",
+        platform: "linux"
+      }
+    });
+
+    assert.equal(second.action, "updated");
+    const stored = repository.getMemory(second.id);
+    assert.ok(stored);
+    assert.ok(stored.source_context);
+    assert.equal(stored.source_context.device_id, "device-b");
+    assert.equal(stored.source_context.device_name, "Device B");
+  } finally {
+    restoreFetch();
+    repository.close();
+  }
+});
+
 test("exportSnapshot creates the output file", () => {
   const repository = new Repository(":memory:");
   const tempDir = mkdtempSync(join(tmpdir(), "vega-snapshot-file-"));

@@ -467,7 +467,7 @@ export class MemoryService {
           accessed_at: timestamp,
           verified,
           accessed_projects: unique([...matched.memory.accessed_projects, params.project]),
-          source_context: matched.memory.source_context ?? params.sourceContext ?? null
+          source_context: params.sourceContext ?? matched.memory.source_context ?? null
         },
         { auditContext }
       );

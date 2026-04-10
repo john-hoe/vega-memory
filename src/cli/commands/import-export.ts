@@ -12,6 +12,7 @@ import type {
   Memory,
   MemoryScope,
   MemorySource,
+  MemorySourceContext,
   MemoryStatus,
   MemoryType,
   VerifiedStatus
@@ -39,6 +40,7 @@ interface PortableMemory {
   verified?: VerifiedStatus;
   scope?: MemoryScope;
   accessed_projects?: string[];
+  source_context?: MemorySourceContext | null;
 }
 
 interface PortableExportPayload {
@@ -212,7 +214,13 @@ const validatePortableMemory = (value: unknown): PortableMemory => {
     status: validateStatus(candidate.status),
     verified: validateVerified(candidate.verified),
     scope: validateScope(candidate.scope),
-    accessed_projects: validateStringArray(candidate.accessed_projects, "accessed_projects")
+    accessed_projects: validateStringArray(candidate.accessed_projects, "accessed_projects"),
+    source_context:
+      candidate.source_context === undefined || candidate.source_context === null
+        ? (candidate.source_context as null | undefined)
+        : typeof candidate.source_context === "object"
+          ? (candidate.source_context as MemorySourceContext)
+          : undefined
   };
 };
 
@@ -234,7 +242,8 @@ const serializePortableMemory = (memory: Memory): PortableMemory => ({
   status: memory.status,
   verified: memory.verified,
   scope: memory.scope,
-  accessed_projects: memory.accessed_projects
+  accessed_projects: memory.accessed_projects,
+  source_context: memory.source_context ?? null
 });
 
 const isLosslessPortableMemory = (memory: PortableMemory): boolean =>
@@ -412,7 +421,8 @@ const buildImportedMemory = (entry: PortableMemory): Memory | null => {
     status: entry.status ?? "active",
     verified: entry.verified ?? (source === "explicit" ? "verified" : "unverified"),
     scope: entry.scope ?? (entry.type === "preference" ? "global" : "project"),
-    accessed_projects: entry.accessed_projects ?? [entry.project]
+    accessed_projects: entry.accessed_projects ?? [entry.project],
+    source_context: entry.source_context ?? null
   };
 };
 
@@ -569,7 +579,8 @@ export function registerImportExportCommands(
             status: importedMemory.status,
             verified: importedMemory.verified,
             scope: importedMemory.scope,
-            accessed_projects: importedMemory.accessed_projects
+            accessed_projects: importedMemory.accessed_projects,
+            source_context: importedMemory.source_context
           }, CLI_AUDIT_CONTEXT);
         }
 
@@ -591,7 +602,8 @@ export function registerImportExportCommands(
             status: importedMemory.status,
             verified: importedMemory.verified,
             scope: importedMemory.scope,
-            accessed_projects: importedMemory.accessed_projects
+            accessed_projects: importedMemory.accessed_projects,
+            source_context: importedMemory.source_context
           },
           {
             skipVersion: true,
