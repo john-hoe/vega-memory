@@ -116,23 +116,25 @@ export class GraphReportService {
     this.knowledgeGraphService = knowledgeGraphService ?? new KnowledgeGraphService(repository);
   }
 
-  generateGraphReport(project: string): string {
+  generateGraphReport(project: string, tenantId?: string | null): string {
     const normalizedProject = project.trim();
 
     if (normalizedProject.length === 0) {
       throw new Error("project is required");
     }
 
-    const stats = this.knowledgeGraphService.graphStats(normalizedProject);
-    const relations = this.repository.listGraphRelations(normalizedProject);
     const projectMemoryIds = new Set(
       this.repository
         .listMemories({
           project: normalizedProject,
+          tenant_id: tenantId,
           limit: 10_000
         })
         .map((memory) => memory.id)
     );
+    const relations = this.repository
+      .listGraphRelations(normalizedProject)
+      .filter((relation) => projectMemoryIds.has(relation.memory_id));
     const codeRecords = this.filterProjectCacheRecords(
       this.repository.listGraphContentCache("code"),
       projectMemoryIds
@@ -141,6 +143,7 @@ export class GraphReportService {
       this.repository.listGraphContentCache("doc"),
       projectMemoryIds
     );
+    const stats = this.buildFilteredStats(normalizedProject, relations, codeRecords, docRecords);
 
     const lines = [
       `# Graph Report: ${normalizedProject}`,
@@ -198,6 +201,40 @@ export class GraphReportService {
       `- Relation types: ${formatCountMap(stats.relation_types)}`,
       `- Average confidence: ${stats.average_confidence === null ? "n/a" : stats.average_confidence.toFixed(3)}`
     ];
+  }
+
+  private buildFilteredStats(
+    project: string,
+    relations: EntityRelation[],
+    codeRecords: GraphContentCacheRecord[],
+    docRecords: GraphContentCacheRecord[]
+  ): GraphStats {
+    const entityTypes: Record<string, number> = {};
+    const relationTypes: Record<string, number> = {};
+    const entityIds = new Map<string, string>();
+    let confidenceTotal = 0;
+
+    for (const relation of relations) {
+      relationTypes[relation.relation_type] = (relationTypes[relation.relation_type] ?? 0) + 1;
+      entityIds.set(relation.source_entity_id, relation.source_entity_type);
+      entityIds.set(relation.target_entity_id, relation.target_entity_type);
+      confidenceTotal += relation.confidence;
+    }
+
+    for (const entityType of entityIds.values()) {
+      entityTypes[entityType] = (entityTypes[entityType] ?? 0) + 1;
+    }
+
+    return {
+      project,
+      total_entities: entityIds.size,
+      total_relations: relations.length,
+      entity_types: entityTypes,
+      relation_types: relationTypes,
+      average_confidence: relations.length === 0 ? null : confidenceTotal / relations.length,
+      tracked_code_files: codeRecords.length,
+      tracked_doc_files: docRecords.length
+    };
   }
 
   private buildCodeStructureSection(

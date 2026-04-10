@@ -1069,6 +1069,58 @@ test("GraphReportService summarizes code and document sidecars in markdown", asy
   }
 });
 
+test("GraphReportService filters shared project reports by tenant memory ownership", () => {
+  const repository = new Repository(":memory:");
+  const graphService = new KnowledgeGraphService(repository);
+  const reportService = new GraphReportService(repository, graphService);
+
+  try {
+    repository.createMemory(
+      createMemory({
+        id: "tenant-a-memory",
+        tenant_id: "tenant-a",
+        project: "repo",
+        title: "Tenant A graph memory"
+      })
+    );
+    repository.createMemory(
+      createMemory({
+        id: "tenant-b-memory",
+        tenant_id: "tenant-b",
+        project: "repo",
+        title: "Tenant B graph memory"
+      })
+    );
+
+    repository.setGraphContentCache({
+      kind: "code",
+      scope_key: "repo",
+      file_path: "src/tenant-a.js",
+      content_hash: "hash-a",
+      entity_count: 1,
+      memory_ids: ["tenant-a-memory"],
+      last_modified_ms: null
+    });
+    repository.setGraphContentCache({
+      kind: "code",
+      scope_key: "repo",
+      file_path: "src/tenant-b.js",
+      content_hash: "hash-b",
+      entity_count: 1,
+      memory_ids: ["tenant-b-memory"],
+      last_modified_ms: null
+    });
+
+    const report = reportService.generateGraphReport("repo", "tenant-a");
+
+    assert.match(report, /Tracked code files: 1/);
+    assert.match(report, /`tenant-a\.js`/);
+    assert.doesNotMatch(report, /`src\/tenant-b\.js`/);
+  } finally {
+    repository.close();
+  }
+});
+
 test("DocIndexService.indexDirectory tracks cache status and removes stale section memories", async () => {
   const restoreFetch = installEmbeddingMock();
   const tempDir = mkdtempSync(join(tmpdir(), "vega-doc-index-incremental-"));

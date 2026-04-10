@@ -1046,7 +1046,7 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "topic_tunnel", args, observer, async () => {
-        const result = topicService.getTunnelView(args.topic_key);
+        const result = topicService.getTunnelView(args.topic_key, undefined);
 
         return {
           result: serializeTunnelView(result),
@@ -1064,7 +1064,7 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "topic_cross_project", args, observer, async () => {
-        const result = topicService.getCrossProjectMemories(args.topic_key, args.type);
+        const result = topicService.getCrossProjectMemories(args.topic_key, args.type, undefined);
 
         return {
           result: result.map(serializeCrossProjectTopicMemory),

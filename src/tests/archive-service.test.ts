@@ -453,6 +453,64 @@ test("POST /api/deep-recall returns redacted archive evidence by default", async
   }
 });
 
+test("ArchiveService.deepRecall enforces evidence_limit separately from result limit", () => {
+  const repository = new Repository(":memory:");
+  const archiveService = new ArchiveService(repository);
+
+  try {
+    for (let index = 1; index <= 5; index += 1) {
+      const memoryId = `memory-${index}`;
+      repository.createMemory({
+        id: memoryId,
+        tenant_id: null,
+        type: "decision",
+        project: "vega",
+        title: `Evidence ${index}`,
+        content: `Hot memory summary ${index}.`,
+        summary: `Summary ${index}`,
+        embedding: null,
+        importance: 0.5,
+        source: "explicit",
+        tags: ["backup", "evidence"],
+        created_at: "2026-04-09T00:00:00.000Z",
+        updated_at: "2026-04-09T00:00:00.000Z",
+        accessed_at: "2026-04-09T00:00:00.000Z",
+        status: "active",
+        verified: "verified",
+        scope: "project",
+        accessed_projects: ["vega"]
+      });
+      archiveService.store(
+        `Backup evidence record ${index} includes restore verification details.`,
+        "document",
+        "vega",
+        {
+          source_memory_id: memoryId,
+          title: `Evidence archive ${index}`
+        }
+      );
+    }
+
+    const result = archiveService.deepRecall({
+      query: "backup evidence",
+      project: "vega",
+      limit: 5,
+      evidence_limit: 2,
+      include_content: true
+    });
+
+    assert.equal(result.results.length, 5);
+    assert.equal(result.results.filter((entry) => entry.content !== undefined).length, 2);
+    assert.ok(result.results[0]?.content);
+    assert.ok(result.results[1]?.content);
+    assert.equal(result.results[2]?.content, undefined);
+    assert.equal(result.results[3]?.content, undefined);
+    assert.equal(result.results[4]?.content, undefined);
+  } finally {
+    repository.close();
+  }
+});
+
 test("POST /api/store with preserve_raw keeps raw archive evidence and warns on deep recall", async () => {
   const harness = await createHarness();
 

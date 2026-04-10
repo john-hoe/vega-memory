@@ -10,6 +10,7 @@ import type {
   StructuredGraph
 } from "./types.js";
 import { KnowledgeGraphService } from "./knowledge-graph.js";
+import { SidecarReconciler } from "./sidecar-reconciler.js";
 import { Repository } from "../db/repository.js";
 
 interface SyncFileCacheParams {
@@ -75,6 +76,7 @@ const toStatus = (
 export class GraphSidecarService {
   constructor(
     private readonly repository: Repository,
+    private readonly sidecarReconciler = new SidecarReconciler(repository),
     private readonly knowledgeGraphService = new KnowledgeGraphService(repository)
   ) {}
 
@@ -269,6 +271,7 @@ export class GraphSidecarService {
     for (const memoryId of [...new Set(memoryIds)]) {
       const entityIds = this.repository.getRelationEntityIdsForMemory(memoryId);
 
+      this.sidecarReconciler.onMemoryDeleted(memoryId);
       this.repository.deleteMemory(memoryId);
       this.repository.pruneEntitiesWithoutRelations(entityIds);
     }

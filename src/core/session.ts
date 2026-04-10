@@ -373,7 +373,7 @@ export class SessionService {
       taskHintKeywords,
       tenantId
     );
-    this.attachGraphReport(result, canonicalMode, project);
+    this.attachGraphReport(result, canonicalMode, project, tenantId);
     const violations = this.regressionGuard.recordSessionStart(
       mode,
       result.token_estimate,
@@ -402,14 +402,15 @@ export class SessionService {
   private attachGraphReport(
     result: SessionStartResult,
     mode: ReturnType<typeof normalizeSessionStartMode>,
-    project: string
+    project: string,
+    tenantId?: string | null
   ): void {
     if (this.config.sessionIncludeGraphReport !== true || (mode !== "L2" && mode !== "L3")) {
       return;
     }
 
     try {
-      const report = this.graphReportService.generateGraphReport(project);
+      const report = this.graphReportService.generateGraphReport(project, tenantId);
       const remainingBudget = Math.max(0, this.config.tokenBudget - result.token_estimate);
       const trimmedReport = trimTextWithinTokenBudget(report, remainingBudget);
 

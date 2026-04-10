@@ -286,3 +286,75 @@ test("cross-project topic methods build tunnel views without new tables", async 
     repository.close();
   }
 });
+
+test("cross-project topic views stay tenant-isolated for shared topic keys", async () => {
+  const repository = new Repository(":memory:");
+  const topicService = new TopicService(repository, baseConfig);
+
+  try {
+    repository.createMemory(
+      createStoredMemory("tenant-a-vega", {
+        tenant_id: "tenant-a",
+        project: "vega",
+        type: "decision",
+        title: "Tenant A decision"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory("tenant-a-atlas", {
+        tenant_id: "tenant-a",
+        project: "atlas",
+        type: "pitfall",
+        title: "Tenant A pitfall"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory("tenant-b-vega", {
+        tenant_id: "tenant-b",
+        project: "vega",
+        type: "decision",
+        title: "Tenant B decision"
+      })
+    );
+    repository.createMemory(
+      createStoredMemory("tenant-b-atlas", {
+        tenant_id: "tenant-b",
+        project: "atlas",
+        type: "pitfall",
+        title: "Tenant B pitfall"
+      })
+    );
+
+    await topicService.assignTopic("tenant-a-vega", "database", "explicit");
+    await topicService.assignTopic("tenant-a-atlas", "database", "explicit");
+    await topicService.assignTopic("tenant-b-vega", "database", "explicit");
+    await topicService.assignTopic("tenant-b-atlas", "database", "explicit");
+
+    const tunnel = topicService.getTunnelView("database", "tenant-a");
+
+    assert.equal(tunnel.project_count, 2);
+    assert.equal(tunnel.total_memory_count, 2);
+    assert.deepEqual(
+      tunnel.projects.map((project) => ({
+        project: project.project,
+        memoryIds: Object.values(project.memories_by_type)
+          .flat()
+          .map((memory) => memory.id)
+      })),
+      [
+        { project: "atlas", memoryIds: ["tenant-a-atlas"] },
+        { project: "vega", memoryIds: ["tenant-a-vega"] }
+      ]
+    );
+    assert.equal(
+      tunnel.projects.some((project) =>
+        Object.values(project.memories_by_type)
+          .flat()
+          .some((memory) => memory.id.startsWith("tenant-b"))
+      ),
+      false
+    );
+  } finally {
+    repository.close();
+  }
+});

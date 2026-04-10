@@ -327,17 +327,21 @@ export class TopicService {
     return this.repository.listTopics(project);
   }
 
-  listCrossProjectTopics(topicKey: string): Topic[] {
-    return this.repository.listCrossProjectTopics(normalizeTopicKey(topicKey));
+  listCrossProjectTopics(topicKey: string, tenantId?: string | null): Topic[] {
+    return this.repository.listCrossProjectTopics(normalizeTopicKey(topicKey), tenantId);
   }
 
-  getCrossProjectMemories(topicKey: string, type?: MemoryType): CrossProjectTopicMemory[] {
-    return this.repository.listCrossProjectTopicMemories(normalizeTopicKey(topicKey), type);
+  getCrossProjectMemories(
+    topicKey: string,
+    type?: MemoryType,
+    tenantId?: string | null
+  ): CrossProjectTopicMemory[] {
+    return this.repository.listCrossProjectTopicMemories(normalizeTopicKey(topicKey), type, tenantId);
   }
 
-  getTunnelView(topicKey: string): TunnelView {
+  getTunnelView(topicKey: string, tenantId?: string | null): TunnelView {
     const normalizedTopicKey = normalizeTopicKey(topicKey);
-    const memories = this.getCrossProjectMemories(normalizedTopicKey);
+    const memories = this.getCrossProjectMemories(normalizedTopicKey, undefined, tenantId);
     const projects = new Map<string, { topic: Topic; memories: Memory[] }>();
 
     for (const entry of memories) {
@@ -353,7 +357,7 @@ export class TopicService {
       });
     }
 
-    for (const topic of this.listCrossProjectTopics(normalizedTopicKey)) {
+    for (const topic of this.listCrossProjectTopics(normalizedTopicKey, tenantId)) {
       if (!projects.has(topic.project)) {
         projects.set(topic.project, {
           topic,

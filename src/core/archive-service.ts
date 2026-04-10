@@ -234,6 +234,7 @@ export class ArchiveService {
 
   deepRecall(request: DeepRecallRequest, tenantId?: string | null): DeepRecallResponse {
     const limit = request.limit ?? 5;
+    const evidenceLimit = request.evidence_limit;
     const includeContent = request.include_content ?? true;
     const includeMetadata = request.include_metadata ?? false;
     const injectIntoSession = request.inject_into_session ?? false;
@@ -256,12 +257,14 @@ export class ArchiveService {
     );
 
     return {
-      results: matches.map(({ archive, rank }) => {
+      results: matches.map(({ archive, rank }, index) => {
         const sourceMemory =
           archive.source_memory_id === null
             ? null
             : memoriesById.get(archive.source_memory_id) ?? null;
         const containsRaw = archive.metadata.contains_raw === true;
+        const includeContentForResult =
+          evidenceLimit !== undefined && index >= evidenceLimit ? false : includeContent;
 
         return {
           archive_id: archive.id,
@@ -270,8 +273,8 @@ export class ArchiveService {
           type: sourceMemory?.type ?? null,
           archive_type: archive.archive_type,
           title: archive.title,
-          ...(includeContent ? { content: archive.content } : {}),
-          contains_raw: containsRaw && includeContent,
+          ...(includeContentForResult ? { content: archive.content } : {}),
+          contains_raw: containsRaw && includeContentForResult,
           ...(sourceMemory?.summary !== undefined ? { summary: sourceMemory.summary } : {}),
           ...(sourceMemory?.verified !== undefined ? { verified: sourceMemory.verified } : {}),
           ...(includeMetadata

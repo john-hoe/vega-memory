@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
+import { GraphSidecarService } from "../core/graph-sidecar.js";
 import { MemoryService } from "../core/memory.js";
 import { SidecarReconciler } from "../core/sidecar-reconciler.js";
 import { TopicService } from "../core/topic-service.js";
@@ -332,6 +333,58 @@ test("SidecarReconciler.reconcileAll repairs archived-memory drift", async () =>
     assert.equal(repository.getFactClaim("claim-stale")?.status, "suspected_expired");
     assert.equal(repository.getMemoryTopic("stale-archived", staleTopic.topic_id)?.status, "superseded");
     assert.equal(repository.getAuditLog({ action: "sidecar_reconcile_all" }).length, 1);
+  } finally {
+    repository.close();
+  }
+});
+
+test("GraphSidecarService.cleanupDeletedFiles reconciles claims before deleting tracked memories", () => {
+  const repository = new Repository(":memory:");
+  const reconciler = new SidecarReconciler(repository, baseConfig);
+  const graphSidecar = new GraphSidecarService(repository, reconciler);
+
+  try {
+    repository.createMemory(
+      createMemory("delete-me", {
+        content: "Delete this indexed graph memory after claim reconciliation."
+      })
+    );
+    repository.setGraphContentCache({
+      kind: "code",
+      scope_key: "vega",
+      file_path: "src/delete-me.ts",
+      content_hash: "graph-hash",
+      entity_count: 1,
+      memory_ids: ["delete-me"],
+      last_modified_ms: null
+    });
+    repository.createFactClaim(
+      createFactClaim("claim-graph-delete", {
+        source_memory_id: "delete-me",
+        canonical_key: "vega\u0000graph\u0000delete",
+        predicate: "graph",
+        claim_value: "delete",
+        claim_text: "Graph sidecar cleanup should preserve evidence before deletion."
+      })
+    );
+
+    const record = repository.getGraphContentCache("code", "vega", "src/delete-me.ts");
+
+    assert.ok(record);
+
+    graphSidecar.cleanupDeletedFiles([record]);
+
+    const reconciledClaim = repository.getFactClaim("claim-graph-delete");
+
+    assert.equal(repository.getMemory("delete-me"), null);
+    assert.equal(
+      repository.getGraphContentCache("code", "vega", "src/delete-me.ts"),
+      null
+    );
+    assert.ok(reconciledClaim);
+    assert.equal(reconciledClaim.source_memory_id, null);
+    assert.ok(reconciledClaim.evidence_archive_id);
+    assert.equal(reconciledClaim.status, "suspected_expired");
   } finally {
     repository.close();
   }

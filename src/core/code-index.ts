@@ -4,6 +4,7 @@ import { basename, dirname, extname, relative, resolve } from "node:path";
 import type { CodeSymbol, GraphDirectoryStatus, Memory, StructuredGraph } from "./types.js";
 import { GraphSidecarService } from "./graph-sidecar.js";
 import { MemoryService } from "./memory.js";
+import { SidecarReconciler } from "./sidecar-reconciler.js";
 import { isCodeGraphEnabled, type VegaConfig } from "../config.js";
 import { Repository } from "../db/repository.js";
 
@@ -343,7 +344,10 @@ export class CodeIndexService {
     private readonly repository: Repository,
     private readonly memoryService: MemoryService,
     private readonly config?: Pick<VegaConfig, "features">,
-    private readonly graphSidecar = new GraphSidecarService(repository)
+    private readonly graphSidecar = new GraphSidecarService(
+      repository,
+      new SidecarReconciler(repository)
+    )
   ) {}
 
   indexFile(filePath: string): CodeSymbol[] {
