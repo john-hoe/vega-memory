@@ -206,7 +206,7 @@ async function main(): Promise<void> {
   registerPluginCommands(program, pluginLoader);
   registerTemplateCommands(program, templateMarketplace, repository);
   registerTuneCommand(program, relevanceTuner);
-  registerAnalyticsCommand(program, analyticsService);
+  registerAnalyticsCommand(program, analyticsService, config);
   registerArchiveCommands(program, archiveService);
   registerRSSCommands(program, rssService);
   registerTenantCommands(program, tenantService);

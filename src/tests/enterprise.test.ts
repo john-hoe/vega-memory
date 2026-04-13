@@ -232,6 +232,67 @@ test("AnalyticsService.getUsageStats returns valid stats", () => {
   }
 });
 
+test("AnalyticsService builds impact and weekly summaries from the shared metrics model", () => {
+  const harness = createRepositoryHarness();
+  const analyticsService = new AnalyticsService(harness.repository);
+  const now = new Date();
+  const recentTimestamp = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    harness.repository.createMemory(
+      createStoredMemory("impact-memory-1", {
+        created_at: recentTimestamp,
+        updated_at: recentTimestamp,
+        accessed_at: recentTimestamp,
+        access_count: 4
+      })
+    );
+    harness.repository.createMemory(
+      createStoredMemory("impact-memory-2", {
+        created_at: recentTimestamp,
+        updated_at: recentTimestamp,
+        accessed_at: recentTimestamp,
+        access_count: 2,
+        type: "pitfall"
+      })
+    );
+    harness.repository.logPerformance({
+      timestamp: recentTimestamp,
+      operation: "recall",
+      latency_ms: 31,
+      memory_count: 2,
+      result_count: 2,
+      avg_similarity: 0.81,
+      result_types: ["decision", "pitfall"],
+      bm25_result_count: 1
+    });
+
+    const impact = analyticsService.getImpactReport({
+      days: 7,
+      runtimeReadiness: "pass",
+      setupSurfaceCoverage: {
+        codex: "configured",
+        claude: "missing",
+        cursor: "partial"
+      }
+    });
+    const weekly = analyticsService.getWeeklySummary({
+      days: 7
+    });
+
+    assert.equal(impact.new_memories_this_week, 2);
+    assert.equal(impact.runtime_readiness, "pass");
+    assert.equal(impact.setup_surface_coverage?.codex, "configured");
+    assert.equal(impact.top_reused_memories[0]?.id, "impact-memory-1");
+    assert.equal(weekly.new_memories_this_week, 2);
+    assert.equal(weekly.api_calls_total, 1);
+    assert.equal(weekly.top_reused_memories_basis, "lifetime_access_count");
+    assert.equal(weekly.top_reused_memories[0]?.id, "impact-memory-1");
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test("BillingService.checkQuota returns correct limits for free plan", () => {
   const harness = createRepositoryHarness();
   const tenantService = new TenantService(harness.repository);

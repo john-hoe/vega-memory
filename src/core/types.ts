@@ -806,6 +806,45 @@ export interface GrowthPoint {
   count: number;
 }
 
+export interface ImpactMemorySummary {
+  id: string;
+  title: string;
+  project: string;
+  type: MemoryType;
+  access_count: number;
+  updated_at: string;
+}
+
+export interface ImpactReport {
+  generated_at: string;
+  window_days: number;
+  usage: UsageStats;
+  growth_trend: GrowthPoint[];
+  new_memories_this_week: number;
+  top_reused_memories_basis: "lifetime_access_count";
+  top_reused_memories: ImpactMemorySummary[];
+  memory_mix: Partial<Record<MemoryType, number>>;
+  runtime_readiness?: "pass" | "warn" | "fail";
+  setup_surface_coverage?: Record<string, "configured" | "partial" | "missing">;
+}
+
+export interface WeeklySummary {
+  generated_at: string;
+  window_days: number;
+  new_memories_this_week: number;
+  active_projects: number;
+  api_calls_total: number;
+  avg_latency_ms: number;
+  peak_hour: string | null;
+  top_reused_memories_basis: "lifetime_access_count";
+  top_reused_memories: ImpactMemorySummary[];
+  memory_mix: Partial<Record<MemoryType, number>>;
+  top_search_queries: Array<{
+    query: string;
+    count: number;
+  }>;
+}
+
 export interface BillingUsage {
   tenant_id: string;
   month: string;

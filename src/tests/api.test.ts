@@ -1681,6 +1681,54 @@ test("analytics forbids tenant bearer auth and root API key still returns global
   }
 });
 
+test("impact and weekly analytics routes return shared payloads for admin access", async () => {
+  const harness = await createHarness("top-secret");
+
+  try {
+    await harness.request("/api/store", {
+      method: "POST",
+      body: JSON.stringify({
+        content: "impact memory one",
+        type: "decision",
+        project: "impact"
+      })
+    });
+    await harness.request("/api/store", {
+      method: "POST",
+      body: JSON.stringify({
+        content: "impact memory two",
+        type: "pitfall",
+        project: "impact"
+      })
+    });
+
+    const impactResponse = await harness.request("/api/analytics/impact");
+    const impactBody = await readJson<{
+      new_memories_this_week: number;
+      setup_surface_coverage: Record<string, string>;
+      top_reused_memories_basis: string;
+    }>(impactResponse);
+    const weeklyResponse = await harness.request("/api/analytics/weekly");
+    const weeklyBody = await readJson<{
+      new_memories_this_week: number;
+      top_reused_memories_basis: string;
+      top_reused_memories: Array<{ id: string }>;
+    }>(weeklyResponse);
+
+    assert.equal(impactResponse.status, 200);
+    assert.equal(impactBody.new_memories_this_week, 2);
+    assert.equal(impactBody.top_reused_memories_basis, "lifetime_access_count");
+    assert.equal(typeof impactBody.setup_surface_coverage.codex, "string");
+
+    assert.equal(weeklyResponse.status, 200);
+    assert.equal(weeklyBody.new_memories_this_week, 2);
+    assert.equal(weeklyBody.top_reused_memories_basis, "lifetime_access_count");
+    assert.equal(Array.isArray(weeklyBody.top_reused_memories), true);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("dashboard sessions expire on the server after the TTL", async () => {
   const harness = await createHarness("top-secret");
   const sessionToken = "expiring-dashboard-session";

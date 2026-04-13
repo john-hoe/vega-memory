@@ -90,6 +90,60 @@ test("CLI health --regression --json includes regression guard data", () => {
   }
 });
 
+test("CLI impact --json and weekly --json reuse the shared analytics payloads", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-impact-"));
+  const dbPath = join(tempDir, "memory.db");
+  const env = {
+    VEGA_DB_PATH: dbPath,
+    OLLAMA_BASE_URL: "http://localhost:99999"
+  };
+
+  try {
+    runCli(
+      [
+        "store",
+        "Impact memory one",
+        "--type",
+        "decision",
+        "--project",
+        "impact"
+      ],
+      env
+    );
+    runCli(
+      [
+        "store",
+        "Impact memory two",
+        "--type",
+        "pitfall",
+        "--project",
+        "impact"
+      ],
+      env
+    );
+
+    const impact = JSON.parse(runCli(["impact", "--json"], env)) as {
+      new_memories_this_week: number;
+      top_reused_memories_basis: string;
+      setup_surface_coverage: Record<string, string>;
+    };
+    const weekly = JSON.parse(runCli(["weekly", "--json"], env)) as {
+      new_memories_this_week: number;
+      top_reused_memories_basis: string;
+      top_reused_memories: Array<{ id: string }>;
+    };
+
+    assert.equal(impact.new_memories_this_week, 2);
+    assert.equal(impact.top_reused_memories_basis, "lifetime_access_count");
+    assert.equal(typeof impact.setup_surface_coverage.codex, "string");
+    assert.equal(weekly.new_memories_this_week, 2);
+    assert.equal(weekly.top_reused_memories_basis, "lifetime_access_count");
+    assert.equal(Array.isArray(weekly.top_reused_memories), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CLI archive stats reports cold archive growth metrics", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-archive-stats-"));
   const dbPath = join(tempDir, "memory.db");

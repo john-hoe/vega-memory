@@ -4,6 +4,8 @@ import { StripeService } from "../billing/stripe.js";
 import { GdprService } from "../compliance/gdpr.js";
 import { isDeepRecallAvailable, type VegaConfig } from "../config.js";
 import { WebhookService } from "../integrations/webhooks.js";
+import { runDoctor } from "../cli/commands/doctor.js";
+import { inspectAllSetupStatuses } from "../cli/commands/setup.js";
 import { getRequestTenantId, getRequestUser, isRequestAuthenticated } from "./auth.js";
 import { requireRole, requireTenantAccess } from "./permissions.js";
 import { AnalyticsService } from "../core/analytics.js";
@@ -1079,6 +1081,47 @@ export function createRouter(services: APIRouterServices): Router {
   );
 
   router.get(
+    "/api/analytics/impact",
+    requireRole("admin"),
+    handleRoute(async (req, res) => {
+      const tenantId = getRequestTenantId(res) ?? undefined;
+      const days = parseIntegerString(req.query.days, "days") ?? 7;
+      const doctor = await runDoctor(services.config);
+      const setupSurfaceCoverage = inspectAllSetupStatuses().reduce<
+        Record<string, "configured" | "partial" | "missing">
+      >((coverage, status) => {
+        coverage[status.target] = status.state;
+        return coverage;
+      }, {});
+
+      res.status(200).json(
+        analyticsService.getImpactReport({
+          tenantId,
+          days,
+          runtimeReadiness: doctor.status,
+          setupSurfaceCoverage
+        })
+      );
+    })
+  );
+
+  router.get(
+    "/api/analytics/weekly",
+    requireRole("admin"),
+    handleRoute((req, res) => {
+      const tenantId = getRequestTenantId(res) ?? undefined;
+      const days = parseIntegerString(req.query.days, "days") ?? 7;
+
+      res.status(200).json(
+        analyticsService.getWeeklySummary({
+          tenantId,
+          days
+        })
+      );
+    })
+  );
+
+  router.get(
     "/api/health",
     handleRoute(async (_req, res) => {
       res.status(200).json(await getHealthReport(services.repository, services.config));
@@ -1330,11 +1373,26 @@ export function createRouter(services: APIRouterServices): Router {
               .get(tenantId)?.total ?? 0;
       const health = await getHealthReport(services.repository, services.config);
       const usage = analyticsService.getUsageStats(tenantId ?? undefined);
+      const impact = analyticsService.getImpactReport({
+        tenantId: tenantId ?? undefined,
+        runtimeReadiness: (await runDoctor(services.config)).status,
+        setupSurfaceCoverage: inspectAllSetupStatuses().reduce<
+          Record<string, "configured" | "partial" | "missing">
+        >((coverage, status) => {
+          coverage[status.target] = status.state;
+          return coverage;
+        }, {})
+      });
+      const weekly = analyticsService.getWeeklySummary({
+        tenantId: tenantId ?? undefined
+      });
       const recentActivity = services.repository.getRecentPerformanceLogs(10, undefined, tenantId);
 
       res.status(200).json({
         health,
         usage,
+        impact,
+        weekly,
         recent_activity: recentActivity,
         total_users: totalUsers,
         total_memories: totalMemories,

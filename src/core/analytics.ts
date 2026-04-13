@@ -1,4 +1,11 @@
-import type { GrowthPoint, MemoryType, UsageStats } from "./types.js";
+import type {
+  GrowthPoint,
+  ImpactMemorySummary,
+  ImpactReport,
+  MemoryType,
+  UsageStats,
+  WeeklySummary
+} from "./types.js";
 import { getDatabaseSizeBytes } from "./health.js";
 import { Repository } from "../db/repository.js";
 
@@ -29,10 +36,26 @@ interface DetailRow {
   detail: string | null;
 }
 
+interface ImpactMemoryRow {
+  id: string;
+  title: string;
+  project: string;
+  type: MemoryType;
+  access_count: number;
+  updated_at: string;
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const formatDate = (value: Date): string => value.toISOString().slice(0, 10);
+
+const toWindowStart = (days: number): string => {
+  const startDate = new Date();
+  startDate.setUTCHours(0, 0, 0, 0);
+  startDate.setUTCDate(startDate.getUTCDate() - days + 1);
+  return startDate.toISOString();
+};
 
 const normalizeSince = (since: string | undefined): string | undefined => {
   if (since === undefined) {
@@ -249,6 +272,10 @@ export class AnalyticsService {
   }
 
   getGrowthTrend(days: number): GrowthPoint[] {
+    return this.getGrowthTrendForWindow(days);
+  }
+
+  getGrowthTrendForWindow(days: number, tenantId?: string): GrowthPoint[] {
     if (!Number.isInteger(days) || days <= 0) {
       throw new Error("days must be a positive integer");
     }
@@ -257,15 +284,23 @@ export class AnalyticsService {
     startDate.setUTCHours(0, 0, 0, 0);
     startDate.setUTCDate(startDate.getUTCDate() - days + 1);
 
+    const clauses = ["status = 'active'", "substr(created_at, 1, 10) >= ?"];
+    const params: unknown[] = [formatDate(startDate)];
+
+    if (tenantId !== undefined && this.hasColumn("memories", "tenant_id")) {
+      clauses.push("tenant_id = ?");
+      params.push(tenantId);
+    }
+
     const rows = this.repository.db
-      .prepare<[string], DateCountRow>(
+      .prepare<unknown[], DateCountRow>(
         `SELECT substr(created_at, 1, 10) AS date, COUNT(*) AS total
          FROM memories
-         WHERE substr(created_at, 1, 10) >= ?
+         WHERE ${clauses.join(" AND ")}
          GROUP BY date
          ORDER BY date ASC`
       )
-      .all(formatDate(startDate));
+      .all(...params);
     const counts = new Map(rows.map((row) => [row.date, row.total]));
 
     return Array.from({ length: days }, (_, index) => {
@@ -278,6 +313,86 @@ export class AnalyticsService {
         count: counts.get(date) ?? 0
       };
     });
+  }
+
+  getTopReusedMemories(limit: number, tenantId?: string): ImpactMemorySummary[] {
+    const safeLimit = Number.isInteger(limit) && limit > 0 ? limit : 5;
+    const clauses = ["status = 'active'"];
+    const params: unknown[] = [];
+
+    if (tenantId !== undefined && this.hasColumn("memories", "tenant_id")) {
+      clauses.push("tenant_id = ?");
+      params.push(tenantId);
+    }
+
+    return this.repository.db
+      .prepare<unknown[], ImpactMemoryRow>(
+        `SELECT id, title, project, type, access_count, updated_at
+         FROM memories
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY access_count DESC, updated_at DESC
+         LIMIT ?`
+      )
+      .all(...params, safeLimit)
+      .map((row) => ({
+        id: row.id,
+        title: row.title,
+        project: row.project,
+        type: row.type,
+        access_count: row.access_count,
+        updated_at: row.updated_at
+      }));
+  }
+
+  getImpactReport(options?: {
+    tenantId?: string;
+    days?: number;
+    runtimeReadiness?: "pass" | "warn" | "fail";
+    setupSurfaceCoverage?: Record<string, "configured" | "partial" | "missing">;
+  }): ImpactReport {
+    const windowDays = Number.isInteger(options?.days) && (options?.days ?? 0) > 0 ? options?.days ?? 7 : 7;
+    const windowStart = toWindowStart(windowDays);
+    const usage = this.getUsageStats(options?.tenantId, windowStart);
+
+    return {
+      generated_at: new Date().toISOString(),
+      window_days: windowDays,
+      usage,
+      growth_trend: this.getGrowthTrendForWindow(windowDays, options?.tenantId),
+      new_memories_this_week: usage.memories_total,
+      top_reused_memories_basis: "lifetime_access_count",
+      top_reused_memories: this.getTopReusedMemories(5, options?.tenantId),
+      memory_mix: usage.memories_by_type,
+      ...(options?.runtimeReadiness === undefined
+        ? {}
+        : { runtime_readiness: options.runtimeReadiness }),
+      ...(options?.setupSurfaceCoverage === undefined
+        ? {}
+        : { setup_surface_coverage: options.setupSurfaceCoverage })
+    };
+  }
+
+  getWeeklySummary(options?: {
+    tenantId?: string;
+    days?: number;
+  }): WeeklySummary {
+    const windowDays = Number.isInteger(options?.days) && (options?.days ?? 0) > 0 ? options?.days ?? 7 : 7;
+    const windowStart = toWindowStart(windowDays);
+    const usage = this.getUsageStats(options?.tenantId, windowStart);
+
+    return {
+      generated_at: new Date().toISOString(),
+      window_days: windowDays,
+      new_memories_this_week: usage.memories_total,
+      active_projects: usage.active_projects,
+      api_calls_total: usage.api_calls_total,
+      avg_latency_ms: usage.avg_latency_ms,
+      peak_hour: usage.peak_hour,
+      top_reused_memories_basis: "lifetime_access_count",
+      top_reused_memories: this.getTopReusedMemories(5, options?.tenantId),
+      memory_mix: usage.memories_by_type,
+      top_search_queries: this.getTopSearchQueries(5)
+    };
   }
 
   getTopSearchQueries(limit: number): Array<{ query: string; count: number }> {
