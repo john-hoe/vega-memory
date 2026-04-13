@@ -103,6 +103,7 @@ export class RecallService {
 
   private logRecallPerformance(
     operation: "recall" | "recall_stream",
+    query: string,
     startedAt: number,
     options: SearchOptions,
     results: SearchResult[],
@@ -127,6 +128,11 @@ export class RecallService {
       Date.now() - startedAt,
       {
         operation,
+        detail: JSON.stringify({
+          query,
+          project: options.project ?? null,
+          tenant_id: options.tenant_id ?? null
+        }),
         tenantId: options.tenant_id ?? null,
         memoryCount: this.repository.countActiveMemories(
           options.project,
@@ -315,6 +321,7 @@ export class RecallService {
 
     this.logRecallPerformance(
       "recall",
+      query,
       startedAt,
       resolvedExecution.effectiveOptions,
       results,
@@ -364,6 +371,7 @@ export class RecallService {
           } finally {
             this.logRecallPerformance(
               "recall_stream",
+              query,
               startedAt,
               scopedOptions,
               scopedResults,
@@ -375,7 +383,7 @@ export class RecallService {
           return;
         }
       } else if (!topicOptions.fallback_to_tags) {
-        this.logRecallPerformance("recall_stream", startedAt, scopedOptions, [], 0, embeddingLatencyMs);
+        this.logRecallPerformance("recall_stream", query, startedAt, scopedOptions, [], 0, embeddingLatencyMs);
         return;
       }
 
@@ -399,6 +407,7 @@ export class RecallService {
       } finally {
         this.logRecallPerformance(
           "recall_stream",
+          query,
           startedAt,
           fallbackOptions,
           fallbackResults,
@@ -422,6 +431,7 @@ export class RecallService {
     } finally {
       this.logRecallPerformance(
         "recall_stream",
+        query,
         startedAt,
         effectiveOptions,
         results,

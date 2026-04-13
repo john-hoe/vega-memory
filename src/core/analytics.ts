@@ -45,10 +45,23 @@ interface ImpactMemoryRow {
   updated_at: string;
 }
 
+interface ResultTypesRow {
+  result_types: string | null;
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const formatDate = (value: Date): string => value.toISOString().slice(0, 10);
+
+const parseJsonArray = (value: string): unknown[] => {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
 
 const toWindowStart = (days: number): string => {
   const startDate = new Date();
@@ -391,8 +404,46 @@ export class AnalyticsService {
       top_reused_memories_basis: "lifetime_access_count",
       top_reused_memories: this.getTopReusedMemories(5, options?.tenantId),
       memory_mix: usage.memories_by_type,
+      result_type_hits: this.getResultTypeHits(options?.tenantId, windowStart),
       top_search_queries: this.getTopSearchQueries(5)
     };
+  }
+
+  getResultTypeHits(
+    tenantId?: string,
+    since?: string
+  ): Partial<Record<MemoryType, number>> {
+    const clauses = ["operation IN ('recall', 'recall_stream')"];
+    const params: unknown[] = [];
+    const normalizedSince = normalizeSince(since);
+
+    if (normalizedSince !== undefined) {
+      clauses.push("timestamp >= ?");
+      params.push(normalizedSince);
+    }
+
+    if (tenantId !== undefined && this.hasColumn("performance_log", "tenant_id")) {
+      clauses.push("tenant_id = ?");
+      params.push(tenantId);
+    }
+
+    const rows = this.repository.db
+      .prepare<unknown[], ResultTypesRow>(
+        `SELECT result_types
+         FROM performance_log
+         WHERE ${clauses.join(" AND ")}`
+      )
+      .all(...params);
+    const counts: Partial<Record<MemoryType, number>> = {};
+
+    for (const row of rows) {
+      const resultTypes = parseJsonArray(row.result_types ?? "[]") as MemoryType[];
+      for (const type of resultTypes) {
+        counts[type] = (counts[type] ?? 0) + 1;
+      }
+    }
+
+    return counts;
   }
 
   getTopSearchQueries(limit: number): Array<{ query: string; count: number }> {

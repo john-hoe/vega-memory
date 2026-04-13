@@ -423,6 +423,7 @@ export interface PerformanceLog {
   timestamp: string;
   tenant_id?: string | null;
   operation: string;
+  detail?: string | null;
   latency_ms: number;
   memory_count: number;
   result_count: number;
@@ -839,6 +840,7 @@ export interface WeeklySummary {
   top_reused_memories_basis: "lifetime_access_count";
   top_reused_memories: ImpactMemorySummary[];
   memory_mix: Partial<Record<MemoryType, number>>;
+  result_type_hits: Partial<Record<MemoryType, number>>;
   top_search_queries: Array<{
     query: string;
     count: number;

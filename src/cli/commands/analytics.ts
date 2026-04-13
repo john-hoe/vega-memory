@@ -107,6 +107,7 @@ export function registerAnalyticsCommand(
       console.log(`avg latency ms: ${summary.avg_latency_ms}`);
       console.log(`peak hour: ${summary.peak_hour ?? "none"}`);
       console.log(`memory mix: ${JSON.stringify(summary.memory_mix)}`);
+      console.log(`result type hits: ${JSON.stringify(summary.result_type_hits)}`);
       console.log(
         `top reused memories (${summary.top_reused_memories_basis}): ${JSON.stringify(summary.top_reused_memories)}`
       );

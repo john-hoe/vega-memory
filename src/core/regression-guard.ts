@@ -76,6 +76,7 @@ const toWarningMessage = (violation: RegressionGuardViolation): string =>
 
 interface RecallRecordOptions {
   operation?: "recall" | "recall_stream";
+  detail?: string | null;
   tenantId?: string | null;
   memoryCount?: number;
   resultTypes?: MemoryType[];
@@ -144,6 +145,7 @@ export class RegressionGuard {
       timestamp: new Date().toISOString(),
       tenant_id: options.tenantId ?? null,
       operation: options.operation ?? "recall",
+      detail: options.detail ?? null,
       latency_ms: latencyMs,
       memory_count: options.memoryCount ?? 0,
       result_count: resultCount,

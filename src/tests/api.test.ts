@@ -1719,6 +1719,7 @@ test("impact and weekly analytics routes return shared payloads for admin access
       new_memories_this_week: number;
       top_reused_memories_basis: string;
       top_reused_memories: Array<{ id: string }>;
+      result_type_hits: Record<string, number>;
     }>(weeklyResponse);
 
     assert.equal(impactResponse.status, 200);
@@ -1730,6 +1731,7 @@ test("impact and weekly analytics routes return shared payloads for admin access
     assert.equal(weeklyBody.new_memories_this_week, 2);
     assert.equal(weeklyBody.top_reused_memories_basis, "lifetime_access_count");
     assert.equal(Array.isArray(weeklyBody.top_reused_memories), true);
+    assert.equal(typeof weeklyBody.result_type_hits, "object");
   } finally {
     await harness.cleanup();
   }

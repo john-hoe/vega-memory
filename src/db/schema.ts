@@ -186,6 +186,7 @@ export function initializeDatabase(db: Database.Database): void {
       timestamp TEXT NOT NULL,
       tenant_id TEXT,
       operation TEXT NOT NULL,
+      detail TEXT,
       latency_ms REAL NOT NULL,
       memory_count INTEGER NOT NULL,
       result_count INTEGER NOT NULL,
@@ -702,6 +703,7 @@ export function initializeDatabase(db: Database.Database): void {
   ensureColumn(db, "audit_log", "tenant_id", "TEXT");
   ensureColumn(db, "performance_log", "avg_similarity", "REAL");
   ensureColumn(db, "performance_log", "tenant_id", "TEXT");
+  ensureColumn(db, "performance_log", "detail", "TEXT");
   ensureColumn(db, "performance_log", "result_types", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, "performance_log", "bm25_result_count", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "performance_log", "mode", "TEXT");

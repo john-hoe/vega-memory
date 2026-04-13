@@ -220,6 +220,17 @@ const renderWeekly = (weekly) => {
     )
   );
 
+  const resultTypeBadges = Object.entries(weekly.result_type_hits ?? {}).map(
+    ([type, count]) => `${type}: ${count}`
+  );
+  elements.weeklyList.appendChild(
+    createSignalItem(
+      "Pitfall / Decision Hits",
+      "Result-type hit counts across recall and recall_stream in the current weekly window.",
+      resultTypeBadges
+    )
+  );
+
   if (Array.isArray(weekly.top_search_queries) && weekly.top_search_queries.length > 0) {
     elements.weeklyList.appendChild(
       createSignalItem(

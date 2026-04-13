@@ -131,6 +131,7 @@ test("CLI impact --json and weekly --json reuse the shared analytics payloads", 
       new_memories_this_week: number;
       top_reused_memories_basis: string;
       top_reused_memories: Array<{ id: string }>;
+      result_type_hits: Record<string, number>;
     };
 
     assert.equal(impact.new_memories_this_week, 2);
@@ -139,6 +140,7 @@ test("CLI impact --json and weekly --json reuse the shared analytics payloads", 
     assert.equal(weekly.new_memories_this_week, 2);
     assert.equal(weekly.top_reused_memories_basis, "lifetime_access_count");
     assert.equal(Array.isArray(weekly.top_reused_memories), true);
+    assert.equal(typeof weekly.result_type_hits, "object");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

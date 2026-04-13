@@ -279,6 +279,7 @@ interface PerformanceLogRow {
   timestamp: string;
   tenant_id: string | null;
   operation: string;
+  detail: string | null;
   latency_ms: number;
   memory_count: number;
   result_count: number;
@@ -581,6 +582,7 @@ function mapPerformanceLog(row: PerformanceLogRow): PerformanceLog {
     timestamp: row.timestamp,
     tenant_id: row.tenant_id,
     operation: row.operation,
+    detail: row.detail,
     latency_ms: row.latency_ms,
     memory_count: row.memory_count,
     result_count: row.result_count,
@@ -3383,6 +3385,7 @@ export class Repository {
           string,
           string | null,
           string,
+          string | null,
           number,
           number,
           number,
@@ -3401,6 +3404,7 @@ export class Repository {
            timestamp,
            tenant_id,
            operation,
+           detail,
            latency_ms,
            memory_count,
            result_count,
@@ -3414,12 +3418,13 @@ export class Repository {
            top_k_inflation_ratio,
            embedding_latency_ms
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         entry.timestamp,
         entry.tenant_id ?? null,
         entry.operation,
+        entry.detail ?? null,
         entry.latency_ms,
         entry.memory_count,
         entry.result_count,

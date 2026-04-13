@@ -259,6 +259,9 @@ test("AnalyticsService builds impact and weekly summaries from the shared metric
     harness.repository.logPerformance({
       timestamp: recentTimestamp,
       operation: "recall",
+      detail: JSON.stringify({
+        query: "impact query"
+      }),
       latency_ms: 31,
       memory_count: 2,
       result_count: 2,
@@ -288,6 +291,9 @@ test("AnalyticsService builds impact and weekly summaries from the shared metric
     assert.equal(weekly.api_calls_total, 1);
     assert.equal(weekly.top_reused_memories_basis, "lifetime_access_count");
     assert.equal(weekly.top_reused_memories[0]?.id, "impact-memory-1");
+    assert.equal(weekly.result_type_hits.decision, 1);
+    assert.equal(weekly.result_type_hits.pitfall, 1);
+    assert.equal(weekly.top_search_queries[0]?.query, "impact query");
   } finally {
     harness.cleanup();
   }
