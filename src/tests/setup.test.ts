@@ -22,6 +22,8 @@ interface CliResult {
 }
 
 const bundledCursorRulesPath = join(projectRoot, "rules", "cursor-memory.mdc");
+const bundledCodexRulesPath = join(projectRoot, "rules", "CODEX.md");
+const bundledClaudeRulesPath = join(projectRoot, "rules", "CLAUDE.md");
 const bundledSnapshotPath = join(projectRoot, "data", "vega-memory-snapshot.md");
 
 const getBundledSnapshotSourcePath = (root: string): string | null => {
@@ -356,5 +358,66 @@ test("setup --server succeeds when the bundled snapshot is absent", async () => 
     await server.stop();
     rmSync(homeDirectory, { recursive: true, force: true });
     rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("setup --codex installs a managed rules section without requiring a server", async () => {
+  const homeDirectory = mkdtempSync(join(tmpdir(), "vega-setup-codex-"));
+  const codexDirectory = join(homeDirectory, ".codex");
+  const codexRulesPath = join(codexDirectory, "AGENTS.md");
+  const existingContent = "# Existing Codex instructions\n";
+
+  mkdirSync(codexDirectory, { recursive: true });
+  writeFileSync(codexRulesPath, existingContent, "utf8");
+
+  try {
+    const result = await runCli(["setup", "--codex"], homeDirectory);
+    const installed = readFileSync(codexRulesPath, "utf8");
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Installed Codex rules at .*\.codex\/AGENTS\.md\./);
+    assert.equal(installed.startsWith(existingContent), true);
+    assert.match(installed, /<!-- Vega Memory System: START -->/);
+    assert.match(installed, /Rules for Codex CLI:/);
+    assert.equal(installed.includes(readFileSync(bundledCodexRulesPath, "utf8").trim()), true);
+  } finally {
+    rmSync(homeDirectory, { recursive: true, force: true });
+  }
+});
+
+test("setup --claude installs a managed rules section without requiring a server", async () => {
+  const homeDirectory = mkdtempSync(join(tmpdir(), "vega-setup-claude-"));
+  const claudeDirectory = join(homeDirectory, ".claude");
+  const claudeRulesPath = join(claudeDirectory, "CLAUDE.md");
+
+  mkdirSync(claudeDirectory, { recursive: true });
+
+  try {
+    const result = await runCli(["setup", "--claude"], homeDirectory);
+    const installed = readFileSync(claudeRulesPath, "utf8");
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Installed Claude Code rules at .*\.claude\/CLAUDE\.md\./);
+    assert.match(installed, /<!-- Vega Memory System: START -->/);
+    assert.equal(installed.includes(readFileSync(bundledClaudeRulesPath, "utf8").trim()), true);
+  } finally {
+    rmSync(homeDirectory, { recursive: true, force: true });
+  }
+});
+
+test("setup --show reports the current target status", async () => {
+  const homeDirectory = mkdtempSync(join(tmpdir(), "vega-setup-show-"));
+
+  try {
+    const installResult = await runCli(["setup", "--codex"], homeDirectory);
+    const showResult = await runCli(["setup", "--show"], homeDirectory);
+
+    assert.equal(installResult.status, 0);
+    assert.equal(showResult.status, 0);
+    assert.match(showResult.stdout, /cursor: missing/);
+    assert.match(showResult.stdout, /codex: configured/);
+    assert.match(showResult.stdout, /claude: missing/);
+  } finally {
+    rmSync(homeDirectory, { recursive: true, force: true });
   }
 });
