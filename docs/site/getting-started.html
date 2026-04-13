@@ -268,26 +268,27 @@
     <main class="shell">
       <section class="hero">
         <div>
-          <div class="eyebrow">Fast path to a working local-first memory server</div>
+          <div class="eyebrow">Fast path to a shared long-term memory runtime for coding agents</div>
           <h1>Getting Started</h1>
           <p>
             Install Vega Memory, point it at SQLite and Ollama, store a first memory, and wire the
-            runtime into Cursor or Claude Code. This page uses the current repo scripts, config
-            defaults, and Docker definitions.
+            same backend into Cursor or Claude Code. This page uses the current repo scripts,
+            config defaults, and Docker definitions so your next coding agent starts with durable
+            context instead of starting from zero.
           </p>
         </div>
         <div class="checklist">
           <div class="card">
             <h3>Prerequisites</h3>
-            <p>Node.js 18+, a writable local filesystem, and optional Ollama at <code>http://localhost:11434</code>.</p>
+            <p>Node.js 20 LTS, a writable local filesystem, and optional Ollama at <code>http://localhost:11434</code>.</p>
           </div>
           <div class="card">
-            <h3>Build Target</h3>
-            <p><code>npm run build</code> compiles TypeScript and copies the web assets.</p>
+            <h3>Best Fit</h3>
+            <p>Solo developers, small teams, and tooling builders who want multiple coding agents to share the same memory across sessions.</p>
           </div>
           <div class="card">
-            <h3>API Mode</h3>
-            <p>Set <code>VEGA_API_KEY</code> to enable authenticated HTTP access and the scheduler API.</p>
+            <h3>Boundaries</h3>
+            <p>Use Vega as agent memory infrastructure, not as a generic note app, human-first wiki, or project tracker.</p>
           </div>
         </div>
       </section>
@@ -329,8 +330,8 @@ node dist/scheduler/index.js</pre>
         </section>
 
         <section class="section">
-          <h2>3. Store Your First Memory</h2>
-          <p class="section-intro">Verify the installation, then store and recall a concrete fact.</p>
+          <h2>3. Prove The Smallest Memory Loop</h2>
+          <p class="section-intro">Use the same four-step path the product promises: health, store, recall, then session preload.</p>
           <div class="cards">
             <article class="card">
               <h3>CLI</h3>
@@ -342,6 +343,10 @@ vega store "Always checkpoint WAL before backup" \
 
 vega recall "sqlite backup" \
   --project my-project \
+  --json
+
+vega session-start --dir "$(pwd)" \
+  --mode L1 \
   --json</pre>
             </article>
             <article class="card">
@@ -359,45 +364,32 @@ vega recall "sqlite backup" \
         </section>
 
         <section class="section">
-          <h2>4. MCP Setup</h2>
-          <p class="section-intro">Use MCP for automatic tool calls in Cursor, or CLI rules for Claude Code.</p>
+          <h2>4. Agent Setup</h2>
+          <p class="section-intro">Pick the first agent surface you want to wire into the same memory backend, then use <code>vega setup --show</code> to confirm the local status.</p>
           <div class="cards">
             <article class="card">
-              <h3>Cursor</h3>
-              <p>Add Vega as an MCP server in <code>~/.cursor/mcp.json</code>.</p>
-              <pre>{
-  "mcpServers": {
-    "vega": {
-      "command": "node",
-      "args": ["/absolute/path/to/vega-memory/dist/index.js"],
-      "env": {
-        "VEGA_DB_PATH": "/absolute/path/to/vega-memory/data/memory.db",
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "bge-m3"
-      }
-    }
-  }
-}</pre>
-              <p>Then add a workspace rule that auto-calls <code>session_start</code> and <code>memory_store</code> as work happens.</p>
+              <h3>Codex</h3>
+              <p>Install a managed Vega Memory rules section into <code>~/.codex/AGENTS.md</code>.</p>
+              <pre>vega setup --codex
+vega setup --show</pre>
+              <p>Use this when Codex is your first CLI surface and you want session-start / recall / store guidance installed quickly.</p>
             </article>
             <article class="card">
               <h3>Claude Code</h3>
-              <p>Add the memory workflow to your project <code>CLAUDE.md</code>.</p>
-              <pre># Vega Memory Rules
+              <p>Install a managed Vega Memory rules section into <code>~/.claude/CLAUDE.md</code>.</p>
+              <pre>vega setup --claude
+vega setup --show</pre>
+              <p>Use this when Claude Code is the first client you want to connect through the CLI-first workflow.</p>
+            </article>
+            <article class="card">
+              <h3>Cursor Client Mode</h3>
+              <p>Use the setup helper when Vega is already running as a shared server and you want Cursor to connect in remote client mode.</p>
+              <pre>vega setup --server 127.0.0.1 \
+  --port 3271 \
+  --cursor
 
-## Session start
-Run: `vega session-start --dir $(pwd) --json`
-
-## Auto-store
-- Task completed: `vega store "what was done" --type task_state --project PROJECT_NAME`
-- Bug fixed: `vega store "error + solution" --type pitfall --project PROJECT_NAME`
-- Decision made: `vega store "decision + reasoning" --type decision --project PROJECT_NAME`
-
-## Before making changes
-Run: `vega recall "relevant query" --project PROJECT_NAME --json`
-
-## Session end
-Run: `vega session-end --project PROJECT_NAME --summary "what was accomplished"`</pre>
+vega setup --show</pre>
+              <p>The manual local MCP stdio example still exists in the deployment guide when you want Cursor to launch the local runtime directly.</p>
             </article>
           </div>
         </section>
@@ -429,6 +421,21 @@ curl -H "Authorization: Bearer $VEGA_API_KEY" \
     ports:
       - "11434:11434"</pre>
               <p>For production, replace the default API key, persist the volume, and front the service with your preferred network policy.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>6. Product Boundaries</h2>
+          <p class="section-intro">This guide assumes you are adopting Vega as shared memory infrastructure for coding agents.</p>
+          <div class="cards">
+            <article class="card">
+              <h3>What Vega Is</h3>
+              <p>One local-first memory backend for agent decisions, pitfalls, preferences, task state, and project context across MCP, CLI, and HTTP workflows.</p>
+            </article>
+            <article class="card">
+              <h3>What Vega Is Not</h3>
+              <p>Not a generic note app, broad knowledge suite, or chat-history replacement where human authoring is the center of the product.</p>
             </article>
           </div>
         </section>

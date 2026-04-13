@@ -263,7 +263,7 @@
       }
 
       .plan.featured::before {
-        content: "Most Popular";
+        content: "Common Fit";
         position: absolute;
         top: 18px;
         right: 18px;
@@ -379,13 +379,13 @@
     <main class="shell">
       <section class="hero">
         <article class="hero-card">
-          <div class="eyebrow">SQLite-backed memory for coding agents and MCP clients</div>
-          <h1>Vega Memory — AI-Native Memory Server</h1>
-          <p>Local-first memory for AI tools. SQLite + vector search + MCP protocol.</p>
+          <div class="eyebrow">Shared long-term memory infrastructure for coding agents</div>
+          <h1>Vega Memory keeps coding agents from starting at zero.</h1>
+          <p>Local-first memory runtime for Cursor, Codex, Claude Code, OpenClaw, scripts, and MCP clients.</p>
           <p>
-            Persist decisions, pitfalls, preferences, and project context across sessions with a
+            Persist decisions, pitfalls, preferences, and project context across sessions with one
             runtime that works over MCP, CLI, and HTTP. Keep the data local, keep the search fast,
-            and keep every tool pointed at the same source of truth.
+            and keep every coding tool pointed at the same source of truth.
           </p>
           <div class="actions">
             <a class="cta" href="./getting-started.html">Get Started</a>
@@ -414,34 +414,34 @@
       <section class="section panel" id="features">
         <div class="section-header">
           <div>
-            <h2>Core Features</h2>
-            <p>Built for agent workflows that need durable state, fast retrieval, and controlled deployment.</p>
+            <h2>Why Teams Use Vega</h2>
+            <p>Vega is optimized for coding-agent continuity: durable memory, shared access surfaces, and operational control around one backend.</p>
           </div>
         </div>
         <div class="grid features">
           <article class="feature">
-            <h3>Hybrid Search</h3>
-            <p>Blend semantic similarity with exact-match lookup so recovered memories stay relevant and debuggable.</p>
+            <h3>Session Continuity</h3>
+            <p>Carry decisions, pitfalls, preferences, and project context from one coding session into the next instead of re-explaining the repo every time.</p>
           </article>
           <article class="feature">
-            <h3>Multi-tenant</h3>
-            <p>Scope API traffic, billing, dashboard access, and memory retrieval per tenant without fragmenting the platform.</p>
+            <h3>Shared Backend</h3>
+            <p>Let Cursor, Codex, Claude Code, scripts, and background services reuse the same long-term memory instead of creating per-tool silos.</p>
           </article>
           <article class="feature">
-            <h3>Wiki Knowledge Base</h3>
-            <p>Promote recurring lessons into structured wiki pages with comments, notifications, and permissions.</p>
+            <h3>Hybrid Recall</h3>
+            <p>Blend semantic similarity with exact-match lookup so recovered memories stay relevant, inspectable, and useful during real coding work.</p>
           </article>
           <article class="feature">
-            <h3>MCP Protocol</h3>
-            <p>Expose memory operations directly to MCP-capable clients so AI tools can store and recall context automatically.</p>
+            <h3>MCP + CLI + HTTP</h3>
+            <p>Expose the same memory operations through agent-native MCP calls, terminal workflows, and authenticated remote access.</p>
           </article>
           <article class="feature">
-            <h3>Enterprise Security</h3>
-            <p>API keys, tenant isolation, admin controls, audit trails, and dashboard auth are built into the service layer.</p>
+            <h3>Operational Control</h3>
+            <p>API keys, tenant isolation, dashboard auth, backups, audit trails, and encryption live in the service layer instead of in per-agent prompts.</p>
           </article>
           <article class="feature">
-            <h3>Self-hosted or SaaS</h3>
-            <p>Start on a laptop, move to a server, or package it for a managed offer without changing the application model.</p>
+            <h3>Supporting Surfaces</h3>
+            <p>Wiki, graph, analytics, and dashboard views exist to support the memory runtime rather than redefine Vega as a generic knowledge product.</p>
           </article>
         </div>
       </section>
@@ -449,57 +449,74 @@
       <section class="section panel" id="pricing">
         <div class="section-header">
           <div>
-            <h2>Pricing</h2>
-            <p>The plans below match the current billing definitions in <code>src/billing/plans.ts</code>.</p>
+            <h2>Who Vega Is For</h2>
+            <p>Adopt Vega when you need a shared memory layer for coding agents, not when you are primarily shopping for human-first note-taking software.</p>
           </div>
         </div>
         <div class="grid pricing">
           <article class="plan">
-            <h3>Free</h3>
-            <div class="price">$0 <small>/month</small></div>
-            <p>For local evaluation, solo workflows, and lightweight wiki usage.</p>
+            <h3>Solo Builders</h3>
+            <div class="price">Local-First</div>
+            <p>For one developer using multiple coding agents in the same repository or machine fleet.</p>
             <ul>
-              <li>100 memories</li>
-              <li>1 user</li>
-              <li>10 MB storage</li>
-              <li>Core memory storage</li>
-              <li>Single-user workspace</li>
-              <li>Basic wiki pages</li>
+              <li>Keep Cursor, Codex, and Claude Code aligned</li>
+              <li>Persist pitfalls and decisions between sessions</li>
+              <li>Stay local with SQLite and optional Ollama</li>
+              <li>Use MCP or CLI as the primary workflow surface</li>
             </ul>
           </article>
           <article class="plan featured">
-            <h3>Pro</h3>
-            <div class="price">$29 <small>/month</small></div>
-            <p>For teams that need higher throughput, collaboration, and deeper wiki capacity.</p>
+            <h3>Shared Team Memory</h3>
+            <div class="price">Common Fit</div>
+            <p>For small engineering teams that want agents and services to reuse one backend instead of fragmenting context by tool.</p>
             <ul>
-              <li>10,000 memories</li>
-              <li>10 users</li>
-              <li>1,024 MB storage</li>
-              <li>Team collaboration</li>
-              <li>Higher API throughput</li>
-              <li>Expanded wiki capacity</li>
+              <li>Centralize agent memory behind HTTP or shared storage</li>
+              <li>Support remote machines and background jobs</li>
+              <li>Add auth, dashboard access, and maintenance scheduling</li>
+              <li>Preserve one source of truth for engineering context</li>
             </ul>
           </article>
           <article class="plan">
-            <h3>Enterprise</h3>
-            <div class="price">Contact us</div>
-            <p>For organizations that need custom contracts, advanced identity, and effectively unbounded limits.</p>
+            <h3>Platform And Tooling Teams</h3>
+            <div class="price">Infra Layer</div>
+            <p>For builders exposing memory to custom agents, internal tools, and automation surfaces.</p>
             <ul>
-              <li>Unlimited memories</li>
-              <li>Unlimited users</li>
-              <li>Unlimited storage</li>
-              <li>Unlimited wiki pages</li>
-              <li>Custom contract</li>
-              <li>SSO and custom branding</li>
+              <li>Use one backend across MCP, CLI, and HTTP</li>
+              <li>Embed memory into custom coding workflows</li>
+              <li>Layer wiki, graph, and analytics where helpful</li>
+              <li>Keep Vega positioned as infrastructure, not as a generic workspace suite</li>
             </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section panel" id="boundaries">
+        <div class="section-header">
+          <div>
+            <h2>Product Boundaries</h2>
+            <p>Vega overlaps with adjacent tooling, but its job is narrower and more specific.</p>
+          </div>
+        </div>
+        <div class="grid features">
+          <article class="feature">
+            <h3>Not A Generic Note App</h3>
+            <p>Vega is not centered on freeform personal note capture. It stores structured, agent-usable engineering memory that can be recalled automatically.</p>
+          </article>
+          <article class="feature">
+            <h3>Not A Broad Knowledge Suite</h3>
+            <p>Wiki and graph features support the memory runtime, but the core product is still cross-session memory for coding agents rather than a general documentation portal.</p>
+          </article>
+          <article class="feature">
+            <h3>Not A Project Tracker</h3>
+            <p>Vega does not replace issue trackers, chat tools, or task boards. It gives agents the durable context they need while those systems remain the workflow system of record.</p>
           </article>
         </div>
       </section>
 
       <section class="cta-panel">
         <div>
-          <h2>Start with the docs, wire in the API, and keep your agents stateful.</h2>
-          <p>Use the quick start for local setup, then move into the API reference when you are ready to automate memory storage and recall.</p>
+          <h2>Start with the docs, wire in the runtime, and keep your coding agents stateful.</h2>
+          <p>Use the quick start for local setup, then move into the API reference when you are ready to automate shared memory storage and recall.</p>
         </div>
         <div class="actions">
           <a class="cta" href="./getting-started.html">Quick Start</a>

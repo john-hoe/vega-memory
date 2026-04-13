@@ -1,5 +1,9 @@
 # Vega Memory HTTP API
 
+The HTTP API is one access surface for Vega's shared long-term memory infrastructure for coding agents. It sits alongside MCP and the CLI so the same memory backend can serve interactive agents, scripts, dashboards, and remote services.
+
+If you are evaluating Vega, treat this API as part of the memory runtime rather than as a separate generic knowledge-service product. The core job is to preserve and return agent-usable engineering context across sessions.
+
 ## Base URL
 
 The scheduler hosts the API on:

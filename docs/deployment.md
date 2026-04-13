@@ -1,5 +1,9 @@
 # Vega Memory Deployment
 
+Vega is best deployed as shared long-term memory infrastructure for coding agents. This guide covers how to run the same backend behind MCP, CLI, and HTTP so Cursor, Codex, Claude Code, scripts, and remote services can reuse one memory base.
+
+Use this guide when your problem is cross-session agent continuity. If you mainly need a generic note app, human-first wiki, or project tracker, Vega overlaps with that space but is not positioned as that product.
+
 ## Quick Start
 
 Install dependencies, build the project, then start the MCP entrypoint:
@@ -32,7 +36,7 @@ Build and start the stack:
 docker compose up --build
 ```
 
-The provided [`docker-compose.yml`](/Users/johnmacmini/workspace/vega-memory/docker-compose.yml) starts:
+The provided [`docker-compose.yml`](../docker-compose.yml) starts:
 
 - `vega`: scheduler + HTTP API on port `3000`
 - `ollama`: Ollama server on port `11434`
@@ -101,6 +105,23 @@ Related variables commonly used in production:
 
 ## MCP / Agent Integration
 
+These integration paths all point back to the same underlying memory service. Pick the surface that matches how your coding agents work today, rather than treating the deployment as a separate product tier.
+
+If you want the quickest CLI-first onboarding path, use the setup helpers first and then confirm the local status:
+
+```bash
+vega setup --codex
+vega setup --claude
+vega setup --show
+```
+
+If Vega is already running as a shared server and you want Cursor in remote client mode, use:
+
+```bash
+vega setup --server 127.0.0.1 --port 3271 --cursor
+vega setup --show
+```
+
 ### Cursor
 
 Add Vega as an MCP server in `~/.cursor/mcp.json`:
@@ -138,6 +159,10 @@ This repository currently documents Claude Code with the CLI flow rather than a 
 
 If your Claude Code host supports arbitrary MCP stdio servers, reuse the same `node dist/index.js` command shown in the Cursor example.
 
+### Codex
+
+Codex uses the same CLI-first memory workflow. `vega setup --codex` installs a managed Vega Memory rules section into `~/.codex/AGENTS.md`, and `vega setup --show` reports whether the Codex, Claude, and Cursor surfaces are currently configured, partial, or missing.
+
 ## Ollama Model Download
 
 Pull the default embedding model before running recall-heavy workflows:
@@ -154,7 +179,7 @@ curl http://localhost:11434/api/tags
 
 ## Backup Recommendations
 
-Vega stores its primary state in the SQLite database file pointed to by `VEGA_DB_PATH`.
+Vega stores its primary shared memory state in the SQLite database file pointed to by `VEGA_DB_PATH`.
 
 Recommended backups:
 
@@ -170,6 +195,12 @@ cp ./data/memory.db ./backups/memory-$(date +%F).db
 ```
 
 ## Troubleshooting
+
+If the deployment behaves unlike a shared agent memory service, first verify that the runtime surface matches the workflow you intended:
+
+- use MCP when coding agents should call memory tools automatically
+- use the CLI for shell-driven workflows and explicit scripting
+- use the HTTP API when multiple machines or background services must reach the same memory backend
 
 ### `GET /api/health` returns `401 unauthorized`
 
