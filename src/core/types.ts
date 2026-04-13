@@ -814,6 +814,31 @@ export interface ImpactMemorySummary {
   type: MemoryType;
   access_count: number;
   updated_at: string;
+  explanation?: string;
+}
+
+export interface RecommendedAction {
+  area: "setup" | "runtime" | "capture" | "reuse" | "adoption";
+  title: string;
+  reason: string;
+}
+
+export interface RuntimeReadinessDetail {
+  status: "pass" | "warn" | "fail";
+  summary: string;
+  reasons: string[];
+  suggestions: string[];
+}
+
+export interface ImpactConclusion {
+  status: "good" | "needs_attention" | "blocked";
+  headline: string;
+  detail: string;
+}
+
+export interface WeeklyOverview {
+  headline: string;
+  detail: string;
 }
 
 export interface ImpactReport {
@@ -826,7 +851,10 @@ export interface ImpactReport {
   top_reused_memories: ImpactMemorySummary[];
   memory_mix: Partial<Record<MemoryType, number>>;
   runtime_readiness?: "pass" | "warn" | "fail";
+  runtime_readiness_detail?: RuntimeReadinessDetail;
   setup_surface_coverage?: Record<string, "configured" | "partial" | "missing">;
+  conclusion?: ImpactConclusion;
+  recommended_actions: RecommendedAction[];
 }
 
 export interface WeeklySummary {
@@ -845,6 +873,9 @@ export interface WeeklySummary {
     query: string;
     count: number;
   }>;
+  overview: WeeklyOverview;
+  key_signals: string[];
+  recommended_actions: RecommendedAction[];
 }
 
 export interface BillingUsage {

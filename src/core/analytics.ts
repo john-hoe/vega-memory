@@ -1,9 +1,13 @@
 import type {
   GrowthPoint,
+  ImpactConclusion,
   ImpactMemorySummary,
   ImpactReport,
   MemoryType,
+  RecommendedAction,
+  RuntimeReadinessDetail,
   UsageStats,
+  WeeklyOverview,
   WeeklySummary
 } from "./types.js";
 import { getDatabaseSizeBytes } from "./health.js";
@@ -86,6 +90,11 @@ const normalizeSince = (since: string | undefined): string | undefined => {
 const normalizeQuery = (value: string): string | null => {
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+};
+
+const formatShortDate = (value: string): string => {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : formatDate(parsed);
 };
 
 const extractSearchQuery = (detail: string | null): string | null => {
@@ -353,19 +362,187 @@ export class AnalyticsService {
         project: row.project,
         type: row.type,
         access_count: row.access_count,
-        updated_at: row.updated_at
+        updated_at: row.updated_at,
+        explanation:
+          row.access_count > 0
+            ? `Top by lifetime access count (${row.access_count}) and most recently updated on ${formatShortDate(row.updated_at)}.`
+            : `Included as a recent ${row.type} memory in project ${row.project}.`
       }));
+  }
+
+  private buildRuntimeReadinessDetail(
+    runtimeReadiness?: "pass" | "warn" | "fail",
+    runtimeReadinessSummary?: string,
+    runtimeReadinessReasons?: string[],
+    runtimeReadinessSuggestions?: string[]
+  ): RuntimeReadinessDetail | undefined {
+    if (runtimeReadiness === undefined) {
+      return undefined;
+    }
+
+    return {
+      status: runtimeReadiness,
+      summary:
+        runtimeReadinessSummary ??
+        (runtimeReadiness === "pass"
+          ? "All onboarding checks passed."
+          : runtimeReadiness === "warn"
+            ? "Some onboarding checks need attention."
+            : "Onboarding is currently blocked by at least one failing check."),
+      reasons: runtimeReadinessReasons ?? [],
+      suggestions: runtimeReadinessSuggestions ?? []
+    };
+  }
+
+  private buildRecommendedActions(options: {
+    runtimeReadinessDetail?: RuntimeReadinessDetail;
+    setupSurfaceCoverage?: Record<string, "configured" | "partial" | "missing">;
+    newMemoriesThisWeek: number;
+    activeProjects: number;
+    topReusedMemories: ImpactMemorySummary[];
+  }): RecommendedAction[] {
+    const actions: RecommendedAction[] = [];
+    const coverageEntries = Object.entries(options.setupSurfaceCoverage ?? {});
+    const missingTargets = coverageEntries
+      .filter(([, state]) => state !== "configured")
+      .map(([target, state]) => `${target} (${state})`);
+
+    if (
+      options.runtimeReadinessDetail &&
+      options.runtimeReadinessDetail.status !== "pass"
+    ) {
+      actions.push({
+        area: "runtime",
+        title: "Resolve runtime readiness warnings",
+        reason:
+          options.runtimeReadinessDetail.suggestions[0] ??
+          options.runtimeReadinessDetail.summary
+      });
+    }
+
+    if (missingTargets.length > 0) {
+      actions.push({
+        area: "setup",
+        title: "Finish connecting your agent surfaces",
+        reason: `Still missing or partial: ${missingTargets.join(", ")}.`
+      });
+    }
+
+    if (options.newMemoriesThisWeek === 0) {
+      actions.push({
+        area: "capture",
+        title: "Store at least one real pitfall or decision this week",
+        reason: "The current window has no new memories, so Vega cannot build a fresh reuse signal."
+      });
+    }
+
+    if (options.topReusedMemories.length === 0) {
+      actions.push({
+        area: "reuse",
+        title: "Run one recall from a live task",
+        reason: "No reused memories have surfaced yet, so the system cannot show later-session value."
+      });
+    }
+
+    if (options.activeProjects <= 1) {
+      actions.push({
+        area: "adoption",
+        title: "Expand Vega into one more active project or workflow",
+        reason: "A second active project is the fastest way to validate cross-session and cross-context value."
+      });
+    }
+
+    return actions.slice(0, 3);
+  }
+
+  private buildImpactConclusion(options: {
+    runtimeReadinessDetail?: RuntimeReadinessDetail;
+    setupSurfaceCoverage?: Record<string, "configured" | "partial" | "missing">;
+    newMemoriesThisWeek: number;
+    topReusedMemories: ImpactMemorySummary[];
+  }): ImpactConclusion {
+    const configuredTargets = Object.values(options.setupSurfaceCoverage ?? {}).filter(
+      (state) => state === "configured"
+    ).length;
+
+    if (options.runtimeReadinessDetail?.status === "fail") {
+      return {
+        status: "blocked",
+        headline: "The memory loop is blocked by environment or setup issues.",
+        detail:
+          options.runtimeReadinessDetail.reasons[0] ??
+          options.runtimeReadinessDetail.summary
+      };
+    }
+
+    if (configuredTargets === 0) {
+      return {
+        status: "needs_attention",
+        headline: "The runtime exists, but no agent surface is fully connected yet.",
+        detail: "Finish at least one setup path so the next coding session can actually reuse memory."
+      };
+    }
+
+    if (options.topReusedMemories.length === 0) {
+      return {
+        status: "needs_attention",
+        headline: "The system is ready, but reuse has not shown up in this window yet.",
+        detail: "Capture and recall one real pitfall or decision to turn setup into visible value."
+      };
+    }
+
+    return {
+      status: "good",
+      headline: "Vega is producing visible memory reuse in active workflows.",
+      detail: `${options.topReusedMemories.length} high-value memories are already surfacing back into work, with ${options.newMemoriesThisWeek} new memories captured in the current window.`
+    };
+  }
+
+  private buildWeeklyOverview(options: {
+    newMemoriesThisWeek: number;
+    activeProjects: number;
+    topReusedMemories: ImpactMemorySummary[];
+    recommendedActions: RecommendedAction[];
+  }): WeeklyOverview {
+    if (options.topReusedMemories.length === 0) {
+      return {
+        headline: "This week emphasized capture and setup readiness more than demonstrated reuse.",
+        detail: `${options.newMemoriesThisWeek} new memories landed across ${options.activeProjects} active projects, but the top reused list is still empty.`
+      };
+    }
+
+    return {
+      headline: "This week produced reusable memory signals that can drive the next adoption step.",
+      detail: `${options.newMemoriesThisWeek} new memories landed across ${options.activeProjects} active projects, and the strongest reused memory is "${options.topReusedMemories[0]?.title ?? "Untitled memory"}".`
+    };
   }
 
   getImpactReport(options?: {
     tenantId?: string;
     days?: number;
     runtimeReadiness?: "pass" | "warn" | "fail";
+    runtimeReadinessSummary?: string;
+    runtimeReadinessReasons?: string[];
+    runtimeReadinessSuggestions?: string[];
     setupSurfaceCoverage?: Record<string, "configured" | "partial" | "missing">;
   }): ImpactReport {
     const windowDays = Number.isInteger(options?.days) && (options?.days ?? 0) > 0 ? options?.days ?? 7 : 7;
     const windowStart = toWindowStart(windowDays);
     const usage = this.getUsageStats(options?.tenantId, windowStart);
+    const topReusedMemories = this.getTopReusedMemories(5, options?.tenantId);
+    const runtimeReadinessDetail = this.buildRuntimeReadinessDetail(
+      options?.runtimeReadiness,
+      options?.runtimeReadinessSummary,
+      options?.runtimeReadinessReasons,
+      options?.runtimeReadinessSuggestions
+    );
+    const recommendedActions = this.buildRecommendedActions({
+      runtimeReadinessDetail,
+      setupSurfaceCoverage: options?.setupSurfaceCoverage,
+      newMemoriesThisWeek: usage.memories_total,
+      activeProjects: usage.active_projects,
+      topReusedMemories
+    });
 
     return {
       generated_at: new Date().toISOString(),
@@ -374,24 +551,75 @@ export class AnalyticsService {
       growth_trend: this.getGrowthTrendForWindow(windowDays, options?.tenantId),
       new_memories_this_week: usage.memories_total,
       top_reused_memories_basis: "lifetime_access_count",
-      top_reused_memories: this.getTopReusedMemories(5, options?.tenantId),
+      top_reused_memories: topReusedMemories,
       memory_mix: usage.memories_by_type,
       ...(options?.runtimeReadiness === undefined
         ? {}
         : { runtime_readiness: options.runtimeReadiness }),
+      ...(runtimeReadinessDetail === undefined
+        ? {}
+        : { runtime_readiness_detail: runtimeReadinessDetail }),
       ...(options?.setupSurfaceCoverage === undefined
         ? {}
-        : { setup_surface_coverage: options.setupSurfaceCoverage })
+        : { setup_surface_coverage: options.setupSurfaceCoverage }),
+      conclusion: this.buildImpactConclusion({
+        runtimeReadinessDetail,
+        setupSurfaceCoverage: options?.setupSurfaceCoverage,
+        newMemoriesThisWeek: usage.memories_total,
+        topReusedMemories
+      }),
+      recommended_actions: recommendedActions
     };
   }
 
   getWeeklySummary(options?: {
     tenantId?: string;
     days?: number;
+    runtimeReadiness?: "pass" | "warn" | "fail";
+    runtimeReadinessSummary?: string;
+    runtimeReadinessReasons?: string[];
+    runtimeReadinessSuggestions?: string[];
+    setupSurfaceCoverage?: Record<string, "configured" | "partial" | "missing">;
   }): WeeklySummary {
     const windowDays = Number.isInteger(options?.days) && (options?.days ?? 0) > 0 ? options?.days ?? 7 : 7;
     const windowStart = toWindowStart(windowDays);
     const usage = this.getUsageStats(options?.tenantId, windowStart);
+    const topReusedMemories = this.getTopReusedMemories(5, options?.tenantId);
+    const runtimeReadinessDetail = this.buildRuntimeReadinessDetail(
+      options?.runtimeReadiness,
+      options?.runtimeReadinessSummary,
+      options?.runtimeReadinessReasons,
+      options?.runtimeReadinessSuggestions
+    );
+    const recommendedActions = this.buildRecommendedActions({
+      runtimeReadinessDetail,
+      setupSurfaceCoverage: options?.setupSurfaceCoverage,
+      newMemoriesThisWeek: usage.memories_total,
+      activeProjects: usage.active_projects,
+      topReusedMemories
+    });
+    const resultTypeHits = this.getResultTypeHits(options?.tenantId, windowStart);
+    const topSearchQueries = this.getTopSearchQueries(5);
+    const keySignals: string[] = [];
+
+    if (topReusedMemories[0]) {
+      keySignals.push(
+        `Top reused memory: ${topReusedMemories[0].title} (${topReusedMemories[0].access_count} lifetime accesses).`
+      );
+    }
+
+    const topResultHit = Object.entries(resultTypeHits).sort((left, right) => right[1] - left[1])[0];
+    if (topResultHit) {
+      keySignals.push(
+        `Most frequent weekly recall hit type: ${topResultHit[0]} (${topResultHit[1]} hits).`
+      );
+    }
+
+    if (topSearchQueries[0]) {
+      keySignals.push(
+        `Most common recall query this week: ${topSearchQueries[0].query} (${topSearchQueries[0].count} times).`
+      );
+    }
 
     return {
       generated_at: new Date().toISOString(),
@@ -402,10 +630,18 @@ export class AnalyticsService {
       avg_latency_ms: usage.avg_latency_ms,
       peak_hour: usage.peak_hour,
       top_reused_memories_basis: "lifetime_access_count",
-      top_reused_memories: this.getTopReusedMemories(5, options?.tenantId),
+      top_reused_memories: topReusedMemories,
       memory_mix: usage.memories_by_type,
-      result_type_hits: this.getResultTypeHits(options?.tenantId, windowStart),
-      top_search_queries: this.getTopSearchQueries(5)
+      result_type_hits: resultTypeHits,
+      top_search_queries: topSearchQueries,
+      overview: this.buildWeeklyOverview({
+        newMemoriesThisWeek: usage.memories_total,
+        activeProjects: usage.active_projects,
+        topReusedMemories,
+        recommendedActions
+      }),
+      key_signals: keySignals,
+      recommended_actions: recommendedActions
     };
   }
 

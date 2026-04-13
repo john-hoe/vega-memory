@@ -1713,6 +1713,9 @@ test("impact and weekly analytics routes return shared payloads for admin access
       new_memories_this_week: number;
       setup_surface_coverage: Record<string, string>;
       top_reused_memories_basis: string;
+      conclusion: { headline: string };
+      recommended_actions: Array<{ title: string }>;
+      runtime_readiness_detail: { summary: string };
     }>(impactResponse);
     const weeklyResponse = await harness.request("/api/analytics/weekly");
     const weeklyBody = await readJson<{
@@ -1720,18 +1723,27 @@ test("impact and weekly analytics routes return shared payloads for admin access
       top_reused_memories_basis: string;
       top_reused_memories: Array<{ id: string }>;
       result_type_hits: Record<string, number>;
+      overview: { headline: string };
+      key_signals: string[];
+      recommended_actions: Array<{ title: string }>;
     }>(weeklyResponse);
 
     assert.equal(impactResponse.status, 200);
     assert.equal(impactBody.new_memories_this_week, 2);
     assert.equal(impactBody.top_reused_memories_basis, "lifetime_access_count");
     assert.equal(typeof impactBody.setup_surface_coverage.codex, "string");
+    assert.equal(typeof impactBody.conclusion.headline, "string");
+    assert.equal(Array.isArray(impactBody.recommended_actions), true);
+    assert.equal(typeof impactBody.runtime_readiness_detail.summary, "string");
 
     assert.equal(weeklyResponse.status, 200);
     assert.equal(weeklyBody.new_memories_this_week, 2);
     assert.equal(weeklyBody.top_reused_memories_basis, "lifetime_access_count");
     assert.equal(Array.isArray(weeklyBody.top_reused_memories), true);
     assert.equal(typeof weeklyBody.result_type_hits, "object");
+    assert.equal(typeof weeklyBody.overview.headline, "string");
+    assert.equal(Array.isArray(weeklyBody.key_signals), true);
+    assert.equal(Array.isArray(weeklyBody.recommended_actions), true);
   } finally {
     await harness.cleanup();
   }

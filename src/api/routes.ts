@@ -1087,6 +1087,17 @@ export function createRouter(services: APIRouterServices): Router {
       const tenantId = getRequestTenantId(res) ?? undefined;
       const days = parseIntegerString(req.query.days, "days") ?? 7;
       const doctor = await runDoctor(services.config);
+      const runtimeReadinessOptions = {
+        runtimeReadiness: doctor.status,
+        runtimeReadinessSummary:
+          doctor.status === "pass"
+            ? "All onboarding checks passed."
+            : `${doctor.checks.filter((check) => check.status !== "pass").length} onboarding checks need attention.`,
+        runtimeReadinessReasons: doctor.checks
+          .filter((check) => check.status !== "pass")
+          .map((check) => `${check.name}: ${check.summary}`),
+        runtimeReadinessSuggestions: doctor.suggestions
+      };
       const setupSurfaceCoverage = inspectAllSetupStatuses().reduce<
         Record<string, "configured" | "partial" | "missing">
       >((coverage, status) => {
@@ -1098,7 +1109,7 @@ export function createRouter(services: APIRouterServices): Router {
         analyticsService.getImpactReport({
           tenantId,
           days,
-          runtimeReadiness: doctor.status,
+          ...runtimeReadinessOptions,
           setupSurfaceCoverage
         })
       );
@@ -1108,14 +1119,34 @@ export function createRouter(services: APIRouterServices): Router {
   router.get(
     "/api/analytics/weekly",
     requireRole("admin"),
-    handleRoute((req, res) => {
+    handleRoute(async (req, res) => {
       const tenantId = getRequestTenantId(res) ?? undefined;
       const days = parseIntegerString(req.query.days, "days") ?? 7;
+      const doctor = await runDoctor(services.config);
+      const runtimeReadinessOptions = {
+        runtimeReadiness: doctor.status,
+        runtimeReadinessSummary:
+          doctor.status === "pass"
+            ? "All onboarding checks passed."
+            : `${doctor.checks.filter((check) => check.status !== "pass").length} onboarding checks need attention.`,
+        runtimeReadinessReasons: doctor.checks
+          .filter((check) => check.status !== "pass")
+          .map((check) => `${check.name}: ${check.summary}`),
+        runtimeReadinessSuggestions: doctor.suggestions
+      };
+      const setupSurfaceCoverage = inspectAllSetupStatuses().reduce<
+        Record<string, "configured" | "partial" | "missing">
+      >((coverage, status) => {
+        coverage[status.target] = status.state;
+        return coverage;
+      }, {});
 
       res.status(200).json(
         analyticsService.getWeeklySummary({
           tenantId,
-          days
+          days,
+          ...runtimeReadinessOptions,
+          setupSurfaceCoverage
         })
       );
     })
@@ -1373,18 +1404,33 @@ export function createRouter(services: APIRouterServices): Router {
               .get(tenantId)?.total ?? 0;
       const health = await getHealthReport(services.repository, services.config);
       const usage = analyticsService.getUsageStats(tenantId ?? undefined);
+      const doctor = await runDoctor(services.config);
+      const runtimeReadinessOptions = {
+        runtimeReadiness: doctor.status,
+        runtimeReadinessSummary:
+          doctor.status === "pass"
+            ? "All onboarding checks passed."
+            : `${doctor.checks.filter((check) => check.status !== "pass").length} onboarding checks need attention.`,
+        runtimeReadinessReasons: doctor.checks
+          .filter((check) => check.status !== "pass")
+          .map((check) => `${check.name}: ${check.summary}`),
+        runtimeReadinessSuggestions: doctor.suggestions
+      };
+      const setupSurfaceCoverage = inspectAllSetupStatuses().reduce<
+        Record<string, "configured" | "partial" | "missing">
+      >((coverage, status) => {
+        coverage[status.target] = status.state;
+        return coverage;
+      }, {});
       const impact = analyticsService.getImpactReport({
         tenantId: tenantId ?? undefined,
-        runtimeReadiness: (await runDoctor(services.config)).status,
-        setupSurfaceCoverage: inspectAllSetupStatuses().reduce<
-          Record<string, "configured" | "partial" | "missing">
-        >((coverage, status) => {
-          coverage[status.target] = status.state;
-          return coverage;
-        }, {})
+        ...runtimeReadinessOptions,
+        setupSurfaceCoverage
       });
       const weekly = analyticsService.getWeeklySummary({
-        tenantId: tenantId ?? undefined
+        tenantId: tenantId ?? undefined,
+        ...runtimeReadinessOptions,
+        setupSurfaceCoverage
       });
       const recentActivity = services.repository.getRecentPerformanceLogs(10, undefined, tenantId);
 

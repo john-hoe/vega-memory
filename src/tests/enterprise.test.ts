@@ -287,6 +287,9 @@ test("AnalyticsService builds impact and weekly summaries from the shared metric
     assert.equal(impact.runtime_readiness, "pass");
     assert.equal(impact.setup_surface_coverage?.codex, "configured");
     assert.equal(impact.top_reused_memories[0]?.id, "impact-memory-1");
+    assert.match(impact.conclusion?.headline ?? "", /Vega|runtime|reuse/i);
+    assert.equal(Array.isArray(impact.recommended_actions), true);
+    assert.equal(typeof impact.top_reused_memories[0]?.explanation, "string");
     assert.equal(weekly.new_memories_this_week, 2);
     assert.equal(weekly.api_calls_total, 1);
     assert.equal(weekly.top_reused_memories_basis, "lifetime_access_count");
@@ -294,6 +297,9 @@ test("AnalyticsService builds impact and weekly summaries from the shared metric
     assert.equal(weekly.result_type_hits.decision, 1);
     assert.equal(weekly.result_type_hits.pitfall, 1);
     assert.equal(weekly.top_search_queries[0]?.query, "impact query");
+    assert.equal(typeof weekly.overview.headline, "string");
+    assert.equal(Array.isArray(weekly.key_signals), true);
+    assert.equal(Array.isArray(weekly.recommended_actions), true);
   } finally {
     harness.cleanup();
   }

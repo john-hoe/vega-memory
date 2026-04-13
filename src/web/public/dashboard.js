@@ -165,6 +165,29 @@ const renderImpact = (impact) => {
   elements.impactSummary.textContent =
     `7-day snapshot • runtime ${impact.runtime_readiness ?? "unknown"} • ${impact.new_memories_this_week} new memories`;
 
+  if (impact.conclusion) {
+    elements.impactList.appendChild(
+      createSignalItem(
+        "System Conclusion",
+        `${impact.conclusion.headline} ${impact.conclusion.detail}`
+      )
+    );
+  }
+
+  if (impact.runtime_readiness_detail) {
+    const readinessBadges = [
+      ...impact.runtime_readiness_detail.reasons,
+      ...impact.runtime_readiness_detail.suggestions.slice(0, 2)
+    ];
+    elements.impactList.appendChild(
+      createSignalItem(
+        "Runtime Readiness",
+        impact.runtime_readiness_detail.summary,
+        readinessBadges
+      )
+    );
+  }
+
   elements.impactList.appendChild(
     createSignalItem(
       "Adoption Coverage",
@@ -180,19 +203,33 @@ const renderImpact = (impact) => {
       elements.impactList.appendChild(
         createSignalItem(
           memory.title || "Untitled memory",
-          `${memory.project || "global"} • ${memory.type || "unknown"} • access count ${memory.access_count ?? 0}`
+          memory.explanation ||
+            `${memory.project || "global"} • ${memory.type || "unknown"} • access count ${memory.access_count ?? 0}`,
+          [
+            `project: ${memory.project || "global"}`,
+            `type: ${memory.type || "unknown"}`
+          ]
         )
       );
     }
-    return;
+  } else {
+    elements.impactList.appendChild(
+      createSignalItem(
+        "Top Reused Memories",
+        "No reuse signal has been recorded yet."
+      )
+    );
   }
 
-  elements.impactList.appendChild(
-    createSignalItem(
-      "Top Reused Memories",
-      "No reuse signal has been recorded yet."
-    )
-  );
+  if (Array.isArray(impact.recommended_actions) && impact.recommended_actions.length > 0) {
+    elements.impactList.appendChild(
+      createSignalItem(
+        "Recommended Next Actions",
+        impact.recommended_actions.map((action) => `${action.title}: ${action.reason}`).join(" • "),
+        impact.recommended_actions.map((action) => action.area)
+      )
+    );
+  }
 };
 
 const renderWeekly = (weekly) => {
@@ -208,6 +245,15 @@ const renderWeekly = (weekly) => {
 
   elements.weeklySummary.textContent =
     `${weekly.window_days}-day summary • ${weekly.api_calls_total} API calls • peak hour ${weekly.peak_hour || "none"}`;
+
+  if (weekly.overview) {
+    elements.weeklyList.appendChild(
+      createSignalItem(
+        "Weekly Overview",
+        `${weekly.overview.headline} ${weekly.overview.detail}`
+      )
+    );
+  }
 
   const memoryMixBadges = Object.entries(weekly.memory_mix ?? {}).map(
     ([type, count]) => `${type}: ${count}`
@@ -245,6 +291,25 @@ const renderWeekly = (weekly) => {
       createSignalItem(
         "Top Search Queries",
         "No search query telemetry available yet."
+      )
+    );
+  }
+
+  if (Array.isArray(weekly.key_signals) && weekly.key_signals.length > 0) {
+    elements.weeklyList.appendChild(
+      createSignalItem(
+        "Most Valuable Signals",
+        weekly.key_signals.join(" • ")
+      )
+    );
+  }
+
+  if (Array.isArray(weekly.recommended_actions) && weekly.recommended_actions.length > 0) {
+    elements.weeklyList.appendChild(
+      createSignalItem(
+        "Recommended Next Actions",
+        weekly.recommended_actions.map((action) => `${action.title}: ${action.reason}`).join(" • "),
+        weekly.recommended_actions.map((action) => action.area)
       )
     );
   }

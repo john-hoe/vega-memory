@@ -126,21 +126,33 @@ test("CLI impact --json and weekly --json reuse the shared analytics payloads", 
       new_memories_this_week: number;
       top_reused_memories_basis: string;
       setup_surface_coverage: Record<string, string>;
+      conclusion: { headline: string };
+      recommended_actions: Array<{ title: string }>;
+      runtime_readiness_detail: { summary: string };
     };
     const weekly = JSON.parse(runCli(["weekly", "--json"], env)) as {
       new_memories_this_week: number;
       top_reused_memories_basis: string;
       top_reused_memories: Array<{ id: string }>;
       result_type_hits: Record<string, number>;
+      overview: { headline: string };
+      key_signals: string[];
+      recommended_actions: Array<{ title: string }>;
     };
 
     assert.equal(impact.new_memories_this_week, 2);
     assert.equal(impact.top_reused_memories_basis, "lifetime_access_count");
     assert.equal(typeof impact.setup_surface_coverage.codex, "string");
+    assert.equal(typeof impact.conclusion.headline, "string");
+    assert.equal(typeof impact.runtime_readiness_detail.summary, "string");
+    assert.equal(Array.isArray(impact.recommended_actions), true);
     assert.equal(weekly.new_memories_this_week, 2);
     assert.equal(weekly.top_reused_memories_basis, "lifetime_access_count");
     assert.equal(Array.isArray(weekly.top_reused_memories), true);
     assert.equal(typeof weekly.result_type_hits, "object");
+    assert.equal(typeof weekly.overview.headline, "string");
+    assert.equal(Array.isArray(weekly.key_signals), true);
+    assert.equal(Array.isArray(weekly.recommended_actions), true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

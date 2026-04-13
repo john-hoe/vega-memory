@@ -2,7 +2,7 @@ import { Command, InvalidArgumentError } from "commander";
 
 import type { VegaConfig } from "../../config.js";
 import { AnalyticsService } from "../../core/analytics.js";
-import { runDoctor } from "./doctor.js";
+import { runDoctor, type DoctorReport } from "./doctor.js";
 import { inspectAllSetupStatuses } from "./setup.js";
 
 const parseSince = (value: string): string => {
@@ -28,6 +28,18 @@ export function registerAnalyticsCommand(
       },
       {}
     );
+
+  const getRuntimeReadinessOptions = (report: DoctorReport) => ({
+    runtimeReadiness: report.status,
+    runtimeReadinessSummary:
+      report.status === "pass"
+        ? "All onboarding checks passed."
+        : `${report.checks.filter((check) => check.status !== "pass").length} onboarding checks need attention.`,
+    runtimeReadinessReasons: report.checks
+      .filter((check) => check.status !== "pass")
+      .map((check) => `${check.name}: ${check.summary}`),
+    runtimeReadinessSuggestions: report.suggestions
+  });
 
   program
     .command("analytics")
@@ -62,7 +74,7 @@ export function registerAnalyticsCommand(
       const doctor = await runDoctor(config);
       const report = analyticsService.getImpactReport({
         days: options.days,
-        runtimeReadiness: doctor.status,
+        ...getRuntimeReadinessOptions(doctor),
         setupSurfaceCoverage: getSetupSurfaceCoverage()
       });
 
@@ -74,6 +86,13 @@ export function registerAnalyticsCommand(
       console.log(`generated at: ${report.generated_at}`);
       console.log(`window days: ${report.window_days}`);
       console.log(`runtime readiness: ${report.runtime_readiness ?? "unknown"}`);
+      if (report.conclusion) {
+        console.log(`system conclusion: ${report.conclusion.headline}`);
+        console.log(`conclusion detail: ${report.conclusion.detail}`);
+      }
+      if (report.runtime_readiness_detail) {
+        console.log(`runtime summary: ${report.runtime_readiness_detail.summary}`);
+      }
       console.log(`new memories this week: ${report.new_memories_this_week}`);
       console.log(`active projects: ${report.usage.active_projects}`);
       console.log(`api calls total: ${report.usage.api_calls_total}`);
@@ -82,6 +101,7 @@ export function registerAnalyticsCommand(
       console.log(
         `top reused memories (${report.top_reused_memories_basis}): ${JSON.stringify(report.top_reused_memories)}`
       );
+      console.log(`recommended actions: ${JSON.stringify(report.recommended_actions)}`);
     });
 
   program
@@ -89,9 +109,12 @@ export function registerAnalyticsCommand(
     .description("Show the weekly impact summary")
     .option("--days <days>", "window size in days", parseDays, 7)
     .option("--json", "print JSON")
-    .action((options: { days: number; json?: boolean }) => {
+    .action(async (options: { days: number; json?: boolean }) => {
+      const doctor = await runDoctor(config);
       const summary = analyticsService.getWeeklySummary({
-        days: options.days
+        days: options.days,
+        ...getRuntimeReadinessOptions(doctor),
+        setupSurfaceCoverage: getSetupSurfaceCoverage()
       });
 
       if (options.json) {
@@ -102,16 +125,20 @@ export function registerAnalyticsCommand(
       console.log(`generated at: ${summary.generated_at}`);
       console.log(`window days: ${summary.window_days}`);
       console.log(`new memories this week: ${summary.new_memories_this_week}`);
+      console.log(`weekly overview: ${summary.overview.headline}`);
+      console.log(`overview detail: ${summary.overview.detail}`);
       console.log(`active projects: ${summary.active_projects}`);
       console.log(`api calls total: ${summary.api_calls_total}`);
       console.log(`avg latency ms: ${summary.avg_latency_ms}`);
       console.log(`peak hour: ${summary.peak_hour ?? "none"}`);
       console.log(`memory mix: ${JSON.stringify(summary.memory_mix)}`);
       console.log(`result type hits: ${JSON.stringify(summary.result_type_hits)}`);
+      console.log(`key signals: ${JSON.stringify(summary.key_signals)}`);
       console.log(
         `top reused memories (${summary.top_reused_memories_basis}): ${JSON.stringify(summary.top_reused_memories)}`
       );
       console.log(`top search queries: ${JSON.stringify(summary.top_search_queries)}`);
+      console.log(`recommended actions: ${JSON.stringify(summary.recommended_actions)}`);
     });
 }
 

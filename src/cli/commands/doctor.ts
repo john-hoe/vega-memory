@@ -13,7 +13,7 @@ import {
 
 type DoctorCheckStatus = "pass" | "warn" | "fail";
 
-interface DoctorCheck {
+export interface DoctorCheck {
   name: string;
   status: DoctorCheckStatus;
   summary: string;
@@ -21,7 +21,7 @@ interface DoctorCheck {
   fix?: string;
 }
 
-interface DoctorReport {
+export interface DoctorReport {
   status: DoctorCheckStatus;
   checks: DoctorCheck[];
   suggestions: string[];
