@@ -30,7 +30,7 @@ const MANAGED_SECTION_END = "<!-- Vega Memory System: END -->";
 const CODEX_RULE_SIGNATURE = "Rules for Codex CLI:";
 const CLAUDE_RULE_SIGNATURE = "# Vega Memory System — Claude Code Rules";
 
-type SetupTarget = "cursor" | "codex" | "claude";
+export type SetupTarget = "cursor" | "codex" | "claude";
 
 interface SetupSelection {
   cursor: boolean;
@@ -38,7 +38,7 @@ interface SetupSelection {
   claude: boolean;
 }
 
-interface TargetStatus {
+export interface TargetStatus {
   target: SetupTarget;
   state: "configured" | "partial" | "missing";
   details: string[];
@@ -103,7 +103,7 @@ const parseNodeMajorVersion = (value: string): number => {
   return majorVersion;
 };
 
-const ensureNodeCommand = (): string => {
+export const ensureNodeCommand = (): string => {
   const runtimeVersion = process.versions.node;
   const runtimeMajorVersion = parseNodeMajorVersion(runtimeVersion);
 
@@ -432,6 +432,13 @@ const inspectStatuses = (selection: SetupSelection): TargetStatus[] => {
 
   return statuses;
 };
+
+export const inspectAllSetupStatuses = (): TargetStatus[] =>
+  inspectStatuses({
+    cursor: true,
+    codex: true,
+    claude: true
+  });
 
 const formatState = (state: TargetStatus["state"]): string => {
   if (state === "configured") {

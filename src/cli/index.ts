@@ -13,6 +13,7 @@ import { registerBenchmarkCommand } from "./commands/benchmark.js";
 import { registerCompressionCommand } from "./commands/compress.js";
 import { registerConsolidationReportCommand } from "./commands/consolidation-report.js";
 import { registerDiagnoseCommand } from "./commands/diagnose.js";
+import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerEncryptionCommand } from "./commands/encryption.js";
 import { registerDocGeneratorCommand } from "./commands/generate-docs.js";
 import { registerGitImportCommand } from "./commands/git-import.js";
@@ -92,16 +93,24 @@ const isBootstrapInvocation = (argv: string[]): boolean => {
 
   return (
     firstArg === "setup" ||
+    firstArg === "doctor" ||
     firstArg === "migrate-db" ||
     firstArg === "init-encryption" ||
     (firstArg === "help" &&
-      (secondArg === "setup" || secondArg === "migrate-db" || secondArg === "init-encryption"))
+      (
+        secondArg === "setup" ||
+        secondArg === "doctor" ||
+        secondArg === "migrate-db" ||
+        secondArg === "init-encryption"
+      ))
   );
 };
 
 async function main(): Promise<void> {
   const program = createProgram();
+  const bootstrapConfig = loadConfig();
   registerSetupCommand(program);
+  registerDoctorCommand(program, bootstrapConfig);
   registerEncryptionCommand(program);
   registerMigrateCommand(program);
 
