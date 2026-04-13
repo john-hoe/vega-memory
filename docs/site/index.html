@@ -280,6 +280,13 @@
         font-size: 1.45rem;
       }
 
+      .plan-link {
+        display: inline-flex;
+        margin-top: 18px;
+        color: var(--accent);
+        font-weight: 600;
+      }
+
       .price {
         margin: 16px 0 10px;
         font-size: 2.4rem;
@@ -370,8 +377,10 @@
           <span>Vega Memory</span>
         </a>
         <nav>
-          <a href="./api.html">API Docs</a>
+          <a href="./index.html">Overview</a>
           <a href="./getting-started.html">Getting Started</a>
+          <a href="./deployment.html">Deployment</a>
+          <a href="./api.html">API Docs</a>
           <a href="https://github.com/john-hoe/vega-memory">GitHub</a>
         </nav>
       </div>
@@ -389,7 +398,7 @@
           </p>
           <div class="actions">
             <a class="cta" href="./getting-started.html">Get Started</a>
-            <a class="ghost" href="./api.html">Browse API</a>
+            <a class="ghost" href="./deployment.html">Deployment Guide</a>
           </div>
         </article>
         <aside class="stats">
@@ -449,43 +458,46 @@
       <section class="section panel" id="pricing">
         <div class="section-header">
           <div>
-            <h2>Who Vega Is For</h2>
-            <p>Adopt Vega when you need a shared memory layer for coding agents, not when you are primarily shopping for human-first note-taking software.</p>
+            <h2>Choose Your Adoption Path</h2>
+            <p>Start from your current operating model, then follow the docs flow that matches it: understand fit, wire a first loop, choose deployment, and automate against the API.</p>
           </div>
         </div>
         <div class="grid pricing">
           <article class="plan">
             <h3>Solo Builders</h3>
-            <div class="price">Local-First</div>
+            <div class="price">Start Local</div>
             <p>For one developer using multiple coding agents in the same repository or machine fleet.</p>
             <ul>
-              <li>Keep Cursor, Codex, and Claude Code aligned</li>
-              <li>Persist pitfalls and decisions between sessions</li>
+              <li>Read the overview to confirm Vega is the right product boundary</li>
+              <li>Use Getting Started to prove the first store and recall loop</li>
+              <li>Move to Deployment when you want Cursor or Docker wired cleanly</li>
               <li>Stay local with SQLite and optional Ollama</li>
-              <li>Use MCP or CLI as the primary workflow surface</li>
             </ul>
+            <a class="plan-link" href="./getting-started.html">Start with Getting Started</a>
           </article>
           <article class="plan featured">
             <h3>Shared Team Memory</h3>
-            <div class="price">Common Fit</div>
+            <div class="price">Deploy The Service</div>
             <p>For small engineering teams that want agents and services to reuse one backend instead of fragmenting context by tool.</p>
             <ul>
-              <li>Centralize agent memory behind HTTP or shared storage</li>
-              <li>Support remote machines and background jobs</li>
-              <li>Add auth, dashboard access, and maintenance scheduling</li>
+              <li>Use Getting Started to validate the local runtime first</li>
+              <li>Use Deployment to choose between shared server and Docker</li>
+              <li>Add auth, dashboard access, backups, and maintenance scheduling</li>
               <li>Preserve one source of truth for engineering context</li>
             </ul>
+            <a class="plan-link" href="./deployment.html">Open the Deployment Guide</a>
           </article>
           <article class="plan">
             <h3>Platform And Tooling Teams</h3>
-            <div class="price">Infra Layer</div>
+            <div class="price">Integrate The Surface</div>
             <p>For builders exposing memory to custom agents, internal tools, and automation surfaces.</p>
             <ul>
+              <li>Choose a deployment path before wiring external clients</li>
               <li>Use one backend across MCP, CLI, and HTTP</li>
-              <li>Embed memory into custom coding workflows</li>
-              <li>Layer wiki, graph, and analytics where helpful</li>
+              <li>Move into the API docs once the runtime shape is settled</li>
               <li>Keep Vega positioned as infrastructure, not as a generic workspace suite</li>
             </ul>
+            <a class="plan-link" href="./api.html">Go to the API Reference</a>
           </article>
         </div>
       </section>
@@ -515,11 +527,12 @@
 
       <section class="cta-panel">
         <div>
-          <h2>Start with the docs, wire in the runtime, and keep your coding agents stateful.</h2>
-          <p>Use the quick start for local setup, then move into the API reference when you are ready to automate shared memory storage and recall.</p>
+          <h2>Follow the adoption flow that matches your stage.</h2>
+          <p>Overview defines product fit, Getting Started proves the first loop, Deployment helps you choose the runtime shape, and API Docs take over once you are integrating automation or custom clients.</p>
         </div>
         <div class="actions">
           <a class="cta" href="./getting-started.html">Quick Start</a>
+          <a class="ghost" href="./deployment.html">Deployment</a>
           <a class="ghost" href="./api.html">API Reference</a>
         </div>
       </section>
@@ -528,7 +541,8 @@
         <div>Vega Memory docs scaffold for a static, no-build deployment.</div>
         <div class="footer-links">
           <a class="link" href="https://github.com/john-hoe/vega-memory">GitHub</a>
-          <a class="link" href="./getting-started.html">Docs</a>
+          <a class="link" href="./getting-started.html">Getting Started</a>
+          <a class="link" href="./deployment.html">Deployment</a>
           <span class="license">MIT License</span>
         </div>
       </footer>

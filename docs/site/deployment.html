@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vega Memory Getting Started</title>
+    <title>Vega Memory Deployment</title>
     <style>
       :root {
         color-scheme: dark;
@@ -112,7 +112,7 @@
 
       .hero {
         display: grid;
-        grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+        grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
         gap: 24px;
       }
 
@@ -163,8 +163,9 @@
         gap: 12px;
       }
 
-      .checklist .card {
-        padding: 18px;
+      .checklist .card,
+      .card {
+        padding: 20px;
         background: var(--panel-strong);
       }
 
@@ -183,15 +184,6 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 18px;
         margin-top: 20px;
-      }
-
-      .card {
-        padding: 22px;
-      }
-
-      .card h3 {
-        margin-bottom: 10px;
-        font-size: 1.18rem;
       }
 
       pre {
@@ -270,179 +262,132 @@
     <main class="shell">
       <section class="hero">
         <div>
-          <div class="eyebrow">Fast path to a shared long-term memory runtime for coding agents</div>
-          <h1>Getting Started</h1>
+          <div class="eyebrow">Choose the runtime shape that matches your adoption stage</div>
+          <h1>Deployment turns the first memory loop into a durable service.</h1>
           <p>
-            Install Vega Memory, point it at SQLite and Ollama, store a first memory, and wire the
-            same backend into your first agent surface. This page uses the current repo scripts and
-            config defaults to prove the initial adoption loop before you move into deployment and
-            API integration.
+            This page exists for the moment after Getting Started works and you need to decide
+            whether Vega should stay local, move into Docker, or become a shared backend for remote
+            machines and multiple coding agents.
           </p>
         </div>
         <div class="checklist">
           <div class="card">
-            <h3>Prerequisites</h3>
-            <p>Node.js 20 LTS, a writable local filesystem, and optional Ollama at <code>http://localhost:11434</code>.</p>
+            <h3>Best For</h3>
+            <p>Teams choosing between local-first evaluation, Docker rollout, and shared service deployment.</p>
           </div>
           <div class="card">
-            <h3>Best Fit</h3>
-            <p>Solo developers, small teams, and tooling builders who want multiple coding agents to share the same memory across sessions.</p>
+            <h3>Decision Inputs</h3>
+            <p>Where the database lives, who needs access, whether remote clients matter, and how much operational control you need.</p>
           </div>
           <div class="card">
-            <h3>Docs Flow</h3>
-            <p>Use this page to prove the first loop, then move to Deployment to choose the runtime shape and API Docs once the service boundary is stable.</p>
+            <h3>Next Step</h3>
+            <p>After deployment is chosen, use the API docs to automate client integrations or background workflows.</p>
           </div>
         </div>
       </section>
 
       <div class="stack">
-        <section class="section">
-          <h2>1. Installation</h2>
-          <p class="section-intro">Install dependencies, build the project, and expose the CLI locally.</p>
-          <pre>git clone https://github.com/john-hoe/vega-memory.git
-cd vega-memory
-npm install
+        <section class="section" id="single-machine">
+          <h2>1. Local Single-Machine</h2>
+          <p class="section-intro">Best when one developer wants the fastest path from setup to repeated session reuse.</p>
+          <div class="cards">
+            <article class="card">
+              <h3>Runtime Shape</h3>
+              <pre>npm install
 npm run build
-npm link</pre>
-        </section>
-
-        <section class="section">
-          <h2>2. Configuration</h2>
-          <p class="section-intro">
-            The repo ships <code>.env.example</code> for the core local settings. Add API-specific
-            values when you want HTTP access or the scheduler.
-          </p>
-          <div class="cards">
-            <article class="card">
-              <h3>Minimal Local Config</h3>
-              <pre>cp .env.example .env</pre>
-              <pre>VEGA_DB_PATH=./data/memory.db
-VEGA_DB_ENCRYPTION=false
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=bge-m3</pre>
-            </article>
-            <article class="card">
-              <h3>Enable HTTP API</h3>
-              <pre>VEGA_API_KEY=$(openssl rand -hex 16)
-VEGA_API_PORT=3271
-export VEGA_API_KEY VEGA_API_PORT
+export VEGA_API_KEY="$(openssl rand -hex 16)"
 node dist/scheduler/index.js</pre>
+              <p>SQLite stays local, the scheduler serves HTTP and dashboard, and MCP clients can point at the same machine.</p>
+            </article>
+            <article class="card">
+              <h3>When To Choose It</h3>
+              <p>Choose this when you are still validating product fit, want minimal moving parts, and only need one machine to hold the shared memory runtime.</p>
             </article>
           </div>
         </section>
 
-        <section class="section">
-          <h2>3. Prove The Smallest Memory Loop</h2>
-          <p class="section-intro">Use the same four-step path the product promises: health, store, recall, then session preload.</p>
+        <section class="section" id="docker">
+          <h2>2. Docker / Compose</h2>
+          <p class="section-intro">Best when you want a reproducible stack with Vega plus Ollama in one place.</p>
           <div class="cards">
             <article class="card">
-              <h3>CLI</h3>
-              <pre>vega health
+              <h3>Compose</h3>
+              <pre>docker compose up --build
 
-vega store "Always checkpoint WAL before backup" \
-  --type pitfall \
-  --project my-project
-
-vega recall "sqlite backup" \
-  --project my-project \
-  --json
-
-vega session-start --dir "$(pwd)" \
-  --mode L1 \
-  --json</pre>
+curl -H "Authorization: Bearer $VEGA_API_KEY" \
+  http://127.0.0.1:3000/api/health</pre>
+              <p>The checked-in Compose stack binds Vega on port <code>3000</code> and mounts the local <code>./data</code> directory.</p>
             </article>
             <article class="card">
-              <h3>HTTP API</h3>
-              <pre>curl -X POST http://127.0.0.1:3271/api/store \
-  -H "Authorization: Bearer $VEGA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "content": "Always checkpoint WAL before backup",
-    "type": "pitfall",
-    "project": "my-project"
-  }'</pre>
+              <h3>When To Choose It</h3>
+              <p>Choose this when you want a fast team demo, a reproducible sandbox, or a low-friction bridge between local evaluation and a shared service.</p>
             </article>
           </div>
         </section>
 
-        <section class="section">
-          <h2>4. Agent Setup</h2>
-          <p class="section-intro">Pick the first agent surface you want to wire into the same memory backend, then use <code>vega setup --show</code> to confirm the local status.</p>
+        <section class="section" id="shared-server">
+          <h2>3. Shared Remote Service</h2>
+          <p class="section-intro">Best when multiple developers, machines, or background jobs need the same memory backend.</p>
           <div class="cards">
-            <article class="card">
-              <h3>Codex</h3>
-              <p>Install a managed Vega Memory rules section into <code>~/.codex/AGENTS.md</code>.</p>
-              <pre>vega setup --codex
-vega setup --show</pre>
-              <p>Use this when Codex is your first CLI surface and you want session-start / recall / store guidance installed quickly.</p>
-            </article>
-            <article class="card">
-              <h3>Claude Code</h3>
-              <p>Install a managed Vega Memory rules section into <code>~/.claude/CLAUDE.md</code>.</p>
-              <pre>vega setup --claude
-vega setup --show</pre>
-              <p>Use this when Claude Code is the first client you want to connect through the CLI-first workflow.</p>
-            </article>
             <article class="card">
               <h3>Cursor Client Mode</h3>
-              <p>Use the setup helper when Vega is already running as a shared server and you want Cursor to connect in remote client mode.</p>
               <pre>vega setup --server 127.0.0.1 \
   --port 3271 \
   --cursor
 
+vega setup --show
+vega doctor</pre>
+              <p>Use this when Vega is already reachable as a shared service and Cursor should connect as a remote client instead of launching its own local runtime.</p>
+            </article>
+            <article class="card">
+              <h3>When To Choose It</h3>
+              <p>Choose this when remote machines, team workflows, or scheduled jobs need one authoritative memory store instead of each tool maintaining a silo.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>4. Agent Surfaces</h2>
+          <p class="section-intro">Once the runtime exists, connect the surface that matches your workflow today.</p>
+          <div class="cards">
+            <article class="card">
+              <h3>Codex</h3>
+              <pre>vega setup --codex
 vega setup --show</pre>
-              <p>The manual local MCP stdio example still exists in the deployment guide when you want Cursor to launch the local runtime directly.</p>
+              <p>Installs a managed Vega Memory rules section into <code>~/.codex/AGENTS.md</code>.</p>
+            </article>
+            <article class="card">
+              <h3>Claude Code</h3>
+              <pre>vega setup --claude
+vega setup --show</pre>
+              <p>Installs a managed Vega Memory rules section into <code>~/.claude/CLAUDE.md</code>.</p>
             </article>
           </div>
         </section>
 
         <section class="section">
-          <h2>5. Choose The Deployment Path</h2>
-          <p class="section-intro">Once the first memory loop works, move into the deployment guide to pick the runtime shape that matches your usage.</p>
+          <h2>5. Deployment Checks</h2>
+          <p class="section-intro">Use the onboarding diagnostics to verify that the chosen runtime shape still matches the agent surfaces around it.</p>
           <div class="cards">
             <article class="card">
-              <h3>Single Machine</h3>
-              <p>Keep Vega local when one workstation is hosting the database, embeddings, and coding-agent sessions.</p>
-              <p><a href="./deployment.html#single-machine">Open the single-machine path</a></p>
+              <h3>Health And Setup</h3>
+              <pre>vega health
+vega setup --show
+vega doctor</pre>
+              <p>These commands validate runtime health, surface configuration, and the most common onboarding failures before users hit them in real work.</p>
             </article>
             <article class="card">
-              <h3>Shared Server</h3>
-              <p>Run the scheduler and HTTP API when several machines or automation surfaces need the same backend.</p>
-              <p><a href="./deployment.html#shared-server">Open the shared-server path</a></p>
-            </article>
-            <article class="card">
-              <h3>Docker Stack</h3>
-              <p>Use the bundled Docker topology when you want Vega and Ollama started together with the repo defaults.</p>
-              <p><a href="./deployment.html#docker">Open the Docker path</a></p>
-            </article>
-            <article class="card">
-              <h3>API Integration</h3>
-              <p>After the runtime shape is stable, use the API reference for auth, routes, and external automation.</p>
-              <p><a href="./api.html">Open the API reference</a></p>
-            </article>
-          </div>
-        </section>
-
-        <section class="section">
-          <h2>6. Product Boundaries</h2>
-          <p class="section-intro">This guide assumes you are adopting Vega as shared memory infrastructure for coding agents.</p>
-          <div class="cards">
-            <article class="card">
-              <h3>What Vega Is</h3>
-              <p>One local-first memory backend for agent decisions, pitfalls, preferences, task state, and project context across MCP, CLI, and HTTP workflows.</p>
-            </article>
-            <article class="card">
-              <h3>What Vega Is Not</h3>
-              <p>Not a generic note app, broad knowledge suite, or chat-history replacement where human authoring is the center of the product.</p>
+              <h3>Detailed Reference</h3>
+              <p>For the full markdown deployment guide, environment variables, and troubleshooting details, continue into the repository doc at <code>docs/deployment.md</code>.</p>
             </article>
           </div>
         </section>
       </div>
 
       <footer>
-        <div>Static getting-started guide for <code>docs/site/</code>.</div>
+        <div>Static deployment guide for <code>docs/site/</code>.</div>
         <div class="footer-links">
-          <a href="./deployment.html">Deployment</a>
+          <a href="./getting-started.html">Getting Started</a>
           <a href="./api.html">API Docs</a>
           <a href="https://github.com/john-hoe/vega-memory">GitHub</a>
           <span>MIT License</span>
