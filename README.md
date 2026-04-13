@@ -269,6 +269,7 @@ To avoid misleading first impressions, these boundaries are worth stating clearl
 
 - want the API surface: see [HTTP API docs](docs/API.md)
 - want deployment details: see [deployment docs](docs/deployment.md)
+- want to run a real-user trial: see [trial feedback playbook](docs/trial-feedback-playbook.md)
 - want agent-specific integration steps: continue into the lower sections of this README
 - want to report issues: use [GitHub Issues](https://github.com/john-hoe/vega-memory/issues)
 - want community discussion: the next documentation improvement should add a clearer discussions/docs funnel
