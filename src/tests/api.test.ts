@@ -838,10 +838,16 @@ test("tenant bearer keys cannot access admin routes but the root API key can", a
     });
     const tenantBody = await readJson<{ error: string }>(tenantResponse);
     const rootResponse = await harness.request("/api/admin/dashboard");
+    const rootBody = await readJson<{
+      impact: { top_reused_memories_basis: string };
+      weekly: { top_reused_memories_basis: string };
+    }>(rootResponse);
 
     assert.equal(tenantResponse.status, 403);
     assert.equal(tenantBody.error, "forbidden");
     assert.equal(rootResponse.status, 200);
+    assert.equal(rootBody.impact.top_reused_memories_basis, "lifetime_access_count");
+    assert.equal(rootBody.weekly.top_reused_memories_basis, "lifetime_access_count");
   } finally {
     await harness.cleanup();
   }

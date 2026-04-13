@@ -222,6 +222,9 @@ test("Dashboard requires login and serves HTML after authentication", async () =
     assert.equal(cookie?.includes("Secure"), false);
     assert.equal(response.status, 200);
     assert.match(html, /Vega Memory Dashboard/);
+    assert.match(html, /Impact Snapshot/);
+    assert.match(html, /Weekly Signals/);
+    assert.match(html, /Configured Surfaces/);
     assert.equal(response.headers.get("content-security-policy")?.includes("script-src 'self'"), true);
     assert.equal(apiResponse.status, 200);
     assert.equal(logoutResponse.status, 302);

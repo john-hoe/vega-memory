@@ -172,7 +172,7 @@
 
       .stats {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(6, minmax(0, 1fr));
         gap: 16px;
         margin: 24px 0;
       }
@@ -428,6 +428,37 @@
         padding: 18px 22px 24px;
       }
 
+      .signal-list {
+        display: grid;
+        gap: 12px;
+        padding: 18px 22px 24px;
+      }
+
+      .signal-item {
+        padding: 14px 16px;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: var(--panel-alt);
+      }
+
+      .signal-item-title {
+        margin: 0 0 6px;
+        font-size: 1rem;
+      }
+
+      .signal-item-meta {
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.6;
+      }
+
+      .signal-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
       .wiki-item {
         padding: 14px 16px;
         border: 1px solid var(--border);
@@ -534,6 +565,18 @@
           <div class="label">Ollama Status</div>
           <div class="value" id="ollama-status">-</div>
         </article>
+        <article class="stat-card">
+          <div class="label">New Memories (7d)</div>
+          <div class="value" id="new-memories">-</div>
+        </article>
+        <article class="stat-card">
+          <div class="label">Runtime Readiness</div>
+          <div class="value" id="runtime-readiness">-</div>
+        </article>
+        <article class="stat-card">
+          <div class="label">Configured Surfaces</div>
+          <div class="value" id="configured-surfaces">-</div>
+        </article>
       </section>
 
       <section class="workspace">
@@ -589,6 +632,28 @@
       </section>
 
       <section class="supplemental">
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Impact Snapshot</h2>
+          </div>
+          <div class="panel-subtitle" id="impact-summary">
+            Loading impact summary from /api/admin/dashboard
+          </div>
+          <div class="signal-list" id="impact-list">
+            <div class="empty-state">Loading...</div>
+          </div>
+        </article>
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Weekly Signals</h2>
+          </div>
+          <div class="panel-subtitle" id="weekly-summary">
+            Loading weekly summary from /api/admin/dashboard
+          </div>
+          <div class="signal-list" id="weekly-list">
+            <div class="empty-state">Loading...</div>
+          </div>
+        </article>
         <article class="panel">
           <div class="panel-header">
             <h2>Recent Wiki Updates</h2>

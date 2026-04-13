@@ -1,6 +1,7 @@
 const state = {
   memories: [],
   wikiPages: [],
+  dashboard: null,
   selectedId: null,
   mode: "list",
   query: ""
@@ -10,6 +11,9 @@ const elements = {
   memoryCount: document.getElementById("memory-count"),
   dbSize: document.getElementById("db-size"),
   ollamaStatus: document.getElementById("ollama-status"),
+  newMemories: document.getElementById("new-memories"),
+  runtimeReadiness: document.getElementById("runtime-readiness"),
+  configuredSurfaces: document.getElementById("configured-surfaces"),
   refreshStatus: document.getElementById("refresh-status"),
   resultsSummary: document.getElementById("results-summary"),
   tableBody: document.getElementById("memory-table"),
@@ -18,6 +22,10 @@ const elements = {
   searchForm: document.getElementById("search-form"),
   searchInput: document.getElementById("search-input"),
   resetSearch: document.getElementById("reset-search"),
+  impactSummary: document.getElementById("impact-summary"),
+  impactList: document.getElementById("impact-list"),
+  weeklySummary: document.getElementById("weekly-summary"),
+  weeklyList: document.getElementById("weekly-list"),
   wikiList: document.getElementById("wiki-list"),
   wikiSummary: document.getElementById("wiki-summary")
 };
@@ -67,6 +75,24 @@ const createSourceBadge = (text, subtle = false) => {
   return badge;
 };
 
+const createSignalItem = (title, metaText, badges = []) => {
+  const item = document.createElement("div");
+  item.className = "signal-item";
+  appendTextElement(item, "h3", title, "signal-item-title");
+  appendTextElement(item, "div", metaText, "signal-item-meta");
+
+  if (badges.length > 0) {
+    const badgeList = document.createElement("div");
+    badgeList.className = "signal-badges";
+    for (const badge of badges) {
+      badgeList.appendChild(createTag(badge));
+    }
+    item.appendChild(badgeList);
+  }
+
+  return item;
+};
+
 const resetDetail = () => {
   elements.detailBody.replaceChildren();
   appendTextElement(
@@ -105,10 +131,112 @@ const updateRefreshStatus = (label) => {
   elements.refreshStatus.textContent = label;
 };
 
-const renderStats = (health) => {
+const renderStats = (health, impact) => {
   elements.memoryCount.textContent = String(health.memories ?? 0);
   elements.dbSize.textContent = `${Number(health.db_size_mb ?? 0).toFixed(2)} MB`;
   elements.ollamaStatus.textContent = health.ollama ? "Online" : "Offline";
+  elements.newMemories.textContent = String(impact?.new_memories_this_week ?? 0);
+  elements.runtimeReadiness.textContent = (impact?.runtime_readiness ?? "unknown").toUpperCase();
+  const configuredCount = Object.values(impact?.setup_surface_coverage ?? {}).filter(
+    (stateValue) => stateValue === "configured"
+  ).length;
+  elements.configuredSurfaces.textContent = String(configuredCount);
+};
+
+const renderImpact = (impact) => {
+  elements.impactList.replaceChildren();
+
+  if (!impact) {
+    elements.impactSummary.textContent = "No impact payload available.";
+    elements.impactList.appendChild(
+      createSignalItem("No impact data", "The dashboard route did not return an impact payload.")
+    );
+    return;
+  }
+
+  const surfaceCoverage = impact.setup_surface_coverage ?? {};
+  const configuredTargets = Object.entries(surfaceCoverage)
+    .filter(([, stateValue]) => stateValue === "configured")
+    .map(([target]) => target);
+  const coverageBadges = Object.entries(surfaceCoverage).map(
+    ([target, stateValue]) => `${target}: ${stateValue}`
+  );
+
+  elements.impactSummary.textContent =
+    `7-day snapshot • runtime ${impact.runtime_readiness ?? "unknown"} • ${impact.new_memories_this_week} new memories`;
+
+  elements.impactList.appendChild(
+    createSignalItem(
+      "Adoption Coverage",
+      configuredTargets.length > 0
+        ? `Configured surfaces: ${configuredTargets.join(", ")}`
+        : "No fully configured surfaces yet.",
+      coverageBadges
+    )
+  );
+
+  if (Array.isArray(impact.top_reused_memories) && impact.top_reused_memories.length > 0) {
+    for (const memory of impact.top_reused_memories.slice(0, 5)) {
+      elements.impactList.appendChild(
+        createSignalItem(
+          memory.title || "Untitled memory",
+          `${memory.project || "global"} • ${memory.type || "unknown"} • access count ${memory.access_count ?? 0}`
+        )
+      );
+    }
+    return;
+  }
+
+  elements.impactList.appendChild(
+    createSignalItem(
+      "Top Reused Memories",
+      "No reuse signal has been recorded yet."
+    )
+  );
+};
+
+const renderWeekly = (weekly) => {
+  elements.weeklyList.replaceChildren();
+
+  if (!weekly) {
+    elements.weeklySummary.textContent = "No weekly payload available.";
+    elements.weeklyList.appendChild(
+      createSignalItem("No weekly data", "The dashboard route did not return a weekly summary.")
+    );
+    return;
+  }
+
+  elements.weeklySummary.textContent =
+    `${weekly.window_days}-day summary • ${weekly.api_calls_total} API calls • peak hour ${weekly.peak_hour || "none"}`;
+
+  const memoryMixBadges = Object.entries(weekly.memory_mix ?? {}).map(
+    ([type, count]) => `${type}: ${count}`
+  );
+  elements.weeklyList.appendChild(
+    createSignalItem(
+      "Memory Mix",
+      `${weekly.new_memories_this_week} new memories across ${weekly.active_projects} active projects`,
+      memoryMixBadges
+    )
+  );
+
+  if (Array.isArray(weekly.top_search_queries) && weekly.top_search_queries.length > 0) {
+    elements.weeklyList.appendChild(
+      createSignalItem(
+        "Top Search Queries",
+        weekly.top_search_queries
+          .map((entry) => `${entry.query} (${entry.count})`)
+          .join(" • ")
+      )
+    );
+  } else {
+    elements.weeklyList.appendChild(
+      createSignalItem(
+        "Top Search Queries",
+        "No search query telemetry available yet."
+      )
+    );
+  }
 };
 
 const renderWiki = () => {
@@ -343,9 +471,12 @@ const renderTable = () => {
   renderDetail(state.memories.find((memory) => memory.id === state.selectedId) || null);
 };
 
-const loadStats = async () => {
-  const health = await fetchJson("/api/health");
-  renderStats(health);
+const loadDashboardReport = async () => {
+  const dashboard = await fetchJson("/api/admin/dashboard");
+  state.dashboard = dashboard;
+  renderStats(dashboard.health ?? {}, dashboard.impact ?? null);
+  renderImpact(dashboard.impact ?? null);
+  renderWeekly(dashboard.weekly ?? null);
 };
 
 const loadMemories = async () => {
@@ -394,7 +525,7 @@ const searchMemories = async (query) => {
 
 const refreshDashboard = async () => {
   try {
-    await loadStats();
+    await loadDashboardReport();
     await loadWikiPages();
 
     if (state.mode === "search" && state.query) {
@@ -413,7 +544,7 @@ elements.searchForm.addEventListener("submit", async (event) => {
   const query = elements.searchInput.value.trim();
 
   try {
-    await loadStats();
+    await loadDashboardReport();
     await loadWikiPages();
 
     if (!query) {
@@ -434,7 +565,7 @@ elements.resetSearch.addEventListener("click", async () => {
 });
 
 setInterval(() => {
-  void loadStats().catch((error) => {
+  void loadDashboardReport().catch((error) => {
     updateRefreshStatus("Error");
     renderMessage(error instanceof Error ? error.message : String(error), true);
   });
