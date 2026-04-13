@@ -5,7 +5,10 @@ import { GdprService } from "../compliance/gdpr.js";
 import { isDeepRecallAvailable, type VegaConfig } from "../config.js";
 import { WebhookService } from "../integrations/webhooks.js";
 import { runDoctor } from "../cli/commands/doctor.js";
-import { inspectAllSetupStatuses } from "../cli/commands/setup.js";
+import {
+  buildIntegrationSurfaceStatuses,
+  summarizeIntegrationSurfaces
+} from "../core/integration-surface-status.js";
 import { getRequestTenantId, getRequestUser, isRequestAuthenticated } from "./auth.js";
 import { requireRole, requireTenantAccess } from "./permissions.js";
 import { AnalyticsService } from "../core/analytics.js";
@@ -795,6 +798,8 @@ export function createRouter(services: APIRouterServices): Router {
           parseSingleValue(body.source_actor, "source_actor") ?? "unknown",
           "http",
           {
+            surface: "api",
+            integration: "http",
             client_info:
               typeof userAgentHeader === "string"
                 ? userAgentHeader
@@ -823,6 +828,8 @@ export function createRouter(services: APIRouterServices): Router {
         project: parseSingleValue(body.project, "project"),
         type: parseMemoryType(body.type, "type"),
         tenant_id: tenantId,
+        source_surface: "api" as const,
+        source_integration: "http",
         limit:
           parseNumber(body.limit, "limit", {
             integer: true,
@@ -849,6 +856,8 @@ export function createRouter(services: APIRouterServices): Router {
         project: parseSingleValue(req.query.project, "project"),
         type: parseMemoryType(req.query.type, "type"),
         tenant_id: tenantId,
+        source_surface: "api" as const,
+        source_integration: "http",
         limit: parseIntegerString(req.query.limit, "limit") ?? 5,
         minSimilarity:
           parseNumber(
@@ -985,7 +994,11 @@ export function createRouter(services: APIRouterServices): Router {
         requireString(body.working_directory, "working_directory"),
         parseSingleValue(body.task_hint, "task_hint"),
         getRequestTenantId(res),
-        parseSessionStartMode(body.mode, "mode") ?? "standard"
+        parseSessionStartMode(body.mode, "mode") ?? "standard",
+        {
+          surface: "api",
+          integration: "http"
+        }
       );
 
       res.status(200).json(serializeSessionStartResult(result));
@@ -1098,10 +1111,14 @@ export function createRouter(services: APIRouterServices): Router {
           .map((check) => `${check.name}: ${check.summary}`),
         runtimeReadinessSuggestions: doctor.suggestions
       };
-      const setupSurfaceCoverage = inspectAllSetupStatuses().reduce<
+      const integrationSurfaces = await buildIntegrationSurfaceStatuses({
+        config: services.config,
+        repository: services.repository
+      });
+      const setupSurfaceCoverage = integrationSurfaces.reduce<
         Record<string, "configured" | "partial" | "missing">
       >((coverage, status) => {
-        coverage[status.target] = status.state;
+        coverage[status.surface] = status.managed_setup_status;
         return coverage;
       }, {});
 
@@ -1134,10 +1151,14 @@ export function createRouter(services: APIRouterServices): Router {
           .map((check) => `${check.name}: ${check.summary}`),
         runtimeReadinessSuggestions: doctor.suggestions
       };
-      const setupSurfaceCoverage = inspectAllSetupStatuses().reduce<
+      const integrationSurfaces = await buildIntegrationSurfaceStatuses({
+        config: services.config,
+        repository: services.repository
+      });
+      const setupSurfaceCoverage = integrationSurfaces.reduce<
         Record<string, "configured" | "partial" | "missing">
       >((coverage, status) => {
-        coverage[status.target] = status.state;
+        coverage[status.surface] = status.managed_setup_status;
         return coverage;
       }, {});
 
@@ -1416,10 +1437,14 @@ export function createRouter(services: APIRouterServices): Router {
           .map((check) => `${check.name}: ${check.summary}`),
         runtimeReadinessSuggestions: doctor.suggestions
       };
-      const setupSurfaceCoverage = inspectAllSetupStatuses().reduce<
+      const integrationSurfaces = await buildIntegrationSurfaceStatuses({
+        config: services.config,
+        repository: services.repository
+      });
+      const setupSurfaceCoverage = integrationSurfaces.reduce<
         Record<string, "configured" | "partial" | "missing">
       >((coverage, status) => {
-        coverage[status.target] = status.state;
+        coverage[status.surface] = status.managed_setup_status;
         return coverage;
       }, {});
       const impact = analyticsService.getImpactReport({
@@ -1439,6 +1464,8 @@ export function createRouter(services: APIRouterServices): Router {
         usage,
         impact,
         weekly,
+        integration_surfaces: integrationSurfaces,
+        integration_surface_summary: summarizeIntegrationSurfaces(integrationSurfaces),
         recent_activity: recentActivity,
         total_users: totalUsers,
         total_memories: totalMemories,

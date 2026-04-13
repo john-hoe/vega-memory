@@ -6,10 +6,11 @@ import {
 } from "../../config.js";
 import { isOllamaAvailable } from "../../embedding/ollama.js";
 import {
-  ensureNodeCommand,
-  inspectAllSetupStatuses,
-  type TargetStatus
-} from "./setup.js";
+  buildIntegrationSurfaceStatuses,
+  openRepositoryForSurfaceStatus
+} from "../../core/integration-surface-status.js";
+import type { IntegrationSurfaceStatus } from "../../core/types.js";
+import { ensureNodeCommand } from "./setup.js";
 
 type DoctorCheckStatus = "pass" | "warn" | "fail";
 
@@ -25,44 +26,8 @@ export interface DoctorReport {
   status: DoctorCheckStatus;
   checks: DoctorCheck[];
   suggestions: string[];
+  surfaces: IntegrationSurfaceStatus[];
 }
-
-const summarizeTargets = (statuses: TargetStatus[]): string =>
-  statuses
-    .map((status) => `${status.target}:${status.state}`)
-    .join(", ");
-
-const buildIntegrationCheck = (statuses: TargetStatus[]): DoctorCheck => {
-  const configuredTargets = statuses.filter((status) => status.state === "configured");
-  const partialTargets = statuses.filter((status) => status.state === "partial");
-
-  if (configuredTargets.length > 0 && partialTargets.length === 0) {
-    return {
-      name: "integrations",
-      status: "pass",
-      summary: `configured targets: ${configuredTargets.map((status) => status.target).join(", ")}`,
-      details: statuses.flatMap((status) => status.details.map((detail) => `${status.target}: ${detail}`))
-    };
-  }
-
-  if (configuredTargets.length > 0 || partialTargets.length > 0) {
-    return {
-      name: "integrations",
-      status: "warn",
-      summary: `partial setup coverage: ${summarizeTargets(statuses)}`,
-      details: statuses.flatMap((status) => status.details.map((detail) => `${status.target}: ${detail}`)),
-      fix: "Run `vega setup --codex`, `vega setup --claude`, or `vega setup --server <host> --cursor`, then confirm with `vega setup --show`."
-    };
-  }
-
-  return {
-    name: "integrations",
-    status: "warn",
-    summary: "no agent surface is configured yet",
-    details: statuses.flatMap((status) => status.details.map((detail) => `${status.target}: ${detail}`)),
-    fix: "Install at least one supported surface with `vega setup --codex`, `vega setup --claude`, or `vega setup --server <host> --cursor`."
-  };
-};
 
 const buildModeCheck = (config: VegaConfig): DoctorCheck => {
   if (config.mode === "client") {
@@ -172,6 +137,7 @@ const buildOllamaCheck = async (config: VegaConfig): Promise<DoctorCheck> => {
 
 export async function runDoctor(config: VegaConfig): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
+  const repository = await openRepositoryForSurfaceStatus(config);
 
   try {
     const nodeVersion = ensureNodeCommand();
@@ -194,7 +160,31 @@ export async function runDoctor(config: VegaConfig): Promise<DoctorReport> {
   checks.push(buildModeCheck(config));
   checks.push(buildApiKeyCheck(config));
   checks.push(await buildOllamaCheck(config));
-  checks.push(buildIntegrationCheck(inspectAllSetupStatuses()));
+
+  const surfaces = await buildIntegrationSurfaceStatuses({
+    config,
+    repository
+  });
+  checks.push({
+    name: "integration_surfaces",
+    status: surfaces.some((surface) => surface.runtime_health_status === "fail")
+      ? "fail"
+      : surfaces.some(
+            (surface) =>
+              surface.managed_setup_status !== "configured" ||
+              surface.observed_activity_status !== "active" ||
+              surface.runtime_health_status !== "ok"
+          )
+        ? "warn"
+        : "pass",
+    summary: "evaluated surfaces with managed setup, observed activity, and runtime health semantics",
+    details: surfaces.map(
+      (surface) =>
+        `${surface.surface}: managed=${surface.managed_setup_status}, observed7d=${surface.observed_activity_windows.window_7d.status}, runtime=${surface.runtime_health_status}`
+    ),
+    fix:
+      "Use `vega setup --show` for the full tri-dimensional view and follow each surface's next_action when the current state is missing, inactive, or unhealthy."
+  });
 
   const overallStatus = checks.some((check) => check.status === "fail")
     ? "fail"
@@ -205,7 +195,8 @@ export async function runDoctor(config: VegaConfig): Promise<DoctorReport> {
   return {
     status: overallStatus,
     checks,
-    suggestions: [...new Set(checks.flatMap((check) => (check.fix ? [check.fix] : [])))]
+    suggestions: [...new Set(checks.flatMap((check) => (check.fix ? [check.fix] : [])))],
+    surfaces
   };
 }
 
@@ -221,6 +212,16 @@ export function registerDoctorCommand(program: Command, config: VegaConfig): voi
         console.log(JSON.stringify(report, null, 2));
       } else {
         console.log(`status: ${report.status}`);
+        console.log("surfaces:");
+        for (const surface of report.surfaces) {
+          console.log(
+            `- ${surface.surface}: managed=${surface.managed_setup_status}, observed7d=${surface.observed_activity_windows.window_7d.status}, observed30d=${surface.observed_activity_windows.window_30d.status}, runtime=${surface.runtime_health_status}`
+          );
+          if (surface.next_action) {
+            console.log(`  next_action: ${surface.next_action}`);
+          }
+        }
+
         for (const check of report.checks) {
           console.log(`${check.name}: ${check.status} — ${check.summary}`);
           for (const detail of check.details) {

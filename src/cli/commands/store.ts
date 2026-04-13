@@ -63,7 +63,10 @@ export function registerStoreCommand(program: Command, memoryService: MemoryServ
           importance: options.importance,
           source: options.source,
           auditContext: CLI_AUDIT_CONTEXT,
-          sourceContext: buildSourceContext("user", "cli")
+          sourceContext: buildSourceContext("user", "cli", {
+            surface: "cli",
+            integration: "vega-cli"
+          })
         });
 
         console.log(`${result.action} ${result.id} ${JSON.stringify(result.title)}`);

@@ -2,8 +2,11 @@ import { Command, InvalidArgumentError } from "commander";
 
 import type { VegaConfig } from "../../config.js";
 import { AnalyticsService } from "../../core/analytics.js";
+import {
+  buildIntegrationSurfaceStatuses,
+  openRepositoryForSurfaceStatus
+} from "../../core/integration-surface-status.js";
 import { runDoctor, type DoctorReport } from "./doctor.js";
-import { inspectAllSetupStatuses } from "./setup.js";
 
 const parseSince = (value: string): string => {
   const parsed = new Date(value);
@@ -20,14 +23,25 @@ export function registerAnalyticsCommand(
   analyticsService: AnalyticsService,
   config: VegaConfig
 ): void {
-  const getSetupSurfaceCoverage = (): Record<string, "configured" | "partial" | "missing"> =>
-    inspectAllSetupStatuses().reduce<Record<string, "configured" | "partial" | "missing">>(
-      (coverage, status) => {
-        coverage[status.target] = status.state;
-        return coverage;
-      },
-      {}
-    );
+  const getSetupSurfaceCoverage = async (): Promise<Record<string, "configured" | "partial" | "missing">> => {
+    const repository = await openRepositoryForSurfaceStatus(config);
+
+    try {
+      const surfaces = await buildIntegrationSurfaceStatuses({
+        config,
+        repository
+      });
+      return surfaces.reduce<Record<string, "configured" | "partial" | "missing">>(
+        (coverage, status) => {
+          coverage[status.surface] = status.managed_setup_status;
+          return coverage;
+        },
+        {}
+      );
+    } finally {
+      repository?.close();
+    }
+  };
 
   const getRuntimeReadinessOptions = (report: DoctorReport) => ({
     runtimeReadiness: report.status,
@@ -72,10 +86,11 @@ export function registerAnalyticsCommand(
     .option("--json", "print JSON")
     .action(async (options: { days: number; json?: boolean }) => {
       const doctor = await runDoctor(config);
+      const setupSurfaceCoverage = await getSetupSurfaceCoverage();
       const report = analyticsService.getImpactReport({
         days: options.days,
         ...getRuntimeReadinessOptions(doctor),
-        setupSurfaceCoverage: getSetupSurfaceCoverage()
+        setupSurfaceCoverage
       });
 
       if (options.json) {
@@ -111,10 +126,11 @@ export function registerAnalyticsCommand(
     .option("--json", "print JSON")
     .action(async (options: { days: number; json?: boolean }) => {
       const doctor = await runDoctor(config);
+      const setupSurfaceCoverage = await getSetupSurfaceCoverage();
       const summary = analyticsService.getWeeklySummary({
         days: options.days,
         ...getRuntimeReadinessOptions(doctor),
-        setupSurfaceCoverage: getSetupSurfaceCoverage()
+        setupSurfaceCoverage
       });
 
       if (options.json) {

@@ -5,6 +5,10 @@ import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { CallToolResultSchema, ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
+
 import { createAPIServer } from "../api/server.js";
 import {
   DASHBOARD_AUTH_COOKIE,
@@ -141,6 +145,50 @@ test("GET /api/health returns the expanded health payload", async () => {
     assert.equal(typeof body.regression_guard.status, "string");
     assert.equal(Array.isArray(body.regression_guard.violations), true);
   } finally {
+    await harness.cleanup();
+  }
+});
+
+test("HTTP MCP exposes memory tools over /mcp", async () => {
+  const harness = await createHarness("top-secret");
+  const client = new Client({
+    name: "vega-mcp-test-client",
+    version: "1.0.0"
+  });
+  const transport = new StreamableHTTPClientTransport(new URL(`${harness.baseUrl}/mcp`), {
+    requestInit: {
+      headers: {
+        authorization: "Bearer top-secret"
+      }
+    }
+  });
+
+  try {
+    await client.connect(transport);
+    const tools = await client.request(
+      {
+        method: "tools/list",
+        params: {}
+      },
+      ListToolsResultSchema
+    );
+    assert.ok(tools.tools.some((tool) => tool.name === "memory_health"));
+
+    const result = await client.request(
+      {
+        method: "tools/call",
+        params: {
+          name: "memory_health",
+          arguments: {}
+        }
+      },
+      CallToolResultSchema
+    );
+
+    assert.equal(result.content[0]?.type, "text");
+    assert.match(result.content[0]?.text ?? "", /"status":/);
+  } finally {
+    await transport.close();
     await harness.cleanup();
   }
 });
@@ -841,6 +889,8 @@ test("tenant bearer keys cannot access admin routes but the root API key can", a
     const rootBody = await readJson<{
       impact: { top_reused_memories_basis: string };
       weekly: { top_reused_memories_basis: string };
+      integration_surfaces: Array<{ surface: string }>;
+      integration_surface_summary: { configured_count: number };
     }>(rootResponse);
 
     assert.equal(tenantResponse.status, 403);
@@ -848,6 +898,8 @@ test("tenant bearer keys cannot access admin routes but the root API key can", a
     assert.equal(rootResponse.status, 200);
     assert.equal(rootBody.impact.top_reused_memories_basis, "lifetime_access_count");
     assert.equal(rootBody.weekly.top_reused_memories_basis, "lifetime_access_count");
+    assert.equal(Array.isArray(rootBody.integration_surfaces), true);
+    assert.equal(typeof rootBody.integration_surface_summary.configured_count, "number");
   } finally {
     await harness.cleanup();
   }

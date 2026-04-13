@@ -92,6 +92,41 @@ export type TopicKind = "topic" | "room";
 
 export type TopicState = "active" | "superseded";
 
+export const INTEGRATION_SURFACES = [
+  "cursor",
+  "codex",
+  "claude",
+  "api",
+  "cli"
+] as const;
+export type IntegrationSurface = (typeof INTEGRATION_SURFACES)[number];
+
+export type ManagedSetupStatus = "configured" | "partial" | "missing";
+export type ObservedActivityStatus = "active" | "inactive" | "unknown";
+export type RuntimeHealthStatus = "ok" | "warn" | "fail";
+
+export interface ObservedActivityWindowStatus {
+  window_days: number;
+  status: ObservedActivityStatus;
+  observed_count: number;
+  last_observed_at: string | null;
+}
+
+export interface IntegrationSurfaceStatus {
+  surface: IntegrationSurface;
+  managed_setup_status: ManagedSetupStatus;
+  observed_activity_status: ObservedActivityStatus;
+  observed_activity_windows: {
+    window_7d: ObservedActivityWindowStatus;
+    window_30d: ObservedActivityWindowStatus;
+  };
+  runtime_health_status: RuntimeHealthStatus;
+  managed_setup_details: string[];
+  observed_activity_details: string[];
+  runtime_health_details: string[];
+  next_action?: string;
+}
+
 export interface MemorySourceContext {
   actor: string;
   channel: string;
@@ -100,6 +135,8 @@ export interface MemorySourceContext {
   platform: string;
   session_id?: string;
   client_info?: string;
+  surface?: IntegrationSurface;
+  integration?: string;
 }
 
 export interface Memory {
@@ -660,6 +697,8 @@ export interface SearchOptions {
   type?: MemoryType;
   tenant_id?: string | null;
   topic?: string | TopicRecallOptions;
+  source_surface?: IntegrationSurface;
+  source_integration?: string;
   limit: number;
   minSimilarity: number;
 }

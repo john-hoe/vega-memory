@@ -577,6 +577,10 @@
           <div class="label">Configured Surfaces</div>
           <div class="value" id="configured-surfaces">-</div>
         </article>
+        <article class="stat-card">
+          <div class="label">Active Surfaces (7d)</div>
+          <div class="value" id="active-surfaces">-</div>
+        </article>
       </section>
 
       <section class="workspace">
@@ -632,6 +636,17 @@
       </section>
 
       <section class="supplemental">
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Integration Surfaces</h2>
+          </div>
+          <div class="panel-subtitle" id="surface-summary">
+            Loading managed setup, observed activity, and runtime health from /api/admin/dashboard
+          </div>
+          <div class="signal-list" id="surface-list">
+            <div class="empty-state">Loading...</div>
+          </div>
+        </article>
         <article class="panel">
           <div class="panel-header">
             <h2>Impact Snapshot</h2>

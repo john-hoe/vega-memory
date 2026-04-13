@@ -81,7 +81,11 @@ export function registerSessionCommands(program: Command, sessionService: Sessio
           options.dir,
           options.hint,
           undefined,
-          options.mode
+          options.mode,
+          {
+            surface: "cli",
+            integration: "vega-cli"
+          }
         );
 
         if (options.json) {

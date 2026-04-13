@@ -224,7 +224,9 @@ test("Dashboard requires login and serves HTML after authentication", async () =
     assert.match(html, /Vega Memory Dashboard/);
     assert.match(html, /Impact Snapshot/);
     assert.match(html, /Weekly Signals/);
+    assert.match(html, /Integration Surfaces/);
     assert.match(html, /Configured Surfaces/);
+    assert.match(html, /Active Surfaces \(7d\)/);
     assert.match(html, /System Conclusion/);
     assert.match(html, /Recommended Next Actions/);
     assert.match(html, /Most Valuable Signals/);

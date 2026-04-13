@@ -131,7 +131,9 @@ export class RecallService {
         detail: JSON.stringify({
           query,
           project: options.project ?? null,
-          tenant_id: options.tenant_id ?? null
+          tenant_id: options.tenant_id ?? null,
+          surface: options.source_surface ?? null,
+          integration: options.source_integration ?? null
         }),
         tenantId: options.tenant_id ?? null,
         memoryCount: this.repository.countActiveMemories(

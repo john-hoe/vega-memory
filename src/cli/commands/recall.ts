@@ -74,6 +74,8 @@ export function registerRecallCommand(program: Command, recallService: RecallSer
         const results = await recallService.recall(query, {
           project: options.project,
           type: options.type,
+          source_surface: "cli",
+          source_integration: "vega-cli",
           limit: options.limit,
           minSimilarity: options.minSimilarity
         });

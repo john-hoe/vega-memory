@@ -335,7 +335,11 @@ export class SessionService {
     workingDirectory: string,
     taskHint?: string,
     tenantId?: string | null,
-    mode: SessionStartMode = "standard"
+    mode: SessionStartMode = "standard",
+    activityContext?: {
+      surface?: string;
+      integration?: string;
+    }
   ): Promise<SessionStartResult> {
     const startedAt = Date.now();
     const project = this.inferProject(workingDirectory);
@@ -355,7 +359,13 @@ export class SessionService {
         {
           tenantId,
           memoryCount: this.repository.countActiveMemories(project, undefined, true, tenantId),
-          resultCount: countSessionResultItems(result)
+          resultCount: countSessionResultItems(result),
+          detail: JSON.stringify({
+            working_directory: workingDirectory,
+            task_hint: normalizedTaskHint || null,
+            surface: activityContext?.surface ?? null,
+            integration: activityContext?.integration ?? null
+          })
         }
       );
 
@@ -382,7 +392,13 @@ export class SessionService {
       {
         tenantId,
         memoryCount: this.repository.countActiveMemories(project, undefined, true, tenantId),
-        resultCount: countSessionResultItems(result)
+        resultCount: countSessionResultItems(result),
+        detail: JSON.stringify({
+          working_directory: workingDirectory,
+          task_hint: normalizedTaskHint || null,
+          surface: activityContext?.surface ?? null,
+          integration: activityContext?.integration ?? null
+        })
       }
     );
 

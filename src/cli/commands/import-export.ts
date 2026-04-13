@@ -554,7 +554,12 @@ export function registerImportExportCommands(
             importance: entry.importance,
             source: entry.source,
             auditContext: CLI_AUDIT_CONTEXT,
-            sourceContext: entry.source_context ?? buildSourceContext("user", "cli")
+            sourceContext:
+              entry.source_context ??
+              buildSourceContext("user", "cli", {
+                surface: "cli",
+                integration: "vega-cli"
+              })
           });
           continue;
         }

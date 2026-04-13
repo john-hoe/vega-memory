@@ -122,6 +122,23 @@ vega setup --server 127.0.0.1 --port 3271 --cursor
 vega setup --show
 ```
 
+## Integration Surface Status
+
+`vega setup --show`, `vega doctor`, and the dashboard now use the same three-dimensional status model for each surface:
+
+- `managed_setup_status`: whether the official Vega-managed setup path is complete
+- `observed_activity_status`: whether recent tagged activity has been observed for that surface
+- `runtime_health_status`: whether the surface is currently healthy enough to work
+
+Supported surfaces currently include Cursor, Codex, Claude Code, HTTP / API, and CLI.
+
+Important interpretation rules:
+
+- configured setup does not guarantee real usage
+- real usage does not guarantee the managed setup is complete
+- `missing + active` is a valid state when a surface is being used outside the managed setup path
+- `unknown` means the system does not yet have reliable attribution data for that surface; it is not treated as an error
+
 ### Cursor
 
 Add Vega as an MCP server in `~/.cursor/mcp.json`:

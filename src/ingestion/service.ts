@@ -135,7 +135,10 @@ export class IngestionService {
       title: normalizeTitle(topic),
       tags: [...new Set([topic, ...(tags ?? [])])],
       source: "explicit",
-      sourceContext: buildSourceContext("user", "cli")
+      sourceContext: buildSourceContext("user", "cli", {
+        surface: "cli",
+        integration: "vega-cli"
+      })
     });
 
     return stored.id;

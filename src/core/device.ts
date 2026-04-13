@@ -4,7 +4,11 @@ import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 
 import { expandHomePath } from "../config.js";
-import type { MemorySourceContext } from "./types.js";
+import {
+  INTEGRATION_SURFACES,
+  type IntegrationSurface,
+  type MemorySourceContext
+} from "./types.js";
 
 export interface DeviceIdentity {
   device_id: string;
@@ -101,14 +105,27 @@ export const getDeviceIdentity = (): DeviceIdentity => {
 export const buildSourceContext = (
   actor: string,
   channel: string,
-  extras?: Pick<MemorySourceContext, "client_info" | "session_id">
+  extras?: Pick<MemorySourceContext, "client_info" | "session_id" | "surface" | "integration">
 ): MemorySourceContext => ({
   actor,
   channel,
   ...getDeviceIdentity(),
   ...(extras?.session_id === undefined ? {} : { session_id: extras.session_id }),
-  ...(extras?.client_info === undefined ? {} : { client_info: extras.client_info })
+  ...(extras?.client_info === undefined ? {} : { client_info: extras.client_info }),
+  ...(extras?.surface === undefined ? {} : { surface: extras.surface }),
+  ...(extras?.integration === undefined ? {} : { integration: extras.integration })
 });
+
+export const inferIntegrationSurface = (
+  value: string | undefined
+): IntegrationSurface | undefined => {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return INTEGRATION_SURFACES.find((surface) => normalized.includes(surface));
+};
 
 export const resetDeviceIdentityCacheForTests = (): void => {
   cachedDeviceIdentity = null;

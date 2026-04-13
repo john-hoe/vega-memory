@@ -90,6 +90,7 @@ interface SessionStartRecordOptions {
   tenantId?: string | null;
   memoryCount?: number;
   resultCount?: number;
+  detail?: string | null;
 }
 
 export class RegressionGuard {
@@ -115,6 +116,7 @@ export class RegressionGuard {
       timestamp: new Date().toISOString(),
       tenant_id: options.tenantId ?? null,
       operation: "session_start",
+      detail: options.detail ?? null,
       latency_ms: latencyMs,
       memory_count: options.memoryCount ?? 0,
       result_count: options.resultCount ?? 0,

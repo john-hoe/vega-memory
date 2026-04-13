@@ -13,6 +13,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Command, InvalidArgumentError } from "commander";
+import { loadConfig } from "../../config.js";
+import {
+  buildIntegrationSurfaceStatuses,
+  openRepositoryForSurfaceStatus
+} from "../../core/integration-surface-status.js";
 
 const DEFAULT_PORT = 3271;
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -461,6 +466,49 @@ const printStatuses = (statuses: TargetStatus[]): void => {
   }
 };
 
+const printIntegrationSurfaceStatuses = async (selection: SetupSelection): Promise<void> => {
+  const config = loadConfig();
+  const repository = await openRepositoryForSurfaceStatus(config);
+
+  try {
+    const statuses = await buildIntegrationSurfaceStatuses({
+      config,
+      repository
+    });
+    const enabled = new Set<string>();
+    if (selection.cursor) enabled.add("cursor");
+    if (selection.codex) enabled.add("codex");
+    if (selection.claude) enabled.add("claude");
+    if (enabled.size === 0) {
+      enabled.add("api");
+      enabled.add("cli");
+    } else {
+      enabled.add("api");
+      enabled.add("cli");
+    }
+
+    for (const status of statuses.filter((entry) => enabled.has(entry.surface))) {
+      console.log(`${status.surface}:`);
+      console.log(`  managed setup: ${status.managed_setup_status}`);
+      console.log(`  observed activity (7d): ${status.observed_activity_windows.window_7d.status}`);
+      console.log(`  observed activity (30d): ${status.observed_activity_windows.window_30d.status}`);
+      console.log(`  runtime health: ${status.runtime_health_status}`);
+      for (const detail of [
+        ...status.managed_setup_details,
+        ...status.observed_activity_details,
+        ...status.runtime_health_details
+      ]) {
+        console.log(`  - ${detail}`);
+      }
+      if (status.next_action) {
+        console.log(`  next action: ${status.next_action}`);
+      }
+    }
+  } finally {
+    repository?.close();
+  }
+};
+
 export function registerSetupCommand(program: Command): void {
   program
     .command("setup")
@@ -485,7 +533,7 @@ export function registerSetupCommand(program: Command): void {
         const selection = resolveSelection(options);
 
         if (options.show) {
-          printStatuses(inspectStatuses(selection));
+          await printIntegrationSurfaceStatuses(selection);
           return;
         }
 

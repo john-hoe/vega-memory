@@ -14,6 +14,7 @@ const elements = {
   newMemories: document.getElementById("new-memories"),
   runtimeReadiness: document.getElementById("runtime-readiness"),
   configuredSurfaces: document.getElementById("configured-surfaces"),
+  activeSurfaces: document.getElementById("active-surfaces"),
   refreshStatus: document.getElementById("refresh-status"),
   resultsSummary: document.getElementById("results-summary"),
   tableBody: document.getElementById("memory-table"),
@@ -26,6 +27,8 @@ const elements = {
   impactList: document.getElementById("impact-list"),
   weeklySummary: document.getElementById("weekly-summary"),
   weeklyList: document.getElementById("weekly-list"),
+  surfaceSummary: document.getElementById("surface-summary"),
+  surfaceList: document.getElementById("surface-list"),
   wikiList: document.getElementById("wiki-list"),
   wikiSummary: document.getElementById("wiki-summary")
 };
@@ -131,16 +134,44 @@ const updateRefreshStatus = (label) => {
   elements.refreshStatus.textContent = label;
 };
 
-const renderStats = (health, impact) => {
+const renderStats = (health, impact, surfaceSummary) => {
   elements.memoryCount.textContent = String(health.memories ?? 0);
   elements.dbSize.textContent = `${Number(health.db_size_mb ?? 0).toFixed(2)} MB`;
   elements.ollamaStatus.textContent = health.ollama ? "Online" : "Offline";
   elements.newMemories.textContent = String(impact?.new_memories_this_week ?? 0);
   elements.runtimeReadiness.textContent = (impact?.runtime_readiness ?? "unknown").toUpperCase();
-  const configuredCount = Object.values(impact?.setup_surface_coverage ?? {}).filter(
-    (stateValue) => stateValue === "configured"
-  ).length;
-  elements.configuredSurfaces.textContent = String(configuredCount);
+  elements.configuredSurfaces.textContent = String(surfaceSummary?.configured_count ?? 0);
+  elements.activeSurfaces.textContent = String(surfaceSummary?.active_7d_count ?? 0);
+};
+
+const renderIntegrationSurfaces = (surfaces, summary) => {
+  elements.surfaceList.replaceChildren();
+
+  if (!Array.isArray(surfaces) || surfaces.length === 0) {
+    elements.surfaceSummary.textContent = "No integration surface status is available.";
+    elements.surfaceList.appendChild(
+      createSignalItem("No surface data", "The dashboard route did not return integration surface statuses.")
+    );
+    return;
+  }
+
+  elements.surfaceSummary.textContent =
+    `Configured: ${summary?.configured_count ?? 0} • Active (7d): ${summary?.active_7d_count ?? 0} • Unknown (7d): ${summary?.unknown_7d_count ?? 0}`;
+
+  for (const surface of surfaces) {
+    elements.surfaceList.appendChild(
+      createSignalItem(
+        surface.surface,
+        `managed=${surface.managed_setup_status} • observed7d=${surface.observed_activity_windows?.window_7d?.status ?? "unknown"} • observed30d=${surface.observed_activity_windows?.window_30d?.status ?? "unknown"} • runtime=${surface.runtime_health_status}`,
+        [
+          ...(surface.managed_setup_details ?? []),
+          ...(surface.observed_activity_details ?? []),
+          ...(surface.runtime_health_details ?? []),
+          ...(surface.next_action ? [`next: ${surface.next_action}`] : [])
+        ]
+      )
+    );
+  }
 };
 
 const renderImpact = (impact) => {
@@ -550,7 +581,15 @@ const renderTable = () => {
 const loadDashboardReport = async () => {
   const dashboard = await fetchJson("/api/admin/dashboard");
   state.dashboard = dashboard;
-  renderStats(dashboard.health ?? {}, dashboard.impact ?? null);
+  renderStats(
+    dashboard.health ?? {},
+    dashboard.impact ?? null,
+    dashboard.integration_surface_summary ?? null
+  );
+  renderIntegrationSurfaces(
+    dashboard.integration_surfaces ?? [],
+    dashboard.integration_surface_summary ?? null
+  );
   renderImpact(dashboard.impact ?? null);
   renderWeekly(dashboard.weekly ?? null);
 };

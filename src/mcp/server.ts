@@ -18,7 +18,7 @@ import { ConsolidationDashboardService } from "../core/consolidation-dashboard.j
 import { registerDefaultConsolidationDetectors } from "../core/consolidation-defaults.js";
 import { ConsolidationReportEngine } from "../core/consolidation-report-engine.js";
 import { ConsolidationScheduler } from "../core/consolidation-scheduler.js";
-import { buildSourceContext } from "../core/device.js";
+import { buildSourceContext, inferIntegrationSurface } from "../core/device.js";
 import { DiagnoseService } from "../core/diagnose.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
 import { GraphReportService } from "../core/graph-report.js";
@@ -444,7 +444,11 @@ export interface CreateMCPServerOptions {
       workingDirectory: string,
       taskHint?: string,
       tenantId?: string | null,
-      mode?: SessionStartMode
+      mode?: SessionStartMode,
+      activityContext?: {
+        surface?: string;
+        integration?: string;
+      }
     ): Promise<SessionStartResult>;
     sessionEnd(
       project: string,
@@ -971,7 +975,11 @@ export function createMCPServer({
           project: args.project ?? "global",
           auditContext: MCP_AUDIT_CONTEXT,
           sourceContext: buildSourceContext(source_actor ?? "unknown", "mcp", {
-            client_info: source_client
+            client_info: source_client,
+            surface:
+              inferIntegrationSurface(source_actor) ??
+              inferIntegrationSurface(source_client),
+            integration: "mcp"
           })
         });
         const memory = repository.getMemory(result.id);
@@ -994,13 +1002,17 @@ export function createMCPServer({
       project: z.string().trim().min(1).optional(),
       type: z.enum(MEMORY_TYPES).optional(),
       limit: z.number().int().positive().default(5),
-      min_similarity: z.number().min(0).max(1).default(0.3)
+      min_similarity: z.number().min(0).max(1).default(0.3),
+      source_surface: z.enum(["cursor", "codex", "claude", "api", "cli"]).optional(),
+      source_integration: z.string().trim().min(1).optional()
     },
     async (args) =>
       runTool(repository, "memory_recall", args, observer, async () => {
         const result = await recallService.recall(args.query, {
           project: args.project,
           type: args.type,
+          source_surface: args.source_surface,
+          source_integration: args.source_integration ?? "mcp",
           limit: args.limit,
           minSimilarity: args.min_similarity
         });
@@ -1414,7 +1426,9 @@ export function createMCPServer({
     {
       working_directory: z.string().trim().min(1),
       task_hint: z.string().trim().min(1).optional(),
-      mode: z.enum(SESSION_START_MODES).default("standard")
+      mode: z.enum(SESSION_START_MODES).default("standard"),
+      source_surface: z.enum(["cursor", "codex", "claude", "api", "cli"]).optional(),
+      source_integration: z.string().trim().min(1).optional()
     },
     async (args) =>
       runTool(repository, "session_start", args, observer, async () => {
@@ -1422,7 +1436,11 @@ export function createMCPServer({
           args.working_directory,
           args.task_hint,
           undefined,
-          args.mode
+          args.mode,
+          {
+            surface: args.source_surface,
+            integration: args.source_integration ?? "mcp"
+          }
         );
 
         return {

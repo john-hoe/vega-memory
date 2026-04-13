@@ -131,12 +131,21 @@ test("doctor --json reports a healthy onboarding setup when core checks pass", a
     const report = JSON.parse(result.stdout) as {
       status: string;
       checks: Array<{ name: string; status: string; summary: string }>;
+      surfaces: Array<{
+        surface: string;
+        managed_setup_status: string;
+        observed_activity_windows: {
+          window_7d: { status: string };
+        };
+      }>;
     };
 
     assert.equal(result.status, 0);
-    assert.equal(report.status, "pass");
-    assert.equal(report.checks.some((check) => check.name === "integrations" && check.status === "pass"), true);
+    assert.equal(report.status, "warn");
+    assert.equal(report.checks.some((check) => check.name === "integration_surfaces" && check.status === "warn"), true);
     assert.equal(report.checks.some((check) => check.name === "ollama" && check.status === "pass"), true);
+    assert.equal(report.surfaces.some((surface) => surface.surface === "codex" && surface.managed_setup_status === "configured"), true);
+    assert.equal(report.surfaces.some((surface) => surface.surface === "codex" && surface.observed_activity_windows.window_7d.status === "unknown"), true);
   } finally {
     await ollama.stop();
     rmSync(homeDirectory, { recursive: true, force: true });
@@ -156,6 +165,7 @@ test("doctor fails in client mode when remote configuration is incomplete", asyn
       status: string;
       suggestions: string[];
       checks: Array<{ name: string; status: string }>;
+      surfaces: Array<{ surface: string; runtime_health_status: string }>;
     };
 
     assert.equal(result.status, 1);
@@ -163,6 +173,7 @@ test("doctor fails in client mode when remote configuration is incomplete", asyn
     assert.equal(report.checks.some((check) => check.name === "mode" && check.status === "fail"), true);
     assert.equal(report.checks.some((check) => check.name === "api_key" && check.status === "fail"), true);
     assert.equal(report.suggestions.length > 0, true);
+    assert.equal(report.surfaces.some((surface) => surface.surface === "api" && surface.runtime_health_status === "fail"), true);
   } finally {
     await ollama.stop();
     rmSync(homeDirectory, { recursive: true, force: true });

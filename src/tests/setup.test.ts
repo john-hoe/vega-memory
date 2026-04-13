@@ -414,9 +414,13 @@ test("setup --show reports the current target status", async () => {
 
     assert.equal(installResult.status, 0);
     assert.equal(showResult.status, 0);
-    assert.match(showResult.stdout, /cursor: missing/);
-    assert.match(showResult.stdout, /codex: configured/);
-    assert.match(showResult.stdout, /claude: missing/);
+    assert.match(showResult.stdout, /cursor:/);
+    assert.match(showResult.stdout, /codex:/);
+    assert.match(showResult.stdout, /api:/);
+    assert.match(showResult.stdout, /cli:/);
+    assert.match(showResult.stdout, /managed setup: configured/);
+    assert.match(showResult.stdout, /observed activity \(7d\): unknown/);
+    assert.match(showResult.stdout, /runtime health:/);
   } finally {
     rmSync(homeDirectory, { recursive: true, force: true });
   }
