@@ -34,9 +34,37 @@ const STOP_WORDS = new Set([
   "decisions"
 ]);
 
+const LOW_SIGNAL_TAGS = new Set([
+  "added",
+  "implemented",
+  "phase",
+  "pending",
+  "test",
+  "tests",
+  "testing",
+  "fix",
+  "fixed",
+  "issue",
+  "issues",
+  "review",
+  "reviewed",
+  "verification",
+  "verified",
+  "update",
+  "updated"
+]);
+
+const MIN_TAG_CLUSTER_COUNT = 4;
+const MIN_REPEAT_OFFENDER_SESSION_COUNT = 4;
+const MIN_PROJECT_RISK_PITFALL_COUNT = 6;
+const MIN_DECISION_PATTERN_COUNT = 4;
+
 const unique = (values: string[]): string[] => [...new Set(values)];
 
 const normalize = (value: string): string => value.trim().toLowerCase();
+
+const isHighSignalToken = (value: string): boolean =>
+  value.length > 0 && !STOP_WORDS.has(value) && !LOW_SIGNAL_TAGS.has(value);
 
 const compareCandidates = (left: InsightCandidate, right: InsightCandidate): number =>
   left.project.localeCompare(right.project) || left.content.localeCompare(right.content);
@@ -59,7 +87,7 @@ const listActiveMemories = (repository: Repository, type: MemoryType): Memory[] 
   });
 
 const getNormalizedTags = (memory: Memory): string[] =>
-  unique(memory.tags.map(normalize).filter((tag) => tag.length > 0));
+  unique(memory.tags.map(normalize).filter(isHighSignalToken));
 
 const getDecisionKeywords = (memory: Memory): string[] => {
   if (memory.tags.length > 0) {
@@ -68,7 +96,7 @@ const getDecisionKeywords = (memory: Memory): string[] => {
 
   return unique(
     (memory.content.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
-      (token) => token.length > 3 && !STOP_WORDS.has(token)
+      (token) => token.length > 3 && isHighSignalToken(token)
     )
   );
 };
@@ -84,7 +112,7 @@ export function detectTagClusters(repository: Repository): InsightCandidate[] {
   }
 
   return [...counts.entries()]
-    .filter(([, count]) => count >= 3)
+    .filter(([, count]) => count >= MIN_TAG_CLUSTER_COUNT)
     .map(([key, count]) => {
       const [project, tag] = key.split("\u0000");
       return {
@@ -127,7 +155,7 @@ export function detectRepeatOffenders(repository: Repository): InsightCandidate[
   }
 
   return [...sessionCounts.entries()]
-    .filter(([, sessionIds]) => sessionIds.size >= 3)
+    .filter(([, sessionIds]) => sessionIds.size >= MIN_REPEAT_OFFENDER_SESSION_COUNT)
     .map(([key, sessionIds]) => {
       const [project, tag] = key.split("\u0000");
       return {
@@ -157,7 +185,7 @@ export function detectProjectRiskAreas(repository: Repository): InsightCandidate
   }
 
   return [...projectCounts.entries()]
-    .filter(([, entry]) => entry.count >= 5)
+    .filter(([, entry]) => entry.count >= MIN_PROJECT_RISK_PITFALL_COUNT)
     .map(([project, entry]) => ({
       content: `Project '${project}' has ${entry.count} pitfalls — higher risk area.`,
       tags: [...entry.tags].sort(),
@@ -177,7 +205,7 @@ export function detectDecisionPatterns(repository: Repository): InsightCandidate
   }
 
   return [...counts.entries()]
-    .filter(([, count]) => count >= 3)
+    .filter(([, count]) => count >= MIN_DECISION_PATTERN_COUNT)
     .map(([key, count]) => {
       const [project, tag] = key.split("\u0000");
       return {

@@ -447,14 +447,17 @@ test("sessionEnd creates session record", async () => {
     const db = getDatabase(repository);
     const stored = db
       .prepare(
-        "SELECT project, summary, memories_created FROM sessions ORDER BY ended_at DESC LIMIT 1"
+        "SELECT id, project, summary, memories_created FROM sessions ORDER BY ended_at DESC LIMIT 1"
       )
-      .get() as { project: string; summary: string; memories_created: string } | undefined;
+      .get() as { id: string; project: string; summary: string; memories_created: string } | undefined;
 
     assert.ok(stored);
     assert.equal(stored.project, "vega");
     assert.equal(stored.summary, "我们决定使用 SQLite。");
-    assert.equal(JSON.parse(stored.memories_created).length, 1);
+    const createdIds = JSON.parse(stored.memories_created) as string[];
+    assert.equal(createdIds.length, 1);
+    const createdMemory = repository.getMemory(createdIds[0] ?? "");
+    assert.equal(createdMemory?.source_context?.session_id, stored.id);
   } finally {
     restoreFetch();
     repository.close();

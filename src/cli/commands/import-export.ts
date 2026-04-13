@@ -554,7 +554,7 @@ export function registerImportExportCommands(
             importance: entry.importance,
             source: entry.source,
             auditContext: CLI_AUDIT_CONTEXT,
-            sourceContext: buildSourceContext("user", "cli")
+            sourceContext: entry.source_context ?? buildSourceContext("user", "cli")
           });
           continue;
         }

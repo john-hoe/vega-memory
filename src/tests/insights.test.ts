@@ -97,20 +97,21 @@ const installEmbeddingMock = (): (() => void) => {
   };
 };
 
-test("detectTagClusters finds clusters with >= 3 pitfalls on same tag", () => {
+test("detectTagClusters finds clusters with >= 4 pitfalls on same tag", () => {
   const repository = new Repository(":memory:");
 
   try {
     repository.createMemory(createStoredMemory({ id: "pitfall-1", tags: ["auth"] }));
     repository.createMemory(createStoredMemory({ id: "pitfall-2", tags: ["auth"] }));
     repository.createMemory(createStoredMemory({ id: "pitfall-3", tags: ["auth"] }));
-    repository.createMemory(createStoredMemory({ id: "pitfall-4", tags: ["cache"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-4", tags: ["auth"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-5", tags: ["cache"] }));
 
     const insights = detectTagClusters(repository);
 
     assert.deepEqual(insights, [
       {
-        content: "Tag 'auth': 3 pitfalls recorded. Common issue area.",
+        content: "Tag 'auth': 4 pitfalls recorded. Common issue area.",
         tags: ["auth"],
         project: "vega"
       }
@@ -124,7 +125,7 @@ test("detectProjectRiskAreas identifies high-risk projects", () => {
   const repository = new Repository(":memory:");
 
   try {
-    for (let index = 1; index <= 5; index += 1) {
+    for (let index = 1; index <= 6; index += 1) {
       repository.createMemory(
         createStoredMemory({
           id: `pitfall-${index}`,
@@ -138,7 +139,7 @@ test("detectProjectRiskAreas identifies high-risk projects", () => {
 
     assert.deepEqual(insights, [
       {
-        content: "Project 'atlas' has 5 pitfalls — higher risk area.",
+        content: "Project 'atlas' has 6 pitfalls — higher risk area.",
         tags: ["auth", "deploy"],
         project: "atlas"
       }
@@ -155,6 +156,7 @@ test("detectRepeatOffenders finds tags across multiple sessions", () => {
     repository.createMemory(createStoredMemory({ id: "pitfall-1", tags: ["auth"] }));
     repository.createMemory(createStoredMemory({ id: "pitfall-2", tags: ["auth"] }));
     repository.createMemory(createStoredMemory({ id: "pitfall-3", tags: ["auth"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-4", tags: ["auth"] }));
     repository.createSession({
       id: "session-1",
       project: "vega",
@@ -179,12 +181,20 @@ test("detectRepeatOffenders finds tags across multiple sessions", () => {
       ended_at: "2026-04-03T01:00:00.000Z",
       memories_created: ["pitfall-3"]
     });
+    repository.createSession({
+      id: "session-4",
+      project: "vega",
+      summary: "Fourth session",
+      started_at: "2026-04-04T00:00:00.000Z",
+      ended_at: "2026-04-04T01:00:00.000Z",
+      memories_created: ["pitfall-4"]
+    });
 
     const insights = detectRepeatOffenders(repository);
 
     assert.deepEqual(insights, [
       {
-        content: "Recurring issue: 'auth' appears across 3 sessions.",
+        content: "Recurring issue: 'auth' appears across 4 sessions.",
         tags: ["auth"],
         project: "vega"
       }
@@ -219,12 +229,19 @@ test("detectDecisionPatterns groups decisions by shared tags", () => {
         tags: ["sqlite", "indexing"]
       })
     );
+    repository.createMemory(
+      createStoredMemory({
+        id: "decision-4",
+        type: "decision",
+        tags: ["sqlite", "replication"]
+      })
+    );
 
     const insights = detectDecisionPatterns(repository);
 
     assert.deepEqual(insights, [
       {
-        content: "Decision pattern: 'sqlite' influenced 3 decisions.",
+        content: "Decision pattern: 'sqlite' influenced 4 decisions.",
         tags: ["sqlite"],
         project: "vega"
       }
@@ -244,6 +261,7 @@ test("InsightGenerator creates new insight memories", async () => {
     repository.createMemory(createStoredMemory({ id: "pitfall-1", tags: ["auth"] }));
     repository.createMemory(createStoredMemory({ id: "pitfall-2", tags: ["auth"] }));
     repository.createMemory(createStoredMemory({ id: "pitfall-3", tags: ["auth"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-4", tags: ["auth"] }));
 
     const created = await generator.generateInsights();
     const insights = repository.listMemories({
@@ -257,7 +275,7 @@ test("InsightGenerator creates new insight memories", async () => {
     assert.equal(insights.length, 1);
     assert.equal(
       insights[0]?.content,
-      "Tag 'auth': 3 pitfalls recorded. Common issue area."
+      "Tag 'auth': 4 pitfalls recorded. Common issue area."
     );
     assert.deepEqual(insights[0]?.tags, ["auth"]);
   } finally {
@@ -281,7 +299,7 @@ test("InsightGenerator does not duplicate existing insights", async () => {
       createStoredMemory({
         id: "insight-existing",
         type: "insight",
-        content: "Tag 'auth': 3 pitfalls recorded. Common issue area.",
+        content: "Tag 'auth': 4 pitfalls recorded. Common issue area.",
         tags: ["auth"],
         importance: 0.75
       })
@@ -337,6 +355,24 @@ test("sessionStart includes proactive warnings when task_hint matches insight ta
   }
 });
 
+test("detectTagClusters ignores low-signal generic tags", () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    repository.createMemory(createStoredMemory({ id: "pitfall-1", tags: ["added"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-2", tags: ["added"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-3", tags: ["added"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-4", tags: ["added"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-5", tags: ["added"] }));
+
+    const insights = detectTagClusters(repository);
+
+    assert.deepEqual(insights, []);
+  } finally {
+    repository.close();
+  }
+});
+
 test("InsightGenerator runs through weeklyHealthReport", async () => {
   const restoreFetch = installEmbeddingMock();
   const tempDir = mkdtempSync(join(tmpdir(), "vega-insights-weekly-"));
@@ -353,6 +389,7 @@ test("InsightGenerator runs through weeklyHealthReport", async () => {
     repository.createMemory(createStoredMemory({ id: "pitfall-1", tags: ["auth"] }));
     repository.createMemory(createStoredMemory({ id: "pitfall-2", tags: ["auth"] }));
     repository.createMemory(createStoredMemory({ id: "pitfall-3", tags: ["auth"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-4", tags: ["auth"] }));
 
     await weeklyHealthReport(repository, config, memoryService);
 
@@ -366,7 +403,7 @@ test("InsightGenerator runs through weeklyHealthReport", async () => {
     assert.equal(insights.length, 1);
     assert.equal(
       insights[0]?.content,
-      "Tag 'auth': 3 pitfalls recorded. Common issue area."
+      "Tag 'auth': 4 pitfalls recorded. Common issue area."
     );
   } finally {
     restoreFetch();

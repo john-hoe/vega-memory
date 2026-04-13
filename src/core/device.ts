@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 
 import { expandHomePath } from "../config.js";
@@ -13,6 +13,7 @@ export interface DeviceIdentity {
 }
 
 let cachedDeviceIdentity: DeviceIdentity | null = null;
+let warnedDeviceIdentityPersistenceFailure = false;
 
 const resolveVegaHome = (): string =>
   expandHomePath(process.env.VEGA_HOME?.trim() || "~/.vega");
@@ -32,12 +33,44 @@ const createDeviceIdentity = (): DeviceIdentity => ({
   platform: process.platform
 });
 
-const persistDeviceIdentity = (identity: DeviceIdentity): void => {
+const createFallbackDeviceIdentity = (): DeviceIdentity => {
+  const hash = createHash("sha256")
+    .update(hostname())
+    .update("\u0000")
+    .update(process.platform)
+    .update("\u0000")
+    .update(homedir())
+    .digest("hex");
+
+  return {
+    device_id: `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`,
+    device_name: hostname(),
+    platform: process.platform
+  };
+};
+
+const warnDeviceIdentityPersistenceFailure = (path: string, error: unknown): void => {
+  if (warnedDeviceIdentityPersistenceFailure) {
+    return;
+  }
+
+  warnedDeviceIdentityPersistenceFailure = true;
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(
+    `[device-identity] failed to persist device identity at ${path}: ${message}. Using deterministic fallback identity.`
+  );
+};
+
+const persistDeviceIdentity = (identity: DeviceIdentity): boolean => {
   try {
     const path = getDeviceIdentityPath();
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${JSON.stringify(identity, null, 2)}\n`, "utf8");
-  } catch {}
+    return true;
+  } catch (error) {
+    warnDeviceIdentityPersistenceFailure(getDeviceIdentityPath(), error);
+    return false;
+  }
 };
 
 export const getDeviceIdentity = (): DeviceIdentity => {
@@ -55,9 +88,14 @@ export const getDeviceIdentity = (): DeviceIdentity => {
   } catch {}
 
   const identity = createDeviceIdentity();
-  cachedDeviceIdentity = identity;
-  persistDeviceIdentity(identity);
-  return identity;
+  if (persistDeviceIdentity(identity)) {
+    cachedDeviceIdentity = identity;
+    return identity;
+  }
+
+  const fallbackIdentity = createFallbackDeviceIdentity();
+  cachedDeviceIdentity = fallbackIdentity;
+  return fallbackIdentity;
 };
 
 export const buildSourceContext = (
@@ -74,4 +112,5 @@ export const buildSourceContext = (
 
 export const resetDeviceIdentityCacheForTests = (): void => {
   cachedDeviceIdentity = null;
+  warnedDeviceIdentityPersistenceFailure = false;
 };

@@ -501,12 +501,15 @@ export class SessionService {
       );
     }
 
+    const sessionId = uuidv4();
     const memories_created: string[] = [];
     const ollamaAvailable = await this.isOllamaAvailableCached();
     const extracted = ollamaAvailable
       ? await this.extractWithThreshold(summary, project)
       : [];
-    const sourceContext = buildSourceContext("session", "internal");
+    const sourceContext = buildSourceContext("session", "internal", {
+      session_id: sessionId
+    });
 
     if (extracted.length > 0) {
       for (const candidate of extracted) {
@@ -559,7 +562,7 @@ export class SessionService {
     this.updatePendingSynthesisWarning(project, newlyCreatedMemoryIds);
 
     this.repository.createSession({
-      id: uuidv4(),
+      id: sessionId,
       project,
       summary,
       started_at,

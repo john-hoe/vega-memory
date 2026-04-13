@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -47,6 +47,35 @@ test("caches device identity across calls", () => {
 
     assert.equal(first.device_id, second.device_id);
   } finally {
+    resetDeviceIdentityCacheForTests();
+    process.env.VEGA_HOME = previousVegaHome;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("falls back deterministically and warns when device identity cannot be persisted", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-device-unwritable-"));
+  const blockedPath = join(tempDir, "blocked-home");
+  const previousVegaHome = process.env.VEGA_HOME;
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+
+  try {
+    writeFileSync(blockedPath, "not-a-directory", "utf8");
+    process.env.VEGA_HOME = blockedPath;
+    resetDeviceIdentityCacheForTests();
+    console.warn = (...args: unknown[]): void => {
+      warnings.push(args.map(String).join(" "));
+    };
+
+    const first = getDeviceIdentity();
+    resetDeviceIdentityCacheForTests();
+    const second = getDeviceIdentity();
+
+    assert.equal(first.device_id, second.device_id);
+    assert.ok(warnings.some((warning) => warning.includes("failed to persist device identity")));
+  } finally {
+    console.warn = originalWarn;
     resetDeviceIdentityCacheForTests();
     process.env.VEGA_HOME = previousVegaHome;
     rmSync(tempDir, { recursive: true, force: true });

@@ -1130,3 +1130,66 @@ test("CLI JSON export/import preserves source_context", () => {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("CLI JSON import preserves provided source_context for reduced entries", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-import-reduced-source-context-"));
+  const targetDbPath = join(tempDir, "target.db");
+  const importPath = join(tempDir, "reduced-memories.json");
+
+  try {
+    writeFileSync(
+      importPath,
+      JSON.stringify(
+        {
+          format: "vega-memory/v1",
+          exported_at: "2026-04-13T00:00:00.000Z",
+          memories: [
+            {
+              content: "Reduced memory with preserved provenance.",
+              type: "project_context",
+              project: "test-project",
+              title: "Reduced Source Context Memory",
+              source: "explicit",
+              source_context: {
+                actor: "codex",
+                channel: "mcp",
+                device_id: "reduced-device-123",
+                device_name: "Reduced Device",
+                platform: "darwin",
+                session_id: "reduced-session"
+              }
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    runCli(["import", importPath], {
+      VEGA_DB_PATH: targetDbPath,
+      OLLAMA_BASE_URL: "http://localhost:99999"
+    });
+
+    const targetRepository = new Repository(targetDbPath);
+
+    try {
+      const imported = targetRepository.listMemories({
+        project: "test-project",
+        limit: 10
+      })[0];
+
+      assert.ok(imported);
+      assert.equal(imported?.title, "Reduced Source Context Memory");
+      assert.equal(imported?.source_context?.device_id, "reduced-device-123");
+      assert.equal(imported?.source_context?.actor, "codex");
+      assert.equal(imported?.source_context?.channel, "mcp");
+      assert.equal(imported?.source_context?.session_id, "reduced-session");
+    } finally {
+      targetRepository.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
