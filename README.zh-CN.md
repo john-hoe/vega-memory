@@ -1,39 +1,199 @@
 [English](README.md) | **中文** | [日本語](README.ja.md) | [한국어](README.ko.md)
 
-# Vega 记忆系统
+# Vega Memory
 
-一个本地优先的记忆服务器，为 AI 工具和 Agent 提供**持久化、跨会话的记忆能力**。连接 Cursor、Claude Code、Codex、OpenClaw 或任何兼容 MCP 的客户端——它们共享同一个知识库，确保在一个会话中学到的经验不会在下一个会话中丢失。
+让多个 AI 编码 Agent 共享同一套长期记忆。
 
-### 功能特性
+Vega Memory 是一个本地优先、可自托管的共享记忆层，服务于 Cursor、Codex、Claude Code、OpenClaw，以及其他基于 MCP 或 API 驱动的 Agent。它把“会话结束就丢失的经验”变成可持续复用的工程记忆，让不同工具、不同机器、不同时间点的 Agent 都能基于同一套上下文继续工作。
 
-- **记住** 决策、踩坑经验、用户偏好和项目上下文，跨会话持久保存
-- **召回** 通过混合语义搜索（向量 + BM25）自动回忆相关经验
-- **去重** 自动处理——存储相同内容时会合并而非重复创建
-- **主动预警** ——"上次你处理 FFmpeg 时，62% 的问题与路径相关"
-- **离线可用** ——SQLite + 本地 Ollama，零云依赖，零 API 费用
+如果你今天让一个 Agent 修了问题，明天换另一个 Agent 接手，Vega 的价值就在于它不需要再从零开始。
 
-### 支持的 AI 工具
+[5 分钟开始](#5-分钟开始) · [接入方式](#接入方式) · [部署方式](#部署方式) · [HTTP API](docs/API.md) · [部署文档](docs/deployment.md) · [问题反馈](https://github.com/john-hoe/vega-memory/issues)
 
-| 工具 | 接口 | 连接方式 |
-|------|------|----------|
-| **Cursor** | MCP (stdio) | 注册到 `~/.cursor/mcp.json` — Agent 自动调用记忆工具 |
-| **Claude Code** | CLI | 在 `CLAUDE.md` 中配置规则 — 通过 shell 执行 `vega recall/store` |
-| **Codex CLI** | CLI | 在 `AGENTS.md` 中配置规则 — 同样的 CLI 模式 |
-| **OpenClaw** | HTTP API | Agent 通过 HTTP 调用 `/api/recall`、`/api/store` |
-| **任何 MCP 客户端** | MCP (stdio) | 与 Cursor 相同的配置 — 适用于所有兼容 MCP 的工具 |
-| **脚本 / CI** | CLI 或 HTTP | `vega recall --json` 或 `curl /api/recall` |
+Vega 更适合被理解为一个位于 Agent 工作流底层的 shared memory runtime，而不是另一个泛化知识库或笔记系统。
 
-### 使用前后对比
+## 为什么需要 Vega
 
-| | 没有 Vega | 使用 Vega |
-|---|---|---|
-| 新会话上下文 | 从零开始，或加载整个 `AGENTS.md`（约 4000 token） | 仅加载相关记忆（约 500 token） |
-| 跨会话知识 | 对话结束即丢失 | 持久存储在 SQLite 中，永久可搜索 |
-| 多工具一致性 | 每个工具各自独立 | Cursor、Claude Code、Codex 共享同一记忆 |
-| 重复修复 Bug | "这个问题我们之前不是解决过了吗？" | `session_start` 自动浮现之前的踩坑记录 |
-| 远程机器 | 手动复制粘贴上下文 | 通过 Tailscale 自动同步，支持离线缓存 |
+大多数 Agent 工作流的真正瓶颈，不是模型不够聪明，而是模型不记得上一次发生了什么。
 
-## 架构
+如果没有共享记忆层：
+
+- 每个工具都有自己的上下文孤岛
+- 新会话要么加载过多提示词，要么缺少关键上下文
+- 同样的修复、决策和踩坑会被重复做很多次
+- 远程机器、脚本和后台任务无法继承本地 Agent 的经验
+
+Vega 把这些问题收束成一个可复用的闭环：
+
+- 在任务开始时用 `session_start` 注入相关记忆
+- 在任务过程中用 `memory_store` 持续沉淀经验
+- 在任务结束时用 `session_end` 记录摘要并提取知识
+- 在下一次任务里通过 `memory_recall` 和 session preload 把它们再利用起来
+
+## 适合谁
+
+Vega 当前最适合这些用户：
+
+- 同一项目里同时使用多个编码 Agent 的独立开发者
+- 想给团队建立共享 Agent 记忆层的小型工程团队
+- 正在搭建自托管 Agent 基础设施的内部平台团队
+- 需要 MCP、CLI、HTTP 三种接入能力的工具开发者
+
+如果你现在最在意的是“多 Agent 共享上下文”和“跨会话不丢记忆”，Vega 比把它当成一个泛知识平台更值得先试。
+
+## 为什么是 Vega
+
+- **共享而不是单机记忆**：不是只服务一个聊天窗口，而是服务多个 Agent 和多个入口
+- **本地优先而不是云依赖优先**：SQLite + 本地模型可跑，适合隐私敏感和离线场景
+- **工程化而不是 demo 化**：有 MCP、CLI、HTTP API、dashboard、backup、audit、encryption、sync
+- **先解决工作流断点**：重点不是多做一个知识库，而是让 Agent 在下一次任务里真的记得
+
+## 核心能力
+
+- **共享记忆原语**：`memory_store`、`memory_recall`、`memory_list`、`session_start`、`session_end`
+- **混合检索**：向量检索、BM25、reranking、topic-aware recall、deep recall
+- **运行可靠性**：版本历史、审计日志、压缩整理、备份、数据库加密
+- **多入口接入**：MCP、CLI、HTTP API、dashboard
+- **扩展能力**：wiki synthesis、graph 视图、多租户、analytics 等上层能力
+
+## 运行环境
+
+- **推荐 Node 20 LTS**
+- **默认存储**：SQLite，本地优先，数据库默认路径为 `./data/memory.db`
+- **默认 embedding 路径**：Ollama + `bge-m3`
+- **降级策略**：没有 Ollama 时系统仍可运行，但召回能力会退回到更保守的关键词 / 非向量路径
+
+## 接入方式
+
+| 接入方式 | 传输方式 | 最适合的场景 |
+| --- | --- | --- |
+| MCP | stdio | Cursor 和其他 MCP 客户端中的 Agent 原生接入 |
+| CLI | shell | Codex、Claude Code、脚本、CI、本地终端工作流 |
+| HTTP API | REST | 远程机器、dashboard、自定义集成、同步客户端 |
+
+当前推荐的理解方式很简单：
+
+- 想让 Agent 自动调用：优先 MCP
+- 想让终端和脚本接入：优先 CLI
+- 想做远程共享或后台服务：优先 HTTP API
+
+## 一个典型工作流
+
+1. Agent 开始处理任务时调用 `session_start`
+2. Vega 返回活跃任务、偏好、相关记忆和主动预警
+3. Agent 在工作中用 `memory_store` 记录新的可复用经验
+4. 任务结束时用 `session_end` 记录摘要，并抽取新的知识
+5. 下一次任务开始时，新的 Agent 继续复用这些内容
+
+这条闭环就是 Vega 的产品核心。
+
+## 5 分钟开始
+
+### 1. 克隆并构建
+
+```bash
+git clone https://github.com/john-hoe/vega-memory.git
+cd vega-memory
+npm install
+npm run build
+npm link
+```
+
+### 2. 配置最小环境
+
+```bash
+cp .env.example .env
+```
+
+最常见的本地配置是：
+
+```bash
+VEGA_DB_PATH=./data/memory.db
+VEGA_DB_ENCRYPTION=false
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=bge-m3
+VEGA_API_KEY=change-me
+VEGA_API_PORT=3271
+```
+
+### 3. 验证服务是否可用
+
+```bash
+vega health
+```
+
+### 4. 跑一次最小记忆闭环
+
+```bash
+vega store "Always checkpoint WAL before copying SQLite backups" \
+  --type pitfall \
+  --project my-project \
+  --title "SQLite backup checklist"
+
+vega recall "sqlite backup" --project my-project
+```
+
+## 部署方式
+
+Vega 当前最推荐的部署路径有三条：
+
+### 方案 A：本地单机模式
+
+适合独立开发者和本机工作流。
+
+- 使用 SQLite 本地数据库
+- MCP 入口由 Agent 客户端按需拉起
+- 后台调度进程提供 HTTP API、dashboard、backup 和 maintenance
+
+```bash
+export VEGA_API_KEY="$(openssl rand -hex 16)"
+node dist/scheduler/index.js
+```
+
+### 方案 B：Docker / Compose
+
+适合想快速体验完整运行栈的用户。
+
+```bash
+docker compose up --build
+```
+
+默认 Compose 会启动：
+
+- `vega`：scheduler + HTTP API
+- `ollama`：本地模型服务
+
+当前仓库里的 Compose 默认对外暴露的是 `3000` 端口，不是文档里的默认 `3271`。
+
+### 方案 C：远程共享模式
+
+适合多机器或小团队共享同一套记忆。
+
+- 以 server mode 运行集中式 Vega
+- 通过 HTTP API 或 client mode 访问
+- 保留本地缓存和远程同步能力
+
+## 当前最推荐的使用场景
+
+如果你第一次试 Vega，我建议从这几个场景切入：
+
+- 让 Cursor、Codex、Claude Code 在同一个仓库里共享踩坑记录
+- 给长期维护的项目沉淀决策和偏好，而不是写在临时对话里
+- 在自托管环境里建立一个团队共享的 Agent memory backend
+- 把 `session_start` 变成进入任务时的标准上下文入口
+
+## 技术边界和真实预期
+
+为了避免第一次接触时误解，下面这些边界值得提前说清楚：
+
+- Vega 默认使用 SQLite，本地体验最好，远程和多端共享通过 API / sync 扩展
+- HTTP API 和 dashboard 只有在显式配置 `VEGA_API_KEY` 时才会启用
+- dashboard 由 scheduler 进程提供，不是单独前端应用
+- Ollama 是默认 embedding/provider 路径，但系统也支持其他 provider 配置
+- 远程 MCP 客户端当前是轻量兼容层，不是本地 MCP 能力的完整镜像
+- wiki、graph、analytics、billing 等能力已经存在，但不是第一次采用时的主学习路径
+
+## 架构概览
 
 ```text
                            +---------------------------+
@@ -73,825 +233,10 @@
           +------------------+                        +-------------------+
 ```
 
-**三种接口，同一记忆：**
-
-| 接口 | 传输方式 | 最佳用途 |
-|------|----------|----------|
-| **MCP** | stdio | Cursor（Agent 自动调用） |
-| **CLI** | shell | Claude Code、Codex、脚本、任何终端 |
-| **HTTP API** | REST | 远程机器、自定义集成、Web 仪表盘 |
-
----
-
-## 前置条件
-
-- **Node.js** 18+
-- **Ollama** 在本地运行并已拉取 `bge-m3` 模型（`ollama pull bge-m3`）
-
-Ollama 为可选项——当 Ollama 不可用时，Vega 会优雅降级为关键词搜索（FTS5）。
-
----
-
-## 快速开始
-
-### 1. 克隆并构建
-
-```bash
-git clone https://github.com/your-username/vega-memory.git
-cd vega-memory
-npm install
-npm run build
-npm link   # makes the `vega` command available globally
-```
-
-### 2. 配置
-
-复制示例环境变量文件并填入你的值：
-
-```bash
-cp .env.example .env
-```
-
-**`.env.example`：**
-```bash
-VEGA_DB_PATH=./data/memory.db
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=bge-m3
-VEGA_API_KEY=              # REQUIRED for HTTP API — generate a strong random key
-VEGA_API_PORT=3271
-VEGA_TG_BOT_TOKEN=         # Optional: Telegram bot token for alerts
-VEGA_TG_CHAT_ID=           # Optional: Telegram chat ID for alerts
-```
-
-> **安全提示：** 切勿将 `.env` 提交到 git。生成强 API 密钥：`openssl rand -hex 16`
-
-### 3. 验证
-
-```bash
-vega health
-```
-
-你应该会看到一份健康报告。如果 Ollama 正在运行，则显示 `ollama: true`。
-
-### 4. 存储第一条记忆
-
-```bash
-vega store "Always use WAL mode for SQLite concurrent access" \
-  --type decision --project my-project
-```
-
-### 5. 召回记忆
-
-```bash
-vega recall "sqlite concurrency" --project my-project
-```
-
-### 6. 连接你的 AI 工具
-
-| 工具 | 接口 | 配置方法 |
-|------|------|----------|
-| **Cursor** | MCP（自动） | 添加到 `~/.cursor/mcp.json` → [Cursor 配置](#cursor-mcp--recommended) |
-| **Claude Code** | CLI | 添加规则到 `CLAUDE.md` → [Claude Code 配置](#claude-code-cli) |
-| **Codex CLI** | CLI | 添加规则到 `AGENTS.md` → [Codex 配置](#codex-cli-cli) |
-| **OpenClaw / 自定义** | HTTP API | 调用 `/api/*` 端点 → [HTTP API 配置](#openclaw--custom-agents-http-api) |
-| **任何 MCP 客户端** | MCP (stdio) | 与 Cursor 相同的配置 |
-| **脚本 / CI** | CLI 或 HTTP | `vega recall --json` 或 `curl /api/recall` |
-
-各工具的详细配置说明见下方 [连接 AI 工具](#connecting-ai-tools) 章节。
-
----
-
-## 部署
-
-### 方案 A：本地单机部署（推荐起步方案）
-
-所有组件在同一台机器上运行。MCP 服务器由 Cursor 在每次会话时启动；后台调度守护进程负责备份、压缩和 HTTP API。
-
-```bash
-# Start the background scheduler (includes HTTP API + dashboard)
-export VEGA_API_KEY=$(openssl rand -hex 16)
-node dist/scheduler/index.js &
-
-# Dashboard is at http://127.0.0.1:3271
-# Log in with the same API key
-```
-
-**macOS 自动启动**（通过 launchd）：
-
-```bash
-# Create the plist (adjust paths)
-cat > ~/Library/LaunchAgents/dev.vega-memory.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://plist.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>dev.vega-memory</string>
-  <key>ProgramArguments</key><array>
-    <string>/usr/local/bin/node</string>
-    <string>/path/to/vega-memory/dist/scheduler/index.js</string>
-  </array>
-  <key>EnvironmentVariables</key><dict>
-    <key>VEGA_DB_PATH</key><string>/path/to/vega-memory/data/memory.db</string>
-    <key>OLLAMA_BASE_URL</key><string>http://localhost:11434</string>
-    <key>OLLAMA_MODEL</key><string>bge-m3</string>
-    <key>VEGA_API_KEY</key><string>YOUR_GENERATED_KEY</string>
-    <key>VEGA_API_PORT</key><string>3271</string>
-  </dict>
-  <key>KeepAlive</key><true/>
-  <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>/path/to/vega-memory/data/logs/scheduler-stdout.log</string>
-  <key>StandardErrorPath</key><string>/path/to/vega-memory/data/logs/scheduler-stderr.log</string>
-</dict>
-</plist>
-EOF
-
-# Load it
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.vega-memory.plist
-```
-
-### 方案 B：服务器 + 远程客户端（Tailscale）
-
-在中心服务器（例如常开的 Mac mini 或 VPS）上运行 Vega。远程机器通过 [Tailscale](https://tailscale.com)（零配置 WireGuard 网状 VPN）上的 HTTP API 连接。
-
-#### 第 1 步：在所有机器上安装 Tailscale
-
-```bash
-# macOS
-brew install tailscale
-# or download from https://tailscale.com/download
-
-# Linux
-curl -fsSL https://tailscale.com/install.sh | sh
-
-# Windows
-# Download from https://tailscale.com/download/windows
-```
-
-在每台机器上登录：
-
-```bash
-sudo tailscale up
-```
-
-同一 Tailscale 账户下的所有机器现在都在一个私有加密网络上（`100.x.x.x`）。
-
-#### 第 2 步：查找服务器的 Tailscale IP
-
-在服务器（运行 Vega 的机器）上：
-
-```bash
-tailscale ip -4
-# Output: 100.x.x.x  (this is your Tailscale IP)
-```
-
-#### 第 3 步：在服务器上启动 Vega
-
-```bash
-# Build and configure (see Quick Start above)
-export VEGA_API_KEY=$(openssl rand -hex 16)
-echo "Save this key: $VEGA_API_KEY"
-
-node dist/scheduler/index.js
-# API is now accessible at http://100.x.x.x:3271 from any Tailscale device
-```
-
-#### 第 4 步：连接远程机器
-
-在每台远程机器上（需在同一 Tailscale 网络中）：
-
-```bash
-npm install -g vega-memory   # or clone and npm link
-
-vega setup --server 100.x.x.x --port 3271 --api-key YOUR_API_KEY
-```
-
-此命令将：
-1. 创建 `~/.vega/config.json` 保存服务器连接信息
-2. 在 `~/.cursor/mcp.json` 中以客户端模式注册 Vega
-3. 设置本地 SQLite 缓存以保障离线可用
-
-#### 第 5 步：验证
-
-```bash
-# On the remote machine
-vega health
-# Should show: status: "healthy", connected to the server
-
-vega recall "test" --json
-# Should return results from the server's memory database
-```
-
-#### 离线模式
-
-当远程机器与服务器断开连接时（例如无网络），Vega 会自动降级到本地缓存：
-
-- **读取** 从缓存副本提供服务
-- **写入** 排队到 `~/.vega/pending/`
-- **重新连接** 后触发自动同步——待处理的写入通过正常的去重管道发送
-
-#### Tailscale ACL（可选加固）
-
-为增强安全性，可在 [Tailscale ACL 策略](https://login.tailscale.com/admin/acls) 中限制哪些设备可以访问 Vega 的端口：
-
-```json
-{
-  "acls": [
-    {
-      "action": "accept",
-      "src": ["group:engineering"],
-      "dst": ["tag:vega-server:3271"]
-    }
-  ]
-}
-```
-
-> **安全说明：** Tailscale 对所有流量提供 WireGuard 加密。Vega API 端口（3271）仅在你的 Tailscale 网络内可达——不会暴露到公共互联网。API 密钥在网络层安全之上增加了第二层身份验证。
-
----
-
-## 连接 AI 工具
-
-### Cursor（MCP — 推荐）
-
-Vega 注册为 MCP 服务器，Cursor 会自动调用。
-
-**1. 添加到 `~/.cursor/mcp.json`：**
-
-```json
-{
-  "mcpServers": {
-    "vega": {
-      "command": "node",
-      "args": ["/absolute/path/to/vega-memory/dist/index.js"],
-      "env": {
-        "VEGA_DB_PATH": "/absolute/path/to/vega-memory/data/memory.db",
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "bge-m3"
-      }
-    }
-  }
-}
-```
-
-**2. 添加 Cursor 规则** `.cursor/rules/memory.mdc` 到你的工作区：
-
-```markdown
----
-globs: ["**/*"]
-alwaysApply: true
----
-
-## Memory System Rules
-
-### Normal Mode (MCP available)
-- Session start → call vega.session_start(working_directory, task_hint)
-- Task completed → call vega.memory_store(type: "task_state")
-- Decision made → call vega.memory_store(type: "decision")
-- Bug fixed → call vega.memory_store(type: "pitfall")
-- New preference → call vega.memory_store(type: "preference")
-- User says "remember" → call vega.memory_store(source: "explicit")
-- Session ending → call vega.session_end(summary)
-- Before storing → verify content is NOT: emotional complaints, failed debug attempts, one-time queries, raw data, common knowledge
-
-### Fallback Mode (MCP unavailable)
-- Session start → read data/snapshots/memory-snapshot.md
-- New memories → append to data/snapshots/pending-memories.jsonl
-
-### Alert Check
-- Session start → check data/alerts/active-alert.md → if exists, read and inform user
-```
-
-**3. 重启 Cursor。** Agent 现在会在每次对话开始时自动调用 `session_start`，并在你工作过程中存储记忆。
-
----
-
-### Claude Code（CLI）
-
-Claude Code 通过 shell 命令使用 `vega` CLI。将以下内容添加到项目的 `CLAUDE.md`：
-
-```markdown
-# Vega Memory Rules
-
-## Session start
-Run: `vega session-start --dir $(pwd) --json`
-Parse the JSON output and use it as context for this session.
-
-## Auto-store (do these automatically when appropriate)
-- Task completed: `vega store "what was done" --type task_state --project PROJECT_NAME`
-- Bug fixed: `vega store "error + solution" --type pitfall --project PROJECT_NAME`
-- Decision made: `vega store "decision + reasoning" --type decision --project PROJECT_NAME`
-- User says "remember": `vega store "content" --type preference --source explicit`
-
-## Before making changes, search memory
-Run: `vega recall "relevant query" --project PROJECT_NAME --json`
-
-## Session end
-Run: `vega session-end --project PROJECT_NAME --summary "what was accomplished"`
-```
-
----
-
-### Codex CLI（CLI）
-
-与 Claude Code 模式相同。将以下内容添加到项目的 `AGENTS.md`：
-
-```markdown
-# Vega Memory Rules
-
-- Read the task instruction FIRST before doing anything
-- On start: run `vega session-start --dir $(pwd) --json`, use output as context
-- On task complete: `vega store "..." --type task_state --project PROJECT_NAME`
-- On error solved: `vega store "..." --type pitfall --project PROJECT_NAME`
-- On session end: `vega session-end --project PROJECT_NAME --summary "..."`
-- Before changes, search: `vega recall "query" --project PROJECT_NAME --json`
-```
-
----
-
-### Codex App（桌面版 — 远程 MCP 连接）
-
-Codex 桌面应用支持 MCP。在远程场景下（例如 Windows 上的 Codex 连接 Mac/Linux 服务器上的 Vega），请使用 `client/vega-remote-mcp.mjs` 中附带的轻量级远程 MCP 代理。
-
-**步骤 1：在客户端机器上克隆并安装**
-
-```powershell
-# Windows PowerShell (or bash on Mac/Linux)
-git clone https://github.com/john-hoe/vega-memory.git
-cd vega-memory
-npm install @modelcontextprotocol/sdk
-```
-
-> 客户端只需安装 SDK —— 无需原生依赖、无需 SQLite、无需 Ollama。
-
-**步骤 2：在 Codex App 中添加 MCP 服务器**
-
-打开 Codex App → Settings → **MCP Servers** → Add：
-
-```json
-{
-  "command": "node",
-  "args": ["C:\\path\\to\\vega-memory\\client\\vega-remote-mcp.mjs"],
-  "env": {
-    "VEGA_SERVER_URL": "http://100.x.x.x:3271",
-    "VEGA_API_KEY": "your-api-key-here"
-  }
-}
-```
-
-| 变量 | 取值 | 如何获取 |
-|------|------|----------|
-| `VEGA_SERVER_URL` | `http://100.x.x.x:3271` | 在服务器上运行 `tailscale ip -4` |
-| `VEGA_API_KEY` | 你生成的密钥 | 启动 scheduler 时使用的密钥 |
-
-> 在 macOS/Linux 上，请将路径改为 `/path/to/vega-memory/client/vega-remote-mcp.mjs`。
-
-**步骤 3：添加自定义说明**
-
-打开 Codex App → Settings → **Personalization** → Custom Instructions：
-
-```
-Follow CODEX.md and AGENTS.md rules strictly. Proactively store memories to Vega Memory (via MCP) as events happen — do NOT wait for user to ask. Each task completed, decision made, or bug fixed = one memory_store call immediately.
-```
-
-**步骤 4：验证**
-
-在 Codex App 对话中询问：
-
-```
-Check Vega Memory health
-```
-
-Agent 应调用 `memory_health` 并返回服务器状态。若显示 `"status": "healthy"`，则表示连接正常。
-
----
-
-### HTTP API（任何工具 / 自定义集成）
-
-任何可以发送 HTTP 请求的工具都能使用 Vega。认证方式为 Bearer token。
-
-```bash
-# Store a memory
-curl -X POST http://YOUR_SERVER:3271/api/store \
-  -H "Authorization: Bearer $VEGA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "content": "Always checkpoint WAL before backup",
-    "type": "pitfall",
-    "project": "my-project"
-  }'
-
-# Recall memories
-curl -X POST http://YOUR_SERVER:3271/api/recall \
-  -H "Authorization: Bearer $VEGA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "sqlite backup", "project": "my-project", "limit": 5}'
-
-# Start a session
-curl -X POST http://YOUR_SERVER:3271/api/session/start \
-  -H "Authorization: Bearer $VEGA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"working_directory": "/path/to/project"}'
-
-# Health check
-curl -H "Authorization: Bearer $VEGA_API_KEY" \
-  http://YOUR_SERVER:3271/api/health
-```
-
-完整 API 文档请参阅 [`docs/API.md`](docs/API.md)。
-
----
-
-### OpenClaw / 自定义 Agent（HTTP API）
-
-对于 OpenClaw 或任何自定义 AI Agent，配置 Agent 调用 HTTP API。示例 Agent 规则：
-
-```markdown
-# Vega Memory Connection
-Server: http://YOUR_SERVER:3271
-Auth: Bearer token (set via environment variable, never hardcode)
-
-## When to store
-- User shares a lesson learned → POST /api/store with type="pitfall"
-- Technical decision made → POST /api/store with type="decision"
-- User says "remember" → POST /api/store with source="explicit"
-
-## When to recall
-- Before answering technical questions → POST /api/recall
-- At session start → POST /api/session/start
-```
-
-> **重要提示：** 始终通过环境变量传递 API 密钥。切勿在 Agent 配置文件中硬编码凭据。
-
----
-
-## 自动记忆存储
-
-Vega 的真正威力在于**自动**记忆存储——AI 工具会在工作过程中主动写入记忆，而不必每次都让你说「记住这个」。
-
-### 工作原理
-
-```
-AI works on a task
-    ↓
-Completes a task     → auto-stores as task_state
-Makes a decision     → auto-stores as decision
-Fixes a bug          → auto-stores as pitfall
-Learns a preference  → auto-stores as preference
-    ↓
-Next session → session_start loads relevant memories automatically
-```
-
-### 存储什么（以及不存储什么）
-
-| 应存储 | 不应存储 |
-|-------|-------------|
-| 含推理的决策 | 情绪性抱怨 |
-| 含错误信息的 bug 修复 | 无果而终的失败调试尝试 |
-| 文件路径、命令、版本号 | 一次性查询 |
-| 架构选择 | 原始数据转储 |
-| 用户偏好 | 常见编程知识 |
-
-**核心原则：** 每条记忆是一个具体事实，而非对话摘要。保留具体细节（错误信息、路径、命令）。
-
-### 按工具配置
-
-#### Cursor（MCP — 自动）
-
-Cursor 会自动调用 MCP 工具。将以下规则文件加入工作区：
-
-**`.cursor/rules/memory.mdc`:**
-```markdown
----
-globs: ["**/*"]
-alwaysApply: true
----
-
-Memory System Rules — MANDATORY (never skip, never wait for user reminder)
-
-### Normal Mode (MCP available)
-- Session start → call vega.session_start(working_directory, task_hint)
-- Task completed → call vega.memory_store(type: "task_state") IMMEDIATELY
-- Decision made → call vega.memory_store(type: "decision") IMMEDIATELY
-- Bug fixed → call vega.memory_store(type: "pitfall") IMMEDIATELY
-- New preference → call vega.memory_store(type: "preference") IMMEDIATELY
-- User says "remember" → call vega.memory_store(source: "explicit")
-- Session ending → call vega.session_end(summary)
-- CRITICAL: Store memories AS events happen. Do NOT batch. Do NOT wait for user to ask.
-- Before storing → verify content is NOT: emotional complaints, failed debug attempts, one-time queries, raw data, common knowledge
-```
-
-#### Claude Code（CLI）
-
-Claude Code 使用 shell 命令。将以下内容加入项目的 **`CLAUDE.md`：**
-
-```markdown
-# Vega Memory — MANDATORY (auto-store, never wait for user reminder)
-
-## Session lifecycle
-- Start: `vega session-start --dir $(pwd) --json` — use output as context
-- End: `vega session-end --project PROJECT --summary "what was done"`
-
-## Auto-store (do these IMMEDIATELY when events happen)
-- Task done: `vega store "what was done" --type task_state --project PROJECT --title "title"`
-- Bug fixed: `vega store "error + fix" --type pitfall --project PROJECT --title "title"`
-- Decision: `vega store "choice + why" --type decision --project PROJECT --title "title"`
-- Preference: `vega store "preference" --type preference --project PROJECT --title "title"`
-
-## Before changes, search memory
-- `vega recall "query" --project PROJECT --json`
-
-## Rules
-- Store AS events happen, not at session end
-- Each fact = one separate store call
-- Preserve specifics: error messages, file paths, commands
-```
-
-#### Codex CLI
-
-与 Claude Code 相同模式。将以下内容加入项目的 **`CODEX.md`：**
-
-```markdown
-# Vega Memory — MANDATORY (auto-store, never wait for user reminder)
-
-- On start: `vega session-start --dir $(pwd) --json`
-- Task done: `vega store "..." --type task_state --project PROJECT --title "..."`
-- Bug fixed: `vega store "..." --type pitfall --project PROJECT --title "..."`
-- Decision: `vega store "..." --type decision --project PROJECT --title "..."`
-- On end: `vega session-end --project PROJECT --summary "..."`
-- Before changes: `vega recall "query" --project PROJECT --json`
-- CRITICAL: Store immediately as events happen. Do NOT wait for user to ask.
-```
-
-#### Codex App（桌面版）
-
-如果使用带 MCP 的 Codex 桌面应用，请将以下内容添加到 **Settings → Personalization → Custom Instructions：**
-
-```
-Follow CODEX.md and AGENTS.md rules strictly. Proactively store memories to Vega Memory (via MCP) as events happen — do NOT wait for user to ask. Each task completed, decision made, or bug fixed = one memory_store call immediately.
-```
-
-#### OpenClaw / 自定义 Agent（HTTP API）
-
-对于使用 HTTP API 的 Agent，请指示其：
-
-```markdown
-## Vega Memory (HTTP API)
-Server: http://YOUR_SERVER:3271
-Auth: Bearer YOUR_API_KEY
-
-## Auto-store (call immediately when events happen)
-- POST /api/store {"content":"...", "type":"pitfall", "project":"..."}
-- POST /api/store {"content":"...", "type":"decision", "project":"..."}
-- POST /api/store {"content":"...", "type":"task_state", "project":"..."}
-
-## Before answering questions, recall
-- POST /api/recall {"query":"...", "project":"..."}
-
-## Session lifecycle
-- POST /api/session/start {"working_directory":"..."}
-- POST /api/session/end {"project":"...", "summary":"..."}
-```
-
-### 验证是否生效
-
-结束一段工作后，检查是否已写入记忆：
-
-```bash
-# List recent memories
-vega list --sort "created_at DESC" --json | head -20
-
-# Check memory count
-vega health --json | grep memories
-
-# Search for something discussed in the session
-vega recall "topic from your session"
-```
-
-若没有任何记忆，请检查规则文件是否在正确位置，以及 MCP 服务器或 CLI 是否可用。
-
----
-
-## CLI 参考
-
-### 核心工作流
-
-| 命令 | 用途 |
-|------|------|
-| `vega store <content> --type <type> --project <p>` | 存储记忆 |
-| `vega recall <query> [--project <p>] [--type <t>] [--json]` | 语义搜索 |
-| `vega list [--project <p>] [--type <t>] [--sort <s>]` | 列出记忆 |
-| `vega session-start [--dir <path>] [--hint <text>]` | 加载会话上下文 |
-| `vega session-end --project <p> --summary <text>` | 结束会话，提取记忆 |
-| `vega health [--json]` | 系统健康报告 |
-
-### 维护
-
-| 命令 | 用途 |
-|------|------|
-| `vega compact [--project <p>]` | 合并重复项，归档过期项 |
-| `vega diagnose [--issue <text>]` | 生成诊断报告 |
-| `vega backup [--cloud]` | 创建备份 |
-| `vega export [--format json\|md] [-o file]` | 导出记忆 |
-| `vega import <file>` | 从 JSON 或 Markdown 导入 |
-| `vega compress [--project <p>] [--min-length 1200]` | 通过 Ollama 压缩长记忆 |
-| `vega quality [--project <p>]` | 评估记忆质量 |
-| `vega benchmark [--suite all\|write\|recall]` | 性能基准测试 |
-
-### 知识与索引
-
-| 命令 | 用途 |
-|------|------|
-| `vega graph <entity> [--depth <n>]` | 查询知识图谱 |
-| `vega index <dir> [--ext ts,tsx,js]` | 索引源代码 |
-| `vega index-docs <path> [--project <p>]` | 索引 Markdown 文档 |
-| `vega git-import <repo> [--since <date>]` | 导入 git 历史 |
-| `vega generate-docs --project <p>` | 从记忆生成文档 |
-
-### 配置与管理
-
-| 命令 | 用途 |
-|------|------|
-| `vega setup --server <host> --port <port> --api-key <key>` | 配置远程客户端 |
-| `vega init-encryption` | 在 macOS Keychain 中生成加密密钥 |
-| `vega stats` | 按类型/项目/状态汇总统计 |
-| `vega audit [--actor <a>] [--action <a>]` | 查看审计日志 |
-| `vega snapshot` | 导出 Markdown 快照 |
-| `vega plugins list` | 列出已安装插件 |
-| `vega templates list` / `vega templates install <name>` | 入门模板 |
-
-所有命令支持 `--json` 以输出机器可读的格式。
-
-### 记忆类型
-
-| 类型 | 用途 | 衰减 |
-|------|------|------|
-| `preference` | 用户偏好、编码风格 | 永不 |
-| `project_context` | 架构、技术栈、项目结构 | 极慢 |
-| `task_state` | 当前任务进度 | 快速（完成后 → 归档） |
-| `pitfall` | Bug、错误、解决方案 | 永不 |
-| `decision` | 技术决策及其理由 | 中等 |
-| `insight` | 自动生成的模式（仅系统） | 不适用 |
-
----
-
-## MCP 工具
-
-| 工具 | 用途 | 关键参数 |
-|------|------|----------|
-| `memory_store` | 存储记忆 | `content`、`type`、`project?`、`title?`、`tags?` |
-| `memory_recall` | 语义搜索 | `query`、`project?`、`type?`、`limit?` |
-| `memory_list` | 浏览记忆 | `project?`、`type?`、`limit?`、`sort?` |
-| `memory_update` | 更新记忆 | `id`、`content?`、`importance?`、`tags?` |
-| `memory_delete` | 删除记忆 | `id` |
-| `session_start` | 加载会话上下文 | `working_directory`、`task_hint?` |
-| `session_end` | 结束会话 | `project`、`summary`、`completed_tasks?` |
-| `memory_health` | 健康报告 | — |
-| `memory_compact` | 合并与归档 | `project?` |
-| `memory_diagnose` | 诊断 | `issue?` |
-| `memory_graph` | 知识图谱查询 | `entity`、`depth` |
-| `memory_compress` | 通过 Ollama 压缩 | `memory_id?`、`project?`、`min_length?` |
-| `memory_observe` | 被动工具观察 | `tool_name`、`project?`、`input?`、`output?` |
-
----
-
-## HTTP API
-
-当配置了 `VEGA_API_KEY` 时，调度器会提供经过身份验证的 REST API。
-
-| 路由 | 方法 | 用途 |
-|------|------|------|
-| `/` | `GET` | Web 仪表盘（需登录） |
-| `/dashboard/login` | `POST` | 用 API 密钥换取会话 cookie |
-| `/dashboard/logout` | `POST` | 清除会话 |
-| `/api/store` | `POST` | 存储记忆 |
-| `/api/recall` | `POST` | 召回记忆 |
-| `/api/list` | `GET` | 列出记忆 |
-| `/api/memory/:id` | `PATCH` | 更新记忆 |
-| `/api/memory/:id` | `DELETE` | 删除记忆 |
-| `/api/session/start` | `POST` | 开始会话 |
-| `/api/session/end` | `POST` | 结束会话 |
-| `/api/health` | `GET` | 健康状态 |
-| `/api/compact` | `POST` | 执行压缩 |
-
-认证方式：`Authorization: Bearer <your-api-key>` 或仪表盘会话 cookie。
-
-完整请求/响应示例请参阅 [`docs/API.md`](docs/API.md)。
-
----
-
-## 配置
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `VEGA_DB_PATH` | `./data/memory.db` | SQLite 数据库路径 |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API 基础 URL |
-| `OLLAMA_MODEL` | `bge-m3` | Embedding 模型名称 |
-| `VEGA_API_KEY` | — | HTTP API **必填**。使用 `openssl rand -hex 16` 生成 |
-| `VEGA_API_PORT` | `3271` | HTTP API 端口 |
-| `VEGA_TOKEN_BUDGET` | `2000` | 会话启动时注入的最大 token 数 |
-| `VEGA_SIMILARITY_THRESHOLD` | `0.85` | 去重相似度阈值 |
-| `VEGA_BACKUP_RETENTION_DAYS` | `7` | 备份保留天数 |
-| `VEGA_MODE` | `server` | `server`（主节点）或 `client`（远程） |
-| `VEGA_SERVER_URL` | — | 远程 Vega 服务器 URL（客户端模式） |
-| `VEGA_CACHE_DB` | `~/.vega/cache.db` | 本地缓存数据库（客户端模式） |
-| `VEGA_OBSERVER_ENABLED` | `false` | 启用被动工具观察 |
-| `VEGA_TG_BOT_TOKEN` | — | Telegram 机器人 token（用于告警） |
-| `VEGA_TG_CHAT_ID` | — | Telegram 聊天 ID（用于告警） |
-| `VEGA_ENCRYPTION_KEY` | — | 加密导出的十六进制密钥 |
-| `VEGA_CLOUD_BACKUP_DIR` | — | 云备份同步目录 |
-
-> **安全提醒：** 所有密钥（`VEGA_API_KEY`、`VEGA_TG_BOT_TOKEN`、`VEGA_ENCRYPTION_KEY`）必须通过环境变量或 `.env` 文件设置。切勿将其提交到版本控制。
-
----
-
-## 工作原理
-
-### 记忆生命周期
-
-```
-Create → Active Use → Cool Down → Archive/Merge → Cleanup
-```
-
-1. **存储**：内容脱敏（去除密钥）→ 向量化（Ollama bge-m3）→ 去重（相似度 >0.85 则合并）→ 存入 SQLite
-2. **检索**：查询向量化 → 混合搜索（向量 70% + BM25 30%，基于 FTS5）→ 按 `相似度×0.5 + 重要性×0.3 + 时效性×0.2` 排序
-3. **会话**：`session_start` 在 2000 token 预算内注入相关上下文；`session_end` 从摘要中提取新记忆
-4. **维护**：每日备份、每周压缩、缺失 embedding 重建
-
-### 信任体系
-
-| 状态 | 含义 | 搜索权重 |
-|------|------|----------|
-| `verified` | 用户已确认 | ×1.0 |
-| `unverified` | 自动提取，尚未审核 | ×0.7 |
-| `rejected` | 用户标记为不正确 | 排除 |
-| `conflict` | 与已验证记忆冲突 | 浮现供用户解决 |
-
-### 跨项目共享
-
-记忆初始为 `project` 级别作用域。当被 2 个及以上不同项目访问时，自动提升为 `global` 级别，并出现在所有会话中。
-
----
-
-## 开发
-
-### 构建与测试
-
-```bash
-rm -rf dist
-npx tsc
-node --test dist/tests/*.test.js
-```
-
-### 项目结构
-
-```
-src/
-├── index.ts              # MCP server entry
-├── config.ts             # Configuration loader
-├── core/                 # Memory, recall, session, compact, lifecycle
-├── db/                   # SQLite schema, repository, backup, CRDT
-├── embedding/            # Ollama integration, cache
-├── search/               # Brute-force engine, ranking, hybrid search
-├── security/             # Redactor, encryption, RBAC, keychain
-├── mcp/                  # MCP tool definitions
-├── cli/                  # CLI commands (commander.js)
-├── api/                  # HTTP API routes, auth
-├── web/                  # Dashboard
-├── scheduler/            # Background daemon
-├── insights/             # Pattern detection, insight generation
-├── notify/               # Telegram, alert files
-├── sync/                 # Remote client sync
-├── plugins/              # Plugin loader, SDK
-└── tests/                # Test suites
-```
-
-### 插件
-
-插件从 `data/plugins/<plugin-name>/plugin.json` 自动发现：
-
-```json
-{
-  "name": "example-plugin",
-  "version": "0.1.0",
-  "main": "index.js"
-}
-```
-
-入门模板：`vega templates list` / `vega templates install <name>`。
-
----
-
-## 安全
-
-- **敏感数据脱敏**：API 密钥、token、密码在存储前自动清除
-- **静态加密**：可选 SQLCipher 加密，密钥由 macOS Keychain 管理
-- **API 认证**：所有 HTTP API 调用需要 Bearer token
-- **审计日志**：每个操作都记录了执行者、时间戳和操作类型
-- **安全删除**：记忆不会被静默删除——需要通知 + 下载窗口 + 确认
-- **网络安全**：远程访问时务必使用 VPN（Tailscale/WireGuard）。切勿将 API 端口直接暴露到互联网
-
----
-
-## 许可证
-
-MIT
+## 下一步你会去哪里
+
+- 想看 API：见 [HTTP API 文档](docs/API.md)
+- 想看部署：见 [部署文档](docs/deployment.md)
+- 想接入 Agent：继续看正式 README 中后半部分的工具接入说明
+- 想提问题：去 [GitHub Issues](https://github.com/john-hoe/vega-memory/issues)
+- 想参与讨论：后续建议补齐 Discussions 和更完整 docs 入口
