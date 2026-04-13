@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vega Memory Case Study: Shared Team Memory</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #07111f;
+        --panel: rgba(13, 26, 45, 0.88);
+        --panel-strong: rgba(17, 35, 59, 0.98);
+        --border: rgba(149, 173, 212, 0.18);
+        --text: #f5f7fb;
+        --muted: #9fb3cd;
+        --accent: #78e6c7;
+        --accent-strong: #5cc0ff;
+        --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+        --radius: 22px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Inter", "Helvetica Neue", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(92, 192, 255, 0.2), transparent 34%),
+          radial-gradient(circle at top right, rgba(120, 230, 199, 0.15), transparent 28%),
+          linear-gradient(180deg, #08111d 0%, #0b1423 48%, #060b14 100%);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      code,
+      pre {
+        font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+      }
+
+      .shell {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        backdrop-filter: blur(20px);
+        background: rgba(6, 11, 20, 0.72);
+        border-bottom: 1px solid rgba(149, 173, 212, 0.08);
+        z-index: 10;
+      }
+
+      .topbar .shell {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 18px 0;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .brand-mark {
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+        box-shadow: 0 0 30px rgba(92, 192, 255, 0.75);
+      }
+
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        color: var(--muted);
+      }
+
+      nav a:hover {
+        color: var(--text);
+      }
+
+      main {
+        padding: 48px 0 72px;
+      }
+
+      .hero,
+      .section,
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+      }
+
+      .hero,
+      .section {
+        padding: 34px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+        gap: 24px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2.5rem, 6vw, 4.2rem);
+        line-height: 1.02;
+        letter-spacing: -0.04em;
+      }
+
+      h2 {
+        font-size: 1.8rem;
+        letter-spacing: -0.03em;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        color: var(--accent);
+        background: rgba(120, 230, 199, 0.08);
+        border: 1px solid rgba(120, 230, 199, 0.18);
+        font-size: 0.92rem;
+      }
+
+      .hero p,
+      .section-intro,
+      .card p,
+      footer {
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .hero p {
+        margin-top: 18px;
+      }
+
+      .checklist {
+        display: grid;
+        gap: 12px;
+      }
+
+      .checklist .card,
+      .card {
+        padding: 20px;
+        background: var(--panel-strong);
+      }
+
+      .stack {
+        display: grid;
+        gap: 24px;
+        margin-top: 28px;
+      }
+
+      .section-intro {
+        margin-top: 10px;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 20px;
+      }
+
+      pre {
+        margin: 16px 0 0;
+        padding: 16px;
+        border-radius: 18px;
+        background: rgba(6, 11, 20, 0.88);
+        border: 1px solid rgba(149, 173, 212, 0.12);
+        color: #dbe8ff;
+        overflow: auto;
+        line-height: 1.55;
+        font-size: 0.92rem;
+      }
+
+      footer {
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 36px;
+        padding: 24px 0 16px;
+      }
+
+      .footer-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+
+      @media (max-width: 920px) {
+        .hero,
+        .cards {
+          grid-template-columns: 1fr;
+        }
+
+        .hero,
+        .section {
+          padding: 26px;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .topbar .shell,
+        footer {
+          display: block;
+        }
+
+        nav {
+          margin-top: 12px;
+        }
+
+        .hero,
+        .section,
+        .card {
+          padding: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="shell">
+        <a class="brand" href="./index.html">
+          <span class="brand-mark"></span>
+          <span>Vega Memory</span>
+        </a>
+        <nav>
+          <a href="./index.html">Overview</a>
+          <a href="./getting-started.html">Getting Started</a>
+          <a href="./deployment.html">Deployment</a>
+          <a href="./api.html">API Docs</a>
+          <a href="./index.html#scenarios">Scenarios</a>
+          <a href="https://github.com/john-hoe/vega-memory">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Case Study: shared service for a small engineering team</div>
+          <h1>Use Vega when several engineers and agent surfaces need one memory backend.</h1>
+          <p>
+            This path fits a team that wants coding agents, terminal workflows, and background
+            automations to share durable engineering memory instead of creating per-tool silos.
+            Vega becomes the service layer for project context, decisions, pitfalls, and handoff
+            state across the team.
+          </p>
+          <p>
+            The outcome is one operationally-managed memory service with clear auth, backup, and
+            recall behavior. It is not an attempt to turn Vega into a general collaboration suite.
+          </p>
+        </div>
+        <div class="checklist">
+          <div class="card">
+            <h3>Best Fit</h3>
+            <p>Small engineering groups running more than one coding surface, more than one workstation, or scheduled automation against the same repos.</p>
+          </div>
+          <div class="card">
+            <h3>First Deployment Shape</h3>
+            <p>Shared server or Docker deployment with API auth, dashboard access, and backup policy defined before broad rollout.</p>
+          </div>
+          <div class="card">
+            <h3>Success Signal</h3>
+            <p>Agents across the team recover the same current project facts and the service remains inspectable and operable by humans.</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="stack">
+        <section class="section">
+          <h2>Operating Model</h2>
+          <p class="section-intro">Make Vega a shared engineering service, not a hidden prompt trick per user.</p>
+          <div class="cards">
+            <article class="card">
+              <h3>Recommended Topology</h3>
+              <p>Host Vega behind one stable endpoint, keep the database and backups centralized, and expose the same memory operations to terminal tools, MCP clients, and internal automations.</p>
+            </article>
+            <article class="card">
+              <h3>Why Teams Choose This</h3>
+              <p>Without a shared backend, each engineer and each agent surface accumulates partial context. Critical project memory drifts across chats, local notes, and ephemeral automation state.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>Recommended Rollout</h2>
+          <p class="section-intro">Prove the service with one pilot team and one operating contract before wider expansion.</p>
+          <div class="cards">
+            <article class="card">
+              <h3>1. Validate locally first</h3>
+              <p>Run the first-loop checks in a single-machine setup so the memory categories and recall behavior are understood before a shared deployment exists.</p>
+            </article>
+            <article class="card">
+              <h3>2. Stand up the shared service</h3>
+              <p>Choose shared server or Docker, turn on API auth, set dashboard access, and define backup ownership. Treat this as infrastructure from day one.</p>
+            </article>
+            <article class="card">
+              <h3>3. Standardize what gets stored</h3>
+              <p>Define the allowed memory types: decisions, pitfalls, project context, preferences, and bounded task-state handoffs. Keep the contract narrow enough for agents to use predictably.</p>
+            </article>
+            <article class="card">
+              <h3>4. Add team surfaces in waves</h3>
+              <p>Start with the highest-leverage surfaces such as Codex plus Cursor or shared automation jobs. Expand only after recall quality and service operations look stable.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>Operational Controls</h2>
+          <p class="section-intro">Shared memory only works if the service is reliable, inspectable, and recoverable.</p>
+          <div class="cards">
+            <article class="card">
+              <h3>Auth And Access</h3>
+              <p>Require API keys for shared access and make dashboard access intentional. Shared memory is part of the engineering control plane, not a public endpoint.</p>
+            </article>
+            <article class="card">
+              <h3>Backup And Restore</h3>
+              <p>Set an owner for backups, restore drills, and storage retention. Team memory becomes business-critical quickly once agents depend on it.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>Team Boundary</h2>
+          <p class="section-intro">Keep Vega focused on the memory runtime.</p>
+          <div class="cards">
+            <article class="card">
+              <h3>Use Vega For</h3>
+              <p>Shared engineering memory across sessions, repos, and agent surfaces with enough governance to trust the backend as a team dependency.</p>
+            </article>
+            <article class="card">
+              <h3>Do Not Stretch Vega Into</h3>
+              <p>A full documentation hub, standup system, or broad team workspace. Keep long-form process artifacts elsewhere and store only reusable facts that agents need.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>Next Docs</h2>
+          <p class="section-intro">Move next based on whether you are still validating the runtime or integrating more clients.</p>
+          <div class="cards">
+            <article class="card">
+              <h3>Deployment</h3>
+              <p><a href="./deployment.html">Use the deployment guide</a> for shared-server, Docker, auth, and maintenance details.</p>
+            </article>
+            <article class="card">
+              <h3>API Docs</h3>
+              <p><a href="./api.html">Use the API reference</a> after the service boundary is settled and you are wiring internal tooling or automations.</p>
+            </article>
+          </div>
+        </section>
+      </div>
+
+      <footer>
+        <div>Scenario page for teams adopting one shared Vega Memory service.</div>
+        <div class="footer-links">
+          <a href="./index.html#scenarios">All Scenarios</a>
+          <a href="./deployment.html">Deployment</a>
+          <a href="./api.html">API Docs</a>
+          <a href="./getting-started.html">Getting Started</a>
+        </div>
+      </footer>
+    </main>
+  </body>
+</html>

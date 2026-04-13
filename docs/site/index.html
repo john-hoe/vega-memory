@@ -381,6 +381,7 @@
           <a href="./getting-started.html">Getting Started</a>
           <a href="./deployment.html">Deployment</a>
           <a href="./api.html">API Docs</a>
+          <a href="#scenarios">Scenarios</a>
           <a href="https://github.com/john-hoe/vega-memory">GitHub</a>
         </nav>
       </div>
@@ -498,6 +499,50 @@
               <li>Keep Vega positioned as infrastructure, not as a generic workspace suite</li>
             </ul>
             <a class="plan-link" href="./api.html">Go to the API Reference</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="section panel" id="scenarios">
+        <div class="section-header">
+          <div>
+            <h2>Scenario Playbooks</h2>
+            <p>Use the case-study pages when you want a concrete operating model instead of a generic docs sequence.</p>
+          </div>
+        </div>
+        <div class="grid pricing">
+          <article class="plan">
+            <h3>Solo Multi-Agent Builder</h3>
+            <div class="price">One Repo</div>
+            <p>For one developer switching between Codex, Cursor, Claude Code, and local scripts across the same project.</p>
+            <ul>
+              <li>Start with a local database and one repeatable memory loop</li>
+              <li>Wire the first two agent surfaces against the same backend</li>
+              <li>Use Vega to preserve decisions, pitfalls, and handoff state between sessions</li>
+            </ul>
+            <a class="plan-link" href="./scenario-solo-builder.html">Open the solo builder case study</a>
+          </article>
+          <article class="plan featured">
+            <h3>Shared Team Memory Setup</h3>
+            <div class="price">One Backend</div>
+            <p>For a small engineering team standardizing on one shared service for coding-agent memory and operational controls.</p>
+            <ul>
+              <li>Choose the shared-server or Docker path</li>
+              <li>Add auth, backups, and dashboard access before rollout</li>
+              <li>Define what agents should store and when they should recall</li>
+            </ul>
+            <a class="plan-link" href="./scenario-shared-team-memory.html">Open the shared team case study</a>
+          </article>
+          <article class="plan">
+            <h3>Platform Or Tooling Team Integration</h3>
+            <div class="price">Product Surface</div>
+            <p>For platform teams exposing Vega through internal agents, MCP clients, automations, or custom services.</p>
+            <ul>
+              <li>Set the service boundary before wiring external clients</li>
+              <li>Reuse one memory contract across CLI, MCP, and HTTP</li>
+              <li>Keep Vega positioned as infrastructure inside the larger platform</li>
+            </ul>
+            <a class="plan-link" href="./scenario-platform-tooling.html">Open the platform integration case study</a>
           </article>
         </div>
       </section>
