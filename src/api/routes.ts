@@ -1084,7 +1084,7 @@ export function createRouter(services: APIRouterServices): Router {
     "/api/analytics/impact",
     requireRole("admin"),
     handleRoute(async (req, res) => {
-      const tenantId = getRequestTenantId(res) ?? undefined;
+      const tenantId = getScopedTenantId(res, req.query.tenant_id) ?? undefined;
       const days = parseIntegerString(req.query.days, "days") ?? 7;
       const doctor = await runDoctor(services.config);
       const runtimeReadinessOptions = {
@@ -1120,7 +1120,7 @@ export function createRouter(services: APIRouterServices): Router {
     "/api/analytics/weekly",
     requireRole("admin"),
     handleRoute(async (req, res) => {
-      const tenantId = getRequestTenantId(res) ?? undefined;
+      const tenantId = getScopedTenantId(res, req.query.tenant_id) ?? undefined;
       const days = parseIntegerString(req.query.days, "days") ?? 7;
       const doctor = await runDoctor(services.config);
       const runtimeReadinessOptions = {

@@ -47,6 +47,7 @@ interface ImpactMemoryRow {
   type: MemoryType;
   access_count: number;
   updated_at: string;
+  accessed_at: string | null;
 }
 
 interface ResultTypesRow {
@@ -349,7 +350,7 @@ export class AnalyticsService {
 
     return this.repository.db
       .prepare<unknown[], ImpactMemoryRow>(
-        `SELECT id, title, project, type, access_count, updated_at
+        `SELECT id, title, project, type, access_count, updated_at, accessed_at
          FROM memories
          WHERE ${clauses.join(" AND ")}
          ORDER BY access_count DESC, updated_at DESC
@@ -363,10 +364,47 @@ export class AnalyticsService {
         type: row.type,
         access_count: row.access_count,
         updated_at: row.updated_at,
-        explanation:
-          row.access_count > 0
-            ? `Top by lifetime access count (${row.access_count}) and most recently updated on ${formatShortDate(row.updated_at)}.`
-            : `Included as a recent ${row.type} memory in project ${row.project}.`
+        explanation: `Top by lifetime access count (${row.access_count}) and last accessed on ${formatShortDate(row.accessed_at ?? row.updated_at)}.`
+      }));
+  }
+
+  getWindowReuseSignals(
+    limit: number,
+    tenantId?: string,
+    since?: string
+  ): ImpactMemorySummary[] {
+    const safeLimit = Number.isInteger(limit) && limit > 0 ? limit : 5;
+    const clauses = ["status = 'active'", "access_count > 0", "accessed_at IS NOT NULL"];
+    const params: unknown[] = [];
+    const normalizedSince = normalizeSince(since);
+
+    if (normalizedSince !== undefined) {
+      clauses.push("accessed_at >= ?");
+      params.push(normalizedSince);
+    }
+
+    if (tenantId !== undefined && this.hasColumn("memories", "tenant_id")) {
+      clauses.push("tenant_id = ?");
+      params.push(tenantId);
+    }
+
+    return this.repository.db
+      .prepare<unknown[], ImpactMemoryRow>(
+        `SELECT id, title, project, type, access_count, updated_at, accessed_at
+         FROM memories
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY accessed_at DESC, access_count DESC
+         LIMIT ?`
+      )
+      .all(...params, safeLimit)
+      .map((row) => ({
+        id: row.id,
+        title: row.title,
+        project: row.project,
+        type: row.type,
+        access_count: row.access_count,
+        updated_at: row.updated_at,
+        explanation: `Recently reused in the current window, last accessed on ${formatShortDate(row.accessed_at ?? row.updated_at)}.`
       }));
   }
 
@@ -399,7 +437,7 @@ export class AnalyticsService {
     setupSurfaceCoverage?: Record<string, "configured" | "partial" | "missing">;
     newMemoriesThisWeek: number;
     activeProjects: number;
-    topReusedMemories: ImpactMemorySummary[];
+    recentReuseSignals: ImpactMemorySummary[];
   }): RecommendedAction[] {
     const actions: RecommendedAction[] = [];
     const coverageEntries = Object.entries(options.setupSurfaceCoverage ?? {});
@@ -436,7 +474,7 @@ export class AnalyticsService {
       });
     }
 
-    if (options.topReusedMemories.length === 0) {
+    if (options.recentReuseSignals.length === 0) {
       actions.push({
         area: "reuse",
         title: "Run one recall from a live task",
@@ -459,7 +497,7 @@ export class AnalyticsService {
     runtimeReadinessDetail?: RuntimeReadinessDetail;
     setupSurfaceCoverage?: Record<string, "configured" | "partial" | "missing">;
     newMemoriesThisWeek: number;
-    topReusedMemories: ImpactMemorySummary[];
+    recentReuseSignals: ImpactMemorySummary[];
   }): ImpactConclusion {
     const configuredTargets = Object.values(options.setupSurfaceCoverage ?? {}).filter(
       (state) => state === "configured"
@@ -483,7 +521,7 @@ export class AnalyticsService {
       };
     }
 
-    if (options.topReusedMemories.length === 0) {
+    if (options.recentReuseSignals.length === 0) {
       return {
         status: "needs_attention",
         headline: "The system is ready, but reuse has not shown up in this window yet.",
@@ -494,17 +532,17 @@ export class AnalyticsService {
     return {
       status: "good",
       headline: "Vega is producing visible memory reuse in active workflows.",
-      detail: `${options.topReusedMemories.length} high-value memories are already surfacing back into work, with ${options.newMemoriesThisWeek} new memories captured in the current window.`
+      detail: `${options.recentReuseSignals.length} memories were reused inside the current reporting window, with ${options.newMemoriesThisWeek} new memories captured in the same period.`
     };
   }
 
   private buildWeeklyOverview(options: {
     newMemoriesThisWeek: number;
     activeProjects: number;
-    topReusedMemories: ImpactMemorySummary[];
+    recentReuseSignals: ImpactMemorySummary[];
     recommendedActions: RecommendedAction[];
   }): WeeklyOverview {
-    if (options.topReusedMemories.length === 0) {
+    if (options.recentReuseSignals.length === 0) {
       return {
         headline: "This week emphasized capture and setup readiness more than demonstrated reuse.",
         detail: `${options.newMemoriesThisWeek} new memories landed across ${options.activeProjects} active projects, but the top reused list is still empty.`
@@ -513,7 +551,7 @@ export class AnalyticsService {
 
     return {
       headline: "This week produced reusable memory signals that can drive the next adoption step.",
-      detail: `${options.newMemoriesThisWeek} new memories landed across ${options.activeProjects} active projects, and the strongest reused memory is "${options.topReusedMemories[0]?.title ?? "Untitled memory"}".`
+      detail: `${options.newMemoriesThisWeek} new memories landed across ${options.activeProjects} active projects, and the strongest current-window reuse signal is "${options.recentReuseSignals[0]?.title ?? "Untitled memory"}".`
     };
   }
 
@@ -530,6 +568,7 @@ export class AnalyticsService {
     const windowStart = toWindowStart(windowDays);
     const usage = this.getUsageStats(options?.tenantId, windowStart);
     const topReusedMemories = this.getTopReusedMemories(5, options?.tenantId);
+    const recentReuseSignals = this.getWindowReuseSignals(5, options?.tenantId, windowStart);
     const runtimeReadinessDetail = this.buildRuntimeReadinessDetail(
       options?.runtimeReadiness,
       options?.runtimeReadinessSummary,
@@ -541,7 +580,7 @@ export class AnalyticsService {
       setupSurfaceCoverage: options?.setupSurfaceCoverage,
       newMemoriesThisWeek: usage.memories_total,
       activeProjects: usage.active_projects,
-      topReusedMemories
+      recentReuseSignals
     });
 
     return {
@@ -566,7 +605,7 @@ export class AnalyticsService {
         runtimeReadinessDetail,
         setupSurfaceCoverage: options?.setupSurfaceCoverage,
         newMemoriesThisWeek: usage.memories_total,
-        topReusedMemories
+        recentReuseSignals
       }),
       recommended_actions: recommendedActions
     };
@@ -585,6 +624,7 @@ export class AnalyticsService {
     const windowStart = toWindowStart(windowDays);
     const usage = this.getUsageStats(options?.tenantId, windowStart);
     const topReusedMemories = this.getTopReusedMemories(5, options?.tenantId);
+    const recentReuseSignals = this.getWindowReuseSignals(5, options?.tenantId, windowStart);
     const runtimeReadinessDetail = this.buildRuntimeReadinessDetail(
       options?.runtimeReadiness,
       options?.runtimeReadinessSummary,
@@ -596,10 +636,10 @@ export class AnalyticsService {
       setupSurfaceCoverage: options?.setupSurfaceCoverage,
       newMemoriesThisWeek: usage.memories_total,
       activeProjects: usage.active_projects,
-      topReusedMemories
+      recentReuseSignals
     });
     const resultTypeHits = this.getResultTypeHits(options?.tenantId, windowStart);
-    const topSearchQueries = this.getTopSearchQueries(5);
+    const topSearchQueries = this.getTopSearchQueries(5, options?.tenantId, windowStart);
     const keySignals: string[] = [];
 
     if (topReusedMemories[0]) {
@@ -637,7 +677,7 @@ export class AnalyticsService {
       overview: this.buildWeeklyOverview({
         newMemoriesThisWeek: usage.memories_total,
         activeProjects: usage.active_projects,
-        topReusedMemories,
+        recentReuseSignals,
         recommendedActions
       }),
       key_signals: keySignals,
@@ -682,19 +722,37 @@ export class AnalyticsService {
     return counts;
   }
 
-  getTopSearchQueries(limit: number): Array<{ query: string; count: number }> {
+  getTopSearchQueries(
+    limit: number,
+    tenantId?: string,
+    since?: string
+  ): Array<{ query: string; count: number }> {
     if (!this.hasColumn("performance_log", "detail")) {
       return [];
     }
 
     const safeLimit = Number.isInteger(limit) && limit > 0 ? limit : 10;
+    const clauses = ["operation IN ('recall', 'recall_stream')", "detail IS NOT NULL"];
+    const params: unknown[] = [];
+    const normalizedSince = normalizeSince(since);
+
+    if (normalizedSince !== undefined) {
+      clauses.push("timestamp >= ?");
+      params.push(normalizedSince);
+    }
+
+    if (tenantId !== undefined && this.hasColumn("performance_log", "tenant_id")) {
+      clauses.push("tenant_id = ?");
+      params.push(tenantId);
+    }
+
     const rows = this.repository.db
-      .prepare<[], DetailRow>(
+      .prepare<unknown[], DetailRow>(
         `SELECT detail
          FROM performance_log
-         WHERE operation IN ('recall', 'recall_stream') AND detail IS NOT NULL`
+         WHERE ${clauses.join(" AND ")}`
       )
-      .all();
+      .all(...params);
     const counts = new Map<string, number>();
 
     for (const row of rows) {

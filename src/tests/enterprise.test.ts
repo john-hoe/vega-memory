@@ -305,6 +305,114 @@ test("AnalyticsService builds impact and weekly summaries from the shared metric
   }
 });
 
+test("AnalyticsService weekly top search queries respect the requested window and tenant scope", () => {
+  const harness = createRepositoryHarness();
+  const analyticsService = new AnalyticsService(harness.repository);
+  const tenantService = new TenantService(harness.repository);
+  const tenantA = tenantService.createTenant("Tenant A", "pro");
+  const tenantB = tenantService.createTenant("Tenant B", "pro");
+  const now = new Date();
+  const recentTimestamp = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const oldTimestamp = new Date(now.getTime() - 21 * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    harness.repository.logPerformance({
+      timestamp: oldTimestamp,
+      tenant_id: tenantA.id,
+      operation: "recall",
+      detail: JSON.stringify({
+        query: "old tenant-a query"
+      }),
+      latency_ms: 20,
+      memory_count: 1,
+      result_count: 1,
+      avg_similarity: 0.7,
+      result_types: ["decision"],
+      bm25_result_count: 1
+    });
+    harness.repository.logPerformance({
+      timestamp: recentTimestamp,
+      tenant_id: tenantA.id,
+      operation: "recall",
+      detail: JSON.stringify({
+        query: "recent tenant-a query"
+      }),
+      latency_ms: 20,
+      memory_count: 1,
+      result_count: 1,
+      avg_similarity: 0.7,
+      result_types: ["decision"],
+      bm25_result_count: 1
+    });
+    harness.repository.logPerformance({
+      timestamp: recentTimestamp,
+      tenant_id: tenantB.id,
+      operation: "recall",
+      detail: JSON.stringify({
+        query: "recent tenant-b query"
+      }),
+      latency_ms: 20,
+      memory_count: 1,
+      result_count: 1,
+      avg_similarity: 0.7,
+      result_types: ["decision"],
+      bm25_result_count: 1
+    });
+
+    const weekly = analyticsService.getWeeklySummary({
+      tenantId: tenantA.id,
+      days: 7
+    });
+
+    assert.deepEqual(weekly.top_search_queries, [
+      {
+        query: "recent tenant-a query",
+        count: 1
+      }
+    ]);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("Impact and weekly narratives do not claim current-window reuse from lifetime-only accesses", () => {
+  const harness = createRepositoryHarness();
+  const analyticsService = new AnalyticsService(harness.repository);
+  const now = new Date();
+  const recentTimestamp = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const oldAccessedAt = new Date(now.getTime() - 21 * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    harness.repository.createMemory(
+      createStoredMemory("lifetime-memory", {
+        created_at: recentTimestamp,
+        updated_at: recentTimestamp,
+        accessed_at: oldAccessedAt,
+        access_count: 12
+      })
+    );
+
+    const impact = analyticsService.getImpactReport({
+      days: 7,
+      runtimeReadiness: "pass",
+      setupSurfaceCoverage: {
+        codex: "configured"
+      }
+    });
+    const weekly = analyticsService.getWeeklySummary({
+      days: 7
+    });
+
+    assert.equal(impact.top_reused_memories[0]?.id, "lifetime-memory");
+    assert.match(impact.top_reused_memories[0]?.explanation ?? "", /lifetime access count/i);
+    assert.equal(impact.conclusion?.status, "needs_attention");
+    assert.match(impact.conclusion?.headline ?? "", /reuse has not shown up in this window/i);
+    assert.match(weekly.overview.headline, /more than demonstrated reuse/i);
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test("BillingService.checkQuota returns correct limits for free plan", () => {
   const harness = createRepositoryHarness();
   const tenantService = new TenantService(harness.repository);

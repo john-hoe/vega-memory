@@ -1749,6 +1749,76 @@ test("impact and weekly analytics routes return shared payloads for admin access
   }
 });
 
+test("weekly analytics route scopes top_search_queries to the requested tenant and window", async () => {
+  const harness = await createHarness("top-secret");
+  const tenantService = new TenantService(harness.repository);
+  const tenantA = tenantService.createTenant("Tenant A", "pro");
+  const tenantB = tenantService.createTenant("Tenant B", "pro");
+  const now = new Date();
+  const recentTimestamp = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const oldTimestamp = new Date(now.getTime() - 21 * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    harness.repository.logPerformance({
+      timestamp: oldTimestamp,
+      tenant_id: tenantA.id,
+      operation: "recall",
+      detail: JSON.stringify({
+        query: "old tenant-a query"
+      }),
+      latency_ms: 20,
+      memory_count: 1,
+      result_count: 1,
+      avg_similarity: 0.7,
+      result_types: ["decision"],
+      bm25_result_count: 1
+    });
+    harness.repository.logPerformance({
+      timestamp: recentTimestamp,
+      tenant_id: tenantA.id,
+      operation: "recall",
+      detail: JSON.stringify({
+        query: "recent tenant-a query"
+      }),
+      latency_ms: 20,
+      memory_count: 1,
+      result_count: 1,
+      avg_similarity: 0.7,
+      result_types: ["decision"],
+      bm25_result_count: 1
+    });
+    harness.repository.logPerformance({
+      timestamp: recentTimestamp,
+      tenant_id: tenantB.id,
+      operation: "recall",
+      detail: JSON.stringify({
+        query: "recent tenant-b query"
+      }),
+      latency_ms: 20,
+      memory_count: 1,
+      result_count: 1,
+      avg_similarity: 0.7,
+      result_types: ["decision"],
+      bm25_result_count: 1
+    });
+
+    const response = await harness.request(`/api/analytics/weekly?tenant_id=${tenantA.id}&days=7`);
+    const body = await readJson<{
+      top_search_queries: Array<{ query: string; count: number }>;
+    }>(response);
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.top_search_queries, [
+      {
+        query: "recent tenant-a query",
+        count: 1
+      }
+    ]);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("dashboard sessions expire on the server after the TTL", async () => {
   const harness = await createHarness("top-secret");
   const sessionToken = "expiring-dashboard-session";
