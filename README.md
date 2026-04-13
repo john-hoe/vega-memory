@@ -1,39 +1,199 @@
 **English** | [中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
-# Vega Memory System
+# Vega Memory
 
-A local-first memory server that gives AI tools and agents **persistent, cross-session memory**. Connect Cursor, Claude Code, Codex, OpenClaw, or any MCP-compatible client — they all share the same knowledge base, so nothing learned in one session is lost in the next.
+Shared long-term memory for AI coding agents.
 
-### What it does
+Vega Memory is a local-first, self-hosted memory layer for Cursor, Codex, Claude Code, OpenClaw, and other MCP- or API-driven agents. It turns knowledge that normally disappears when a session ends into reusable engineering memory, so different tools, different machines, and different sessions can keep working from the same context.
 
-- **Remembers** decisions, pitfalls, preferences, and project context across sessions
-- **Recalls** relevant experience via hybrid semantic search (Vector + BM25) when you start a new task
-- **Deduplicates** automatically — storing the same lesson twice merges instead of duplicating
-- **Warns proactively** — "last time you worked on FFmpeg, 62% of issues were path-related"
-- **Works offline** — SQLite + local Ollama, zero cloud dependency, zero API cost
+If one agent fixes a problem today and another agent takes over tomorrow, Vega keeps the second one from starting at zero.
 
-### Supported AI tools
+[Start in 5 minutes](#start-in-5-minutes) · [Access modes](#access-modes) · [Deployment](#deployment-paths) · [HTTP API](docs/API.md) · [Deployment docs](docs/deployment.md) · [Issues](https://github.com/john-hoe/vega-memory/issues)
 
-| Tool | Interface | How it connects |
-|------|-----------|----------------|
-| **Cursor** | MCP (stdio) | Registered in `~/.cursor/mcp.json` — Agent auto-calls memory tools |
-| **Claude Code** | CLI | Rules in `CLAUDE.md` — runs `vega recall/store` via shell |
-| **Codex CLI** | CLI | Rules in `AGENTS.md` — same CLI pattern |
-| **OpenClaw** | HTTP API | Agent calls `/api/recall`, `/api/store` via HTTP |
-| **Any MCP client** | MCP (stdio) | Same config as Cursor — works with any MCP-compatible tool |
-| **Scripts / CI** | CLI or HTTP | `vega recall --json` or `curl /api/recall` |
+Vega is best understood as a shared memory runtime underneath agent workflows, not as another generic note app or knowledge base.
 
-### Before vs After
+## Why Vega
 
-| | Without Vega | With Vega |
-|---|---|---|
-| New session context | Starts from zero, or loads entire `AGENTS.md` (~4000 tokens) | Loads only relevant memories (~500 tokens) |
-| Cross-session knowledge | Lost when conversation ends | Persisted in SQLite, searchable forever |
-| Multi-tool consistency | Each tool has its own silo | Cursor, Claude Code, Codex share the same memory |
-| Bug fixed twice | "Didn't we solve this before?" | `session_start` surfaces the previous pitfall |
-| Remote machines | Copy-paste context manually | Auto-sync via Tailscale, offline cache |
+The real bottleneck in most agent workflows is not that the model is too weak. It is that the model forgets what happened last time.
 
-## Architecture
+Without a shared memory layer:
+
+- each tool keeps its own context silo
+- new sessions either load too much prompt context or miss critical context
+- the same fixes, decisions, and pitfalls get rediscovered again and again
+- remote machines, scripts, and background jobs cannot inherit local agent experience
+
+Vega turns that into a reusable loop:
+
+- inject relevant memory at task start with `session_start`
+- keep storing reusable knowledge during work with `memory_store`
+- capture summaries and extract durable lessons at task end with `session_end`
+- reuse that knowledge later through `memory_recall` and session preload
+
+## Who It Is For
+
+Vega is currently the best fit for:
+
+- solo developers using multiple coding agents in the same project
+- small engineering teams that want a shared agent memory layer
+- internal platform teams building self-hosted agent infrastructure
+- tool builders who need MCP, CLI, and HTTP entry points into the same memory backend
+
+If your main problem is “multiple agents need shared context across sessions,” Vega is a much better fit than treating it as a generic knowledge platform.
+
+## Why Vega Stands Out
+
+- **Shared, not single-chat memory**: it serves multiple agents and multiple entry points, not just one conversation window
+- **Local-first, not cloud-first**: SQLite and local model paths make it suitable for privacy-sensitive and offline workflows
+- **Engineered, not demo-only**: MCP, CLI, HTTP API, dashboard, backup, audit, encryption, and sync already exist
+- **Focused on workflow continuity**: the goal is not just to store notes, but to make the next agent actually remember
+
+## Core Capabilities
+
+- **Shared memory primitives**: `memory_store`, `memory_recall`, `memory_list`, `session_start`, `session_end`
+- **Hybrid retrieval**: vector search, BM25, reranking, topic-aware recall, deep recall
+- **Operational reliability**: version history, audit logs, compaction, backups, database encryption
+- **Multiple access surfaces**: MCP, CLI, HTTP API, dashboard
+- **Upper-layer capabilities**: wiki synthesis, graph views, multi-tenant controls, analytics, and more
+
+## Runtime Environment
+
+- **Recommended runtime**: Node 20 LTS
+- **Default storage**: SQLite, local-first, with `./data/memory.db` as the default database path
+- **Default embedding path**: Ollama + `bge-m3`
+- **Fallback behavior**: Vega still runs without Ollama, but retrieval falls back to more conservative keyword / non-vector paths
+
+## Access Modes
+
+| Mode | Transport | Best fit |
+| --- | --- | --- |
+| MCP | stdio | native agent integration in Cursor and other MCP clients |
+| CLI | shell | Codex, Claude Code, scripts, CI, local terminal workflows |
+| HTTP API | REST | remote machines, dashboard access, custom integrations, sync clients |
+
+The practical rule of thumb is simple:
+
+- want agents to call memory automatically: use MCP
+- want scripts or terminal workflows: use the CLI
+- want remote sharing or background services: use the HTTP API
+
+## A Typical Workflow
+
+1. An agent starts a task and calls `session_start`
+2. Vega returns active tasks, preferences, relevant memories, and proactive warnings
+3. During work, the agent records reusable lessons with `memory_store`
+4. At the end, the agent calls `session_end` to store the summary and extract knowledge
+5. The next agent reuses that same memory on the next session
+
+That loop is the core product.
+
+## Start In 5 Minutes
+
+### 1. Clone and build
+
+```bash
+git clone https://github.com/john-hoe/vega-memory.git
+cd vega-memory
+npm install
+npm run build
+npm link
+```
+
+### 2. Set the minimum environment
+
+```bash
+cp .env.example .env
+```
+
+A common local setup looks like this:
+
+```bash
+VEGA_DB_PATH=./data/memory.db
+VEGA_DB_ENCRYPTION=false
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=bge-m3
+VEGA_API_KEY=change-me
+VEGA_API_PORT=3271
+```
+
+### 3. Verify the install
+
+```bash
+vega health
+```
+
+### 4. Run the smallest memory loop
+
+```bash
+vega store "Always checkpoint WAL before copying SQLite backups" \
+  --type pitfall \
+  --project my-project \
+  --title "SQLite backup checklist"
+
+vega recall "sqlite backup" --project my-project
+```
+
+## Deployment Paths
+
+Vega currently has three recommended deployment paths.
+
+### Option A: Local single-machine mode
+
+Best for solo developers and local workflows.
+
+- SQLite is the primary local store
+- the MCP entrypoint is started on demand by the client
+- the scheduler process provides the HTTP API, dashboard, backups, and maintenance
+
+```bash
+export VEGA_API_KEY="$(openssl rand -hex 16)"
+node dist/scheduler/index.js
+```
+
+### Option B: Docker / Compose
+
+Best for people who want to try the full stack quickly.
+
+```bash
+docker compose up --build
+```
+
+The current Compose file starts:
+
+- `vega`: scheduler + HTTP API
+- `ollama`: local model service
+
+Note that the checked-in Compose file exposes port `3000`, not the default documented `3271`.
+
+### Option C: Remote shared mode
+
+Best for multiple machines or small teams sharing the same memory base.
+
+- run Vega centrally in server mode
+- access it through the HTTP API or client mode
+- keep local cache plus remote sync behavior
+
+## Best First Use Cases
+
+If you are trying Vega for the first time, start with one of these:
+
+- let Cursor, Codex, and Claude Code share pitfalls in the same repository
+- persist decisions and preferences for long-lived projects instead of leaving them in temporary chat history
+- create a shared agent memory backend for a self-hosted team environment
+- make `session_start` the default context entrypoint before work begins
+
+## Technical Boundaries And Honest Expectations
+
+To avoid misleading first impressions, these boundaries are worth stating clearly:
+
+- Vega is SQLite-first today; remote and multi-machine sharing are layered on through API and sync paths
+- the HTTP API and dashboard only start when `VEGA_API_KEY` is explicitly configured
+- the dashboard is served by the scheduler process, not by a separate frontend app
+- Ollama is the default embedding/provider path, but other providers can be configured
+- the remote MCP client is currently a lightweight compatibility layer, not a full mirror of local MCP coverage
+- wiki, graph, analytics, billing, and similar features exist, but they are not the main learning path for first adoption
+
+## Architecture Overview
 
 ```text
                            +---------------------------+
@@ -73,832 +233,10 @@ A local-first memory server that gives AI tools and agents **persistent, cross-s
           +------------------+                        +-------------------+
 ```
 
-**Three interfaces, one memory:**
-
-| Interface | Transport | Best For |
-|-----------|-----------|----------|
-| **MCP** | stdio | Cursor (auto-called by Agent) |
-| **CLI** | shell | Claude Code, Codex, scripts, any terminal |
-| **HTTP API** | REST | Remote machines, custom integrations, web dashboard |
-
----
-
-## Prerequisites
-
-- **Node.js** 18+
-- **Ollama** running locally with the `bge-m3` model pulled (`ollama pull bge-m3`)
-
-Ollama is optional — Vega degrades gracefully to keyword search (FTS5) when Ollama is unavailable.
-
----
-
-## Quick Start
-
-### 1. Clone and build
-
-```bash
-git clone https://github.com/your-username/vega-memory.git
-cd vega-memory
-npm install
-npm run build
-npm link   # makes the `vega` command available globally
-```
-
-### 2. Configure
-
-Copy the example environment file and fill in your values:
-
-```bash
-cp .env.example .env
-```
-
-**`.env.example`:**
-```bash
-VEGA_DB_PATH=./data/memory.db
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=bge-m3
-VEGA_API_KEY=              # REQUIRED for HTTP API — generate a strong random key
-VEGA_API_PORT=3271
-VEGA_TG_BOT_TOKEN=         # Optional: Telegram bot token for alerts
-VEGA_TG_CHAT_ID=           # Optional: Telegram chat ID for alerts
-```
-
-> **Security:** Never commit `.env` to git. Generate a strong API key: `openssl rand -hex 16`
-
-### 3. Verify
-
-```bash
-vega health
-```
-
-You should see a health report. If Ollama is running, `ollama: true`.
-
-### 4. Store your first memory
-
-```bash
-vega store "Always use WAL mode for SQLite concurrent access" \
-  --type decision --project my-project
-```
-
-### 5. Recall it
-
-```bash
-vega recall "sqlite concurrency" --project my-project
-```
-
-### 6. Connect your AI tools
-
-| Tool | Interface | Setup |
-|------|-----------|-------|
-| **Cursor** | MCP (auto) | Add to `~/.cursor/mcp.json` → [Cursor setup](#cursor-mcp--recommended) |
-| **Claude Code** | CLI | Add rules to `CLAUDE.md` → [Claude Code setup](#claude-code-cli) |
-| **Codex CLI** | CLI | Add rules to `AGENTS.md` → [Codex setup](#codex-cli-cli) |
-| **OpenClaw / Custom** | HTTP API | Call `/api/*` endpoints → [HTTP API setup](#openclaw--custom-agents-http-api) |
-| **Any MCP client** | MCP (stdio) | Same config as Cursor |
-| **Scripts / CI** | CLI or HTTP | `vega recall --json` or `curl /api/recall` |
-
-Details for each tool are in the [Connecting AI Tools](#connecting-ai-tools) section below.
-
----
-
-## Deployment
-
-### Option A: Local Single Machine (Recommended Start)
-
-Everything runs on one machine. The MCP server is spawned by Cursor per session; the scheduler daemon runs in the background for backups, compaction, and the HTTP API.
-
-```bash
-# Start the background scheduler (includes HTTP API + dashboard)
-export VEGA_API_KEY=$(openssl rand -hex 16)
-node dist/scheduler/index.js &
-
-# Dashboard is at http://127.0.0.1:3271
-# Log in with the same API key
-```
-
-**Auto-start on macOS** via launchd:
-
-```bash
-# Create the plist (adjust paths)
-cat > ~/Library/LaunchAgents/dev.vega-memory.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://plist.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>dev.vega-memory</string>
-  <key>ProgramArguments</key><array>
-    <string>/usr/local/bin/node</string>
-    <string>/path/to/vega-memory/dist/scheduler/index.js</string>
-  </array>
-  <key>EnvironmentVariables</key><dict>
-    <key>VEGA_DB_PATH</key><string>/path/to/vega-memory/data/memory.db</string>
-    <key>OLLAMA_BASE_URL</key><string>http://localhost:11434</string>
-    <key>OLLAMA_MODEL</key><string>bge-m3</string>
-    <key>VEGA_API_KEY</key><string>YOUR_GENERATED_KEY</string>
-    <key>VEGA_API_PORT</key><string>3271</string>
-  </dict>
-  <key>KeepAlive</key><true/>
-  <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>/path/to/vega-memory/data/logs/scheduler-stdout.log</string>
-  <key>StandardErrorPath</key><string>/path/to/vega-memory/data/logs/scheduler-stderr.log</string>
-</dict>
-</plist>
-EOF
-
-# Load it
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.vega-memory.plist
-```
-
-### Option B: Server + Remote Clients (Tailscale)
-
-Run Vega on a central server (e.g., always-on Mac mini or VPS). Remote machines connect via the HTTP API over [Tailscale](https://tailscale.com) — a zero-config WireGuard mesh VPN.
-
-#### Step 1: Install Tailscale on all machines
-
-```bash
-# macOS
-brew install tailscale
-# or download from https://tailscale.com/download
-
-# Linux
-curl -fsSL https://tailscale.com/install.sh | sh
-
-# Windows
-# Download from https://tailscale.com/download/windows
-```
-
-Log in on each machine:
-
-```bash
-sudo tailscale up
-```
-
-All machines on the same Tailscale account are now on a private encrypted network (`100.x.x.x`).
-
-#### Step 2: Find your server's Tailscale IP
-
-On the server (the machine running Vega):
-
-```bash
-tailscale ip -4
-# Output: 100.x.x.x  (this is your Tailscale IP)
-```
-
-#### Step 3: Start Vega on the server
-
-```bash
-# Build and configure (see Quick Start above)
-export VEGA_API_KEY=$(openssl rand -hex 16)
-echo "Save this key: $VEGA_API_KEY"
-
-node dist/scheduler/index.js
-# API is now accessible at http://100.x.x.x:3271 from any Tailscale device
-```
-
-#### Step 4: Connect remote machines
-
-On each remote machine (must be on the same Tailscale network):
-
-```bash
-npm install -g vega-memory   # or clone and npm link
-
-vega setup --server 100.x.x.x --port 3271 --api-key YOUR_API_KEY
-```
-
-This command:
-1. Creates `~/.vega/config.json` with the server connection
-2. Registers Vega in `~/.cursor/mcp.json` in client mode
-3. Sets up a local SQLite cache for offline resilience
-
-#### Step 5: Verify
-
-```bash
-# On the remote machine
-vega health
-# Should show: status: "healthy", connected to the server
-
-vega recall "test" --json
-# Should return results from the server's memory database
-```
-
-#### Offline mode
-
-When the remote machine loses connection to the server (e.g., no internet), Vega automatically falls back to its local cache:
-
-- **Reads** are served from the cached copy
-- **Writes** are queued in `~/.vega/pending/`
-- **Reconnect** triggers automatic sync — pending writes are sent through the normal dedup pipeline
-
-#### Tailscale ACLs (optional hardening)
-
-For extra security, restrict which devices can access Vega's port in your [Tailscale ACL policy](https://login.tailscale.com/admin/acls):
-
-```json
-{
-  "acls": [
-    {
-      "action": "accept",
-      "src": ["group:engineering"],
-      "dst": ["tag:vega-server:3271"]
-    }
-  ]
-}
-```
-
-> **Security:** Tailscale provides WireGuard encryption for all traffic. The Vega API port (3271) is only reachable within your Tailscale network — it is never exposed to the public internet. The API key adds a second layer of authentication on top of the network-level security.
-
----
-
-## Connecting AI Tools
-
-### Cursor (MCP — Recommended)
-
-Vega registers as an MCP server that Cursor calls automatically.
-
-**1. Add to `~/.cursor/mcp.json`:**
-
-```json
-{
-  "mcpServers": {
-    "vega": {
-      "command": "node",
-      "args": ["/absolute/path/to/vega-memory/dist/index.js"],
-      "env": {
-        "VEGA_DB_PATH": "/absolute/path/to/vega-memory/data/memory.db",
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "bge-m3"
-      }
-    }
-  }
-}
-```
-
-**2. Add the Cursor rule** `.cursor/rules/memory.mdc` in your workspace:
-
-```markdown
----
-globs: ["**/*"]
-alwaysApply: true
----
-
-## Memory System Rules
-
-### Normal Mode (MCP available)
-- Session start → call vega.session_start(working_directory, task_hint)
-- Task completed → call vega.memory_store(type: "task_state")
-- Decision made → call vega.memory_store(type: "decision")
-- Bug fixed → call vega.memory_store(type: "pitfall")
-- New preference → call vega.memory_store(type: "preference")
-- User says "remember" → call vega.memory_store(source: "explicit")
-- Session ending → call vega.session_end(summary)
-- Before storing → verify content is NOT: emotional complaints, failed debug attempts, one-time queries, raw data, common knowledge
-
-### Fallback Mode (MCP unavailable)
-- Session start → read data/snapshots/memory-snapshot.md
-- New memories → append to data/snapshots/pending-memories.jsonl
-
-### Alert Check
-- Session start → check data/alerts/active-alert.md → if exists, read and inform user
-```
-
-**3. Restart Cursor.** The Agent will now auto-call `session_start` at the beginning of each conversation and store memories as you work.
-
----
-
-### Claude Code (CLI)
-
-Claude Code uses the `vega` CLI through shell commands. Add this to your project's `CLAUDE.md`:
-
-```markdown
-# Vega Memory Rules
-
-## Session start
-Run: `vega session-start --dir $(pwd) --json`
-Parse the JSON output and use it as context for this session.
-
-## Auto-store (do these automatically when appropriate)
-- Task completed: `vega store "what was done" --type task_state --project PROJECT_NAME`
-- Bug fixed: `vega store "error + solution" --type pitfall --project PROJECT_NAME`
-- Decision made: `vega store "decision + reasoning" --type decision --project PROJECT_NAME`
-- User says "remember": `vega store "content" --type preference --source explicit`
-
-## Before making changes, search memory
-Run: `vega recall "relevant query" --project PROJECT_NAME --json`
-
-## Session end
-Run: `vega session-end --project PROJECT_NAME --summary "what was accomplished"`
-```
-
----
-
-### Codex CLI (CLI)
-
-Same pattern as Claude Code. Add to `AGENTS.md` in your project:
-
-```markdown
-# Vega Memory Rules
-
-- Read the task instruction FIRST before doing anything
-- On start: run `vega session-start --dir $(pwd) --json`, use output as context
-- On task complete: `vega store "..." --type task_state --project PROJECT_NAME`
-- On error solved: `vega store "..." --type pitfall --project PROJECT_NAME`
-- On session end: `vega session-end --project PROJECT_NAME --summary "..."`
-- Before changes, search: `vega recall "query" --project PROJECT_NAME --json`
-```
-
----
-
-### Codex App (Desktop — Remote via MCP)
-
-The Codex desktop app supports MCP. For remote setups (e.g., Codex on Windows connecting to Vega on a Mac/Linux server), use the lightweight remote MCP proxy included in `client/vega-remote-mcp.mjs`.
-
-**Supported Tools**
-
-- Available today: `memory_store`, `memory_recall`, `memory_list`, `memory_update`, `memory_delete`, `session_start`, `session_end`, `memory_health`, `memory_compact`
-- `session_start` in the remote proxy is a compatibility surface. The server supports `mode`, but the proxy is still a minimal subset rather than a full MCP mirror.
-- Not yet exposed by the remote proxy: `deep_recall`, fact-claim tools, topic/graph tools, wiki tools, consolidation tools, and newer session variants that require matching HTTP routes.
-- Treat `client/vega-remote-mcp.mjs` as a lightweight compatibility client, not a complete replacement for the local MCP server.
-
-**Step 1: Clone and install on the client machine**
-
-```powershell
-# Windows PowerShell (or bash on Mac/Linux)
-git clone https://github.com/john-hoe/vega-memory.git
-cd vega-memory
-npm install @modelcontextprotocol/sdk
-```
-
-> Only the SDK is needed on the client — no native dependencies, no SQLite, no Ollama.
-
-**Step 2: Add MCP server in Codex App**
-
-Open Codex App → Settings → **MCP Servers** → Add:
-
-```json
-{
-  "command": "node",
-  "args": ["C:\\path\\to\\vega-memory\\client\\vega-remote-mcp.mjs"],
-  "env": {
-    "VEGA_SERVER_URL": "http://100.x.x.x:3271",
-    "VEGA_API_KEY": "your-api-key-here"
-  }
-}
-```
-
-| Variable | Value | How to find |
-|----------|-------|-------------|
-| `VEGA_SERVER_URL` | `http://100.x.x.x:3271` | Run `tailscale ip -4` on the server |
-| `VEGA_API_KEY` | Your generated key | The key used to start the scheduler |
-
-> On macOS/Linux, change the path to `/path/to/vega-memory/client/vega-remote-mcp.mjs`.
-
-**Step 3: Add custom instructions**
-
-Open Codex App → Settings → **Personalization** → Custom Instructions:
-
-```
-Follow CODEX.md and AGENTS.md rules strictly. Proactively store memories to Vega Memory (via MCP) as events happen — do NOT wait for user to ask. Each task completed, decision made, or bug fixed = one memory_store call immediately.
-```
-
-**Step 4: Verify**
-
-In a Codex App conversation, ask:
-
-```
-Check Vega Memory health
-```
-
-The agent should call `memory_health` and return the server status. If it shows `"status": "healthy"`, the connection is working.
-
----
-
-### HTTP API (Any Tool / Custom Integration)
-
-Any tool that can make HTTP requests can use Vega. Authentication is via Bearer token.
-
-```bash
-# Store a memory
-curl -X POST http://YOUR_SERVER:3271/api/store \
-  -H "Authorization: Bearer $VEGA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "content": "Always checkpoint WAL before backup",
-    "type": "pitfall",
-    "project": "my-project"
-  }'
-
-# Recall memories
-curl -X POST http://YOUR_SERVER:3271/api/recall \
-  -H "Authorization: Bearer $VEGA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "sqlite backup", "project": "my-project", "limit": 5}'
-
-# Start a session
-curl -X POST http://YOUR_SERVER:3271/api/session/start \
-  -H "Authorization: Bearer $VEGA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"working_directory": "/path/to/project"}'
-
-# Health check
-curl -H "Authorization: Bearer $VEGA_API_KEY" \
-  http://YOUR_SERVER:3271/api/health
-```
-
-For complete API documentation, see [`docs/API.md`](docs/API.md).
-
----
-
-### OpenClaw / Custom Agents (HTTP API)
-
-For OpenClaw agents or any custom AI agent, configure the agent to call the HTTP API. Example agent rules:
-
-```markdown
-# Vega Memory Connection
-Server: http://YOUR_SERVER:3271
-Auth: Bearer token (set via environment variable, never hardcode)
-
-## When to store
-- User shares a lesson learned → POST /api/store with type="pitfall"
-- Technical decision made → POST /api/store with type="decision"
-- User says "remember" → POST /api/store with source="explicit"
-
-## When to recall
-- Before answering technical questions → POST /api/recall
-- At session start → POST /api/session/start
-```
-
-> **Important:** Always pass the API key via environment variable. Never hardcode credentials in agent configuration files.
-
----
-
-## Automatic Memory Storage
-
-The real power of Vega is **automatic** memory storage — AI tools proactively store memories as they work, without you having to say "remember this" every time.
-
-### How it works
-
-```
-AI works on a task
-    ↓
-Completes a task     → auto-stores as task_state
-Makes a decision     → auto-stores as decision
-Fixes a bug          → auto-stores as pitfall
-Learns a preference  → auto-stores as preference
-    ↓
-Next session → session_start loads relevant memories automatically
-```
-
-### What gets stored (and what doesn't)
-
-| Store | Don't store |
-|-------|-------------|
-| Decisions with reasoning | Emotional complaints |
-| Bug fixes with error messages | Failed debug attempts that led nowhere |
-| File paths, commands, version numbers | One-time queries |
-| Architecture choices | Raw data dumps |
-| User preferences | Common programming knowledge |
-
-**Key principle:** Each memory is one specific fact, not a conversation summary. Preserve concrete details (error messages, paths, commands).
-
-### Setup by tool
-
-#### Cursor (MCP — auto)
-
-Cursor calls MCP tools automatically. Add this rule file to your workspace:
-
-**`.cursor/rules/memory.mdc`:**
-```markdown
----
-globs: ["**/*"]
-alwaysApply: true
----
-
-Memory System Rules — MANDATORY (never skip, never wait for user reminder)
-
-### Normal Mode (MCP available)
-- Session start → call vega.session_start(working_directory, task_hint)
-- Task completed → call vega.memory_store(type: "task_state") IMMEDIATELY
-- Decision made → call vega.memory_store(type: "decision") IMMEDIATELY
-- Bug fixed → call vega.memory_store(type: "pitfall") IMMEDIATELY
-- New preference → call vega.memory_store(type: "preference") IMMEDIATELY
-- User says "remember" → call vega.memory_store(source: "explicit")
-- Session ending → call vega.session_end(summary)
-- CRITICAL: Store memories AS events happen. Do NOT batch. Do NOT wait for user to ask.
-- Before storing → verify content is NOT: emotional complaints, failed debug attempts, one-time queries, raw data, common knowledge
-```
-
-#### Claude Code (CLI)
-
-Claude Code uses shell commands. Add to your project's **`CLAUDE.md`:**
-
-```markdown
-# Vega Memory — MANDATORY (auto-store, never wait for user reminder)
-
-## Session lifecycle
-- Start: `vega session-start --dir $(pwd) --json` — use output as context
-- End: `vega session-end --project PROJECT --summary "what was done"`
-
-## Auto-store (do these IMMEDIATELY when events happen)
-- Task done: `vega store "what was done" --type task_state --project PROJECT --title "title"`
-- Bug fixed: `vega store "error + fix" --type pitfall --project PROJECT --title "title"`
-- Decision: `vega store "choice + why" --type decision --project PROJECT --title "title"`
-- Preference: `vega store "preference" --type preference --project PROJECT --title "title"`
-
-## Before changes, search memory
-- `vega recall "query" --project PROJECT --json`
-
-## Rules
-- Store AS events happen, not at session end
-- Each fact = one separate store call
-- Preserve specifics: error messages, file paths, commands
-```
-
-#### Codex CLI
-
-Same pattern as Claude Code. Add to your project's **`CODEX.md`:**
-
-```markdown
-# Vega Memory — MANDATORY (auto-store, never wait for user reminder)
-
-- On start: `vega session-start --dir $(pwd) --json`
-- Task done: `vega store "..." --type task_state --project PROJECT --title "..."`
-- Bug fixed: `vega store "..." --type pitfall --project PROJECT --title "..."`
-- Decision: `vega store "..." --type decision --project PROJECT --title "..."`
-- On end: `vega session-end --project PROJECT --summary "..."`
-- Before changes: `vega recall "query" --project PROJECT --json`
-- CRITICAL: Store immediately as events happen. Do NOT wait for user to ask.
-```
-
-#### Codex App (Desktop)
-
-If using the Codex desktop app with MCP, add this to **Settings → Personalization → Custom Instructions:**
-
-```
-Follow CODEX.md and AGENTS.md rules strictly. Proactively store memories to Vega Memory (via MCP) as events happen — do NOT wait for user to ask. Each task completed, decision made, or bug fixed = one memory_store call immediately.
-```
-
-#### OpenClaw / Custom Agents (HTTP API)
-
-For agents using the HTTP API, instruct them to:
-
-```markdown
-## Vega Memory (HTTP API)
-Server: http://YOUR_SERVER:3271
-Auth: Bearer YOUR_API_KEY
-
-## Auto-store (call immediately when events happen)
-- POST /api/store {"content":"...", "type":"pitfall", "project":"..."}
-- POST /api/store {"content":"...", "type":"decision", "project":"..."}
-- POST /api/store {"content":"...", "type":"task_state", "project":"..."}
-
-## Before answering questions, recall
-- POST /api/recall {"query":"...", "project":"..."}
-
-## Session lifecycle
-- POST /api/session/start {"working_directory":"..."}
-- POST /api/session/end {"project":"...", "summary":"..."}
-```
-
-### Verifying it works
-
-After a work session, check that memories were stored:
-
-```bash
-# List recent memories
-vega list --sort "created_at DESC" --json | head -20
-
-# Check memory count
-vega health --json | grep memories
-
-# Search for something discussed in the session
-vega recall "topic from your session"
-```
-
-If no memories appear, check that the rule files are in the correct location and that the MCP server or CLI is accessible.
-
----
-
-## CLI Reference
-
-### Core Workflow
-
-| Command | Purpose |
-|---------|---------|
-| `vega store <content> --type <type> --project <p>` | Store a memory |
-| `vega recall <query> [--project <p>] [--type <t>] [--json]` | Semantic search |
-| `vega list [--project <p>] [--type <t>] [--sort <s>]` | List memories |
-| `vega session-start [--dir <path>] [--hint <text>]` | Load session context |
-| `vega session-end --project <p> --summary <text>` | End session, extract memories |
-| `vega health [--json]` | System health report |
-
-### Maintenance
-
-| Command | Purpose |
-|---------|---------|
-| `vega compact [--project <p>]` | Merge duplicates, archive stale |
-| `vega diagnose [--issue <text>]` | Generate diagnostic report |
-| `vega backup [--cloud]` | Create backup |
-| `vega export [--format json\|md] [-o file]` | Export memories |
-| `vega import <file>` | Import from JSON or Markdown |
-| `vega compress [--project <p>] [--min-length 1200]` | Compress long memories via Ollama |
-| `vega quality [--project <p>]` | Score memory quality |
-| `vega benchmark [--suite all\|write\|recall]` | Performance benchmarks |
-
-### Knowledge & Indexing
-
-| Command | Purpose |
-|---------|---------|
-| `vega graph <entity> [--depth <n>]` | Query knowledge graph |
-| `vega index <dir> [--ext ts,tsx,js]` | Index source code |
-| `vega index-docs <path> [--project <p>]` | Index markdown docs |
-| `vega git-import <repo> [--since <date>]` | Import git history |
-| `vega generate-docs --project <p>` | Generate docs from memory |
-
-### Setup & Admin
-
-| Command | Purpose |
-|---------|---------|
-| `vega setup --server <host> --port <port> --api-key <key>` | Configure remote client |
-| `vega init-encryption` | Generate encryption key in macOS Keychain |
-| `vega stats` | Aggregate counts by type/project/status |
-| `vega audit [--actor <a>] [--action <a>]` | View audit log |
-| `vega snapshot` | Export markdown snapshot |
-| `vega plugins list` | List installed plugins |
-| `vega templates list` / `vega templates install <name>` | Starter templates |
-
-All commands support `--json` for machine-readable output.
-
-### Memory Types
-
-| Type | Purpose | Decay |
-|------|---------|-------|
-| `preference` | User preferences, coding style | Never |
-| `project_context` | Architecture, stack, structure | Very slow |
-| `task_state` | Current task progress | Fast (completed → archived) |
-| `pitfall` | Bugs, errors, solutions | Never |
-| `decision` | Technical decisions with reasoning | Moderate |
-| `insight` | Auto-generated patterns (system only) | N/A |
-
----
-
-## MCP Tools
-
-| Tool | Purpose | Key Parameters |
-|------|---------|---------------|
-| `memory_store` | Store a memory | `content`, `type`, `project?`, `title?`, `tags?` |
-| `memory_recall` | Semantic search | `query`, `project?`, `type?`, `limit?` |
-| `memory_list` | Browse memories | `project?`, `type?`, `limit?`, `sort?` |
-| `memory_update` | Update a memory | `id`, `content?`, `importance?`, `tags?` |
-| `memory_delete` | Delete a memory | `id` |
-| `session_start` | Load session context | `working_directory`, `task_hint?` |
-| `session_end` | End session | `project`, `summary`, `completed_tasks?` |
-| `memory_health` | Health report | — |
-| `memory_compact` | Merge & archive | `project?` |
-| `memory_diagnose` | Diagnostics | `issue?` |
-| `memory_graph` | Knowledge graph query | `entity`, `depth` |
-| `memory_compress` | Compress via Ollama | `memory_id?`, `project?`, `min_length?` |
-| `memory_observe` | Passive tool observation | `tool_name`, `project?`, `input?`, `output?` |
-
----
-
-## HTTP API
-
-The scheduler serves an authenticated REST API when `VEGA_API_KEY` is configured.
-
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/` | `GET` | Web dashboard (login required) |
-| `/dashboard/login` | `POST` | Exchange API key for session cookie |
-| `/dashboard/logout` | `POST` | Clear session |
-| `/api/store` | `POST` | Store a memory |
-| `/api/recall` | `POST` | Recall memories |
-| `/api/list` | `GET` | List memories |
-| `/api/memory/:id` | `PATCH` | Update a memory |
-| `/api/memory/:id` | `DELETE` | Delete a memory |
-| `/api/session/start` | `POST` | Start session |
-| `/api/session/end` | `POST` | End session |
-| `/api/health` | `GET` | Health status |
-| `/api/compact` | `POST` | Run compaction |
-
-Authentication: `Authorization: Bearer <your-api-key>` or dashboard session cookie.
-
-See [`docs/API.md`](docs/API.md) for complete request/response examples.
-
----
-
-## Configuration
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VEGA_DB_PATH` | `./data/memory.db` | SQLite database path |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API base URL |
-| `OLLAMA_MODEL` | `bge-m3` | Embedding model name |
-| `VEGA_API_KEY` | — | **Required** for HTTP API. Generate with `openssl rand -hex 16` |
-| `VEGA_API_PORT` | `3271` | HTTP API port |
-| `VEGA_TOKEN_BUDGET` | `2000` | Max tokens injected at session start |
-| `VEGA_SIMILARITY_THRESHOLD` | `0.85` | Dedup similarity threshold |
-| `VEGA_BACKUP_RETENTION_DAYS` | `7` | Days to keep backups |
-| `VEGA_MODE` | `server` | `server` (primary) or `client` (remote) |
-| `VEGA_SERVER_URL` | — | Remote Vega server URL (client mode) |
-| `VEGA_CACHE_DB` | `~/.vega/cache.db` | Local cache DB (client mode) |
-| `VEGA_OBSERVER_ENABLED` | `false` | Enable passive tool observation |
-| `VEGA_TG_BOT_TOKEN` | — | Telegram bot token for alerts |
-| `VEGA_TG_CHAT_ID` | — | Telegram chat ID for alerts |
-| `VEGA_ENCRYPTION_KEY` | — | Hex key for encrypted exports |
-| `VEGA_CLOUD_BACKUP_DIR` | — | Cloud backup sync directory |
-
-> **Security reminder:** All secrets (`VEGA_API_KEY`, `VEGA_TG_BOT_TOKEN`, `VEGA_ENCRYPTION_KEY`) must be set via environment variables or `.env` file. Never commit them to version control.
-
----
-
-## How It Works
-
-### Memory Lifecycle
-
-```
-Create → Active Use → Cool Down → Archive/Merge → Cleanup
-```
-
-1. **Store**: Content is redacted (strip secrets) → embedded (Ollama bge-m3) → deduped (>0.85 similarity merges) → stored in SQLite
-2. **Retrieve**: Query embedded → hybrid search (Vector 70% + BM25 30% via FTS5) → ranked by `similarity×0.5 + importance×0.3 + recency×0.2`
-3. **Session**: `session_start` injects relevant context within a 2000-token budget. `session_end` extracts new memories from the summary
-4. **Maintenance**: Daily backup, weekly compaction, embedding rebuild for gaps
-
-### Trust System
-
-| Status | Meaning | Search Weight |
-|--------|---------|--------------|
-| `verified` | User confirmed | ×1.0 |
-| `unverified` | Auto-extracted, not yet reviewed | ×0.7 |
-| `rejected` | User marked incorrect | Excluded |
-| `conflict` | Contradicts existing verified memory | Surfaced for resolution |
-
-### Cross-Project Sharing
-
-Memories start as `project`-scoped. When accessed by 2+ different projects, they auto-promote to `global` scope and appear in all sessions.
-
----
-
-## Development
-
-### Build and test
-
-```bash
-rm -rf dist
-npx tsc
-node --test dist/tests/*.test.js
-```
-
-### Project structure
-
-```
-src/
-├── index.ts              # MCP server entry
-├── config.ts             # Configuration loader
-├── core/                 # Memory, recall, session, compact, lifecycle
-├── db/                   # SQLite schema, repository, backup, CRDT
-├── embedding/            # Ollama integration, cache
-├── search/               # Brute-force engine, ranking, hybrid search
-├── security/             # Redactor, encryption, RBAC, keychain
-├── mcp/                  # MCP tool definitions
-├── cli/                  # CLI commands (commander.js)
-├── api/                  # HTTP API routes, auth
-├── web/                  # Dashboard
-├── scheduler/            # Background daemon
-├── insights/             # Pattern detection, insight generation
-├── notify/               # Telegram, alert files
-├── sync/                 # Remote client sync
-├── plugins/              # Plugin loader, SDK
-└── tests/                # Test suites
-```
-
-### Plugins
-
-Plugins are discovered from `data/plugins/<plugin-name>/plugin.json`:
-
-```json
-{
-  "name": "example-plugin",
-  "version": "0.1.0",
-  "main": "index.js"
-}
-```
-
-Starter templates: `vega templates list` / `vega templates install <name>`.
-
----
-
-## Security
-
-- **Sensitive data redaction**: API keys, tokens, passwords are automatically stripped before storage
-- **Encryption at rest**: Optional SQLCipher encryption with macOS Keychain key management
-- **API authentication**: Bearer token required for all HTTP API calls
-- **Audit logging**: Every operation is logged with actor, timestamp, and action
-- **Graceful deletion**: Memories are never silently deleted — notification + download window + confirmation required
-- **Network security**: For remote access, always use a VPN (Tailscale/WireGuard). Never expose the API port directly to the internet
-
----
-
-## License
-
-MIT
+## Where To Go Next
+
+- want the API surface: see [HTTP API docs](docs/API.md)
+- want deployment details: see [deployment docs](docs/deployment.md)
+- want agent-specific integration steps: continue into the lower sections of this README
+- want to report issues: use [GitHub Issues](https://github.com/john-hoe/vega-memory/issues)
+- want community discussion: the next documentation improvement should add a clearer discussions/docs funnel
