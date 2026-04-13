@@ -7,7 +7,8 @@ import {
   detectDecisionPatterns,
   detectProjectRiskAreas,
   detectRepeatOffenders,
-  detectTagClusters
+  detectTagClusters,
+  shouldArchiveHistoricalInsight
 } from "./patterns.js";
 
 const normalize = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -99,8 +100,37 @@ export class InsightGenerator {
     });
     let created = 0;
 
+    for (const memory of knownInsights) {
+      if (!shouldArchiveHistoricalInsight(memory)) {
+        continue;
+      }
+
+      this.repository.updateMemory(
+        memory.id,
+        {
+          status: "archived",
+          updated_at: new Date().toISOString()
+        },
+        {
+          skipVersion: true,
+          auditContext: {
+            actor: "insights",
+            ip: null,
+            tenant_id: memory.tenant_id ?? null
+          }
+        }
+      );
+    }
+
+    const retainedInsights = this.repository.listMemories({
+      type: "insight",
+      status: "active",
+      limit: 1_000_000,
+      sort: "created_at ASC"
+    });
+
     for (const candidate of candidates) {
-      if (knownInsights.some((memory) => isSimilarInsight(candidate, memory))) {
+      if (retainedInsights.some((memory) => isSimilarInsight(candidate, memory))) {
         continue;
       }
 
@@ -115,7 +145,7 @@ export class InsightGenerator {
       const stored = this.repository.getMemory(result.id);
 
       if (stored) {
-        knownInsights.push(stored);
+        retainedInsights.push(stored);
       }
 
       if (result.action === "created") {

@@ -7,6 +7,13 @@ export interface InsightCandidate {
   project: string;
 }
 
+type HistoricalInsightPattern =
+  | { family: "tag_cluster"; token: string; count: number }
+  | { family: "repeat_offender"; token: string; count: number }
+  | { family: "project_risk"; project: string; count: number }
+  | { family: "decision_pattern"; token: string; count: number }
+  | { family: "generic" };
+
 interface SessionRow {
   id: string;
   project: string;
@@ -65,6 +72,55 @@ const normalize = (value: string): string => value.trim().toLowerCase();
 
 const isHighSignalToken = (value: string): boolean =>
   value.length > 0 && !STOP_WORDS.has(value) && !LOW_SIGNAL_TAGS.has(value);
+
+const parsePositiveInteger = (value: string | undefined): number | null => {
+  if (value === undefined) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+const parseHistoricalInsight = (content: string): HistoricalInsightPattern => {
+  const tagClusterMatch = /^Tag '([^']+)': (\d+) pitfalls recorded\./.exec(content);
+  if (tagClusterMatch) {
+    return {
+      family: "tag_cluster",
+      token: normalize(tagClusterMatch[1] ?? ""),
+      count: parsePositiveInteger(tagClusterMatch[2]) ?? 0
+    };
+  }
+
+  const repeatOffenderMatch = /^Recurring issue: '([^']+)' appears across (\d+) sessions\./.exec(content);
+  if (repeatOffenderMatch) {
+    return {
+      family: "repeat_offender",
+      token: normalize(repeatOffenderMatch[1] ?? ""),
+      count: parsePositiveInteger(repeatOffenderMatch[2]) ?? 0
+    };
+  }
+
+  const projectRiskMatch = /^Project '([^']+)' has (\d+) pitfalls/.exec(content);
+  if (projectRiskMatch) {
+    return {
+      family: "project_risk",
+      project: projectRiskMatch[1] ?? "",
+      count: parsePositiveInteger(projectRiskMatch[2]) ?? 0
+    };
+  }
+
+  const decisionPatternMatch = /^Decision pattern: '([^']+)' influenced (\d+) decisions\./.exec(content);
+  if (decisionPatternMatch) {
+    return {
+      family: "decision_pattern",
+      token: normalize(decisionPatternMatch[1] ?? ""),
+      count: parsePositiveInteger(decisionPatternMatch[2]) ?? 0
+    };
+  }
+
+  return { family: "generic" };
+};
 
 const compareCandidates = (left: InsightCandidate, right: InsightCandidate): number =>
   left.project.localeCompare(right.project) || left.content.localeCompare(right.content);
@@ -215,4 +271,25 @@ export function detectDecisionPatterns(repository: Repository): InsightCandidate
       };
     })
     .sort(compareCandidates);
+}
+
+export function shouldArchiveHistoricalInsight(memory: Memory): boolean {
+  if (memory.type !== "insight" || memory.status !== "active" || memory.source !== "auto") {
+    return false;
+  }
+
+  const parsed = parseHistoricalInsight(memory.content);
+
+  switch (parsed.family) {
+    case "tag_cluster":
+      return !isHighSignalToken(parsed.token) || parsed.count < MIN_TAG_CLUSTER_COUNT;
+    case "repeat_offender":
+      return !isHighSignalToken(parsed.token) || parsed.count < MIN_REPEAT_OFFENDER_SESSION_COUNT;
+    case "project_risk":
+      return parsed.count < MIN_PROJECT_RISK_PITFALL_COUNT;
+    case "decision_pattern":
+      return !isHighSignalToken(parsed.token) || parsed.count < MIN_DECISION_PATTERN_COUNT;
+    case "generic":
+      return false;
+  }
 }

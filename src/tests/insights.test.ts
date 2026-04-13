@@ -16,7 +16,8 @@ import {
   detectDecisionPatterns,
   detectProjectRiskAreas,
   detectRepeatOffenders,
-  detectTagClusters
+  detectTagClusters,
+  shouldArchiveHistoricalInsight
 } from "../insights/patterns.js";
 import { SearchEngine } from "../search/engine.js";
 import { weeklyHealthReport } from "../scheduler/tasks.js";
@@ -373,6 +374,36 @@ test("detectTagClusters ignores low-signal generic tags", () => {
   }
 });
 
+test("shouldArchiveHistoricalInsight archives low-signal auto insights", () => {
+  const memory: Memory = {
+    ...createStoredMemory({
+      id: "insight-added",
+      type: "insight",
+      source: "auto",
+      content: "Tag 'added': 4 pitfalls recorded. Common issue area.",
+      tags: ["added"]
+    }),
+    access_count: 0
+  };
+
+  assert.equal(shouldArchiveHistoricalInsight(memory), true);
+});
+
+test("shouldArchiveHistoricalInsight keeps high-signal auto insights", () => {
+  const memory: Memory = {
+    ...createStoredMemory({
+      id: "insight-auth",
+      type: "insight",
+      source: "auto",
+      content: "Tag 'auth': 4 pitfalls recorded. Common issue area.",
+      tags: ["auth"]
+    }),
+    access_count: 0
+  };
+
+  assert.equal(shouldArchiveHistoricalInsight(memory), false);
+});
+
 test("InsightGenerator runs through weeklyHealthReport", async () => {
   const restoreFetch = installEmbeddingMock();
   const tempDir = mkdtempSync(join(tmpdir(), "vega-insights-weekly-"));
@@ -409,5 +440,51 @@ test("InsightGenerator runs through weeklyHealthReport", async () => {
     restoreFetch();
     repository.close();
     rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("InsightGenerator archives low-signal historical insights before generating new ones", async () => {
+  const restoreFetch = installEmbeddingMock();
+  const repository = new Repository(":memory:");
+  const memoryService = new MemoryService(repository, baseConfig);
+  const generator = new InsightGenerator(repository, memoryService);
+
+  try {
+    repository.createMemory(
+      createStoredMemory({
+        id: "insight-added",
+        type: "insight",
+        source: "auto",
+        content: "Tag 'added': 4 pitfalls recorded. Common issue area.",
+        tags: ["added"],
+        importance: 0.75
+      })
+    );
+    repository.createMemory(createStoredMemory({ id: "pitfall-1", tags: ["auth"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-2", tags: ["auth"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-3", tags: ["auth"] }));
+    repository.createMemory(createStoredMemory({ id: "pitfall-4", tags: ["auth"] }));
+
+    const created = await generator.generateInsights();
+    const archived = repository.getMemory("insight-added");
+    const activeInsights = repository.listMemories({
+      type: "insight",
+      status: "active",
+      limit: 10_000
+    });
+
+    assert.equal(created, 1);
+    assert.equal(archived?.status, "archived");
+    assert.equal(
+      activeInsights.some((memory) => memory.content.includes("Tag 'added'")),
+      false
+    );
+    assert.equal(
+      activeInsights.some((memory) => memory.content.includes("Tag 'auth': 4 pitfalls")),
+      true
+    );
+  } finally {
+    restoreFetch();
+    repository.close();
   }
 });
