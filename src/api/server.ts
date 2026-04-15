@@ -10,6 +10,7 @@ import {
   getRequestTenantId,
   matchesConfiguredApiKey
 } from "./auth.js";
+import { createMcpRouter } from "./mcp.js";
 import { createOidcRouter } from "./oidc.js";
 import { createRouter, type APIRouterServices } from "./routes.js";
 import { StructuredLogger } from "../monitoring/logger.js";
@@ -142,6 +143,9 @@ export function createAPIServer(
   });
   app.use(createOidcRouter(config, services.repository));
   app.use(createAuthMiddleware(config, services.repository));
+  if (config.apiKey !== undefined) {
+    app.use(createMcpRouter(services, config));
+  }
   app.use(
     createRouter({
       ...services,
