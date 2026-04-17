@@ -3,7 +3,7 @@ import { CHECKPOINT_RECORD_SCHEMA } from "../core/contracts/checkpoint-record.js
 import type { DatabaseAdapter } from "../db/adapter.js";
 
 export interface CheckpointStore {
-  put(record: CheckpointRecord): void;
+  put(record: Omit<CheckpointRecord, "created_at" | "ttl_expires_at">): void;
   get(checkpoint_id: string, now?: number): CheckpointRecord | undefined;
   evictExpired(now?: number): number;
   size(): number;
@@ -155,7 +155,7 @@ export function createCheckpointStore(
   );
 
   return {
-    put(record: CheckpointRecord): void {
+    put(record: Omit<CheckpointRecord, "created_at" | "ttl_expires_at">): void {
       const created_at = now();
       const normalized = CHECKPOINT_RECORD_SCHEMA.parse({
         ...record,

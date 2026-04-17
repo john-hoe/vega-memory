@@ -8,7 +8,11 @@ import {
   createCheckpointStore
 } from "../usage/index.js";
 
-function createCheckpointRecord(overrides: Partial<CheckpointRecord> = {}): CheckpointRecord {
+type PendingCheckpointRecord = Omit<CheckpointRecord, "created_at" | "ttl_expires_at">;
+
+function createCheckpointRecord(
+  overrides: Partial<PendingCheckpointRecord> = {}
+): PendingCheckpointRecord {
   return {
     checkpoint_id: "checkpoint-1",
     bundle_digest: "bundle-1",
@@ -22,8 +26,6 @@ function createCheckpointRecord(overrides: Partial<CheckpointRecord> = {}): Chec
     profile_used: "lookup",
     ranker_version: "v1.0",
     record_ids: ["wiki:wiki-1", "vega_memory:mem-1"],
-    created_at: 1_000,
-    ttl_expires_at: 1_100,
     ...overrides
   };
 }
@@ -95,9 +97,9 @@ test("evictExpired removes only expired checkpoints and reports the deleted coun
       now: () => now
     });
 
-    store.put(createCheckpointRecord({ checkpoint_id: "expired", created_at: now, ttl_expires_at: now + 100 }));
+    store.put(createCheckpointRecord({ checkpoint_id: "expired" }));
     now = 1_050;
-    store.put(createCheckpointRecord({ checkpoint_id: "fresh", created_at: now, ttl_expires_at: now + 100 }));
+    store.put(createCheckpointRecord({ checkpoint_id: "fresh" }));
     now = 1_101;
 
     assert.equal(store.evictExpired(), 1);
@@ -135,10 +137,10 @@ test("put upserts by checkpoint_id and overwrites the prior payload", () => {
         checkpoint_id: "checkpoint-1",
         bundle_digest: "bundle-2",
         query_hash: "query-hash-2",
-        record_ids: ["wiki:wiki-2"],
-        created_at: now,
-        ttl_expires_at: now + 100
-      })
+        record_ids: ["wiki:wiki-2"]
+      }),
+      created_at: now,
+      ttl_expires_at: now + 100
     });
     assert.equal(store.size(), 1);
   } finally {

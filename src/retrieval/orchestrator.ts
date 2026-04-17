@@ -206,8 +206,7 @@ export class RetrievalOrchestrator {
         response.bundle_digest !== "error" &&
         assembly.truncated_count === 0
       ) {
-        const now = Date.now();
-        const record: CheckpointRecord = {
+        const record: Omit<CheckpointRecord, "created_at" | "ttl_expires_at"> = {
           checkpoint_id,
           bundle_digest: assembly.bundle_digest,
           intent: request.intent,
@@ -221,9 +220,7 @@ export class RetrievalOrchestrator {
           ranker_version,
           record_ids: assembly.bundle.sections.flatMap((section) =>
             section.records.map((record) => recordKey(section.source_kind, record.id))
-          ),
-          created_at: now,
-          ttl_expires_at: now
+          )
         };
 
         try {

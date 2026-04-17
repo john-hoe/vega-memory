@@ -16,6 +16,8 @@ import {
   type CheckpointStore
 } from "../usage/index.js";
 
+type PendingCheckpointRecord = Omit<CheckpointRecord, "created_at" | "ttl_expires_at">;
+
 function createRequest(intent: Intent, overrides: Partial<IntentRequest> = {}): IntentRequest {
   const base: IntentRequest = {
     intent,
@@ -242,7 +244,7 @@ test("followup returns an error bundle when the previous checkpoint has expired"
   }
 });
 
-test("followup without a checkpoint store degrades to the legacy lookup-like behavior", () => {
+test("followup without a checkpoint store skips prev lookup but still uses the followup profile", () => {
   const orchestrator = new RetrievalOrchestrator({
     registry: createFollowupRegistry({
       wiki: [createRecord("wiki", "fresh", 0.5)]
@@ -260,9 +262,9 @@ test("followup without a checkpoint store degrades to the legacy lookup-like beh
 });
 
 test("error and truncated responses do not write checkpoints", () => {
-  const puts: CheckpointRecord[] = [];
+  const puts: PendingCheckpointRecord[] = [];
   const checkpointStore: CheckpointStore = {
-    put(record: CheckpointRecord): void {
+    put(record: PendingCheckpointRecord): void {
       puts.push(record);
     },
     get(): CheckpointRecord | undefined {
@@ -327,9 +329,7 @@ test("demotion keys remain isolated across source kinds even when ids collide", 
       mode: "L1",
       profile_used: "lookup",
       ranker_version: "v1.0",
-      record_ids: [recordKey("wiki", "abc")],
-      created_at: now,
-      ttl_expires_at: now + 1_800_000
+      record_ids: [recordKey("wiki", "abc")]
     });
 
     const response = new RetrievalOrchestrator({

@@ -31,6 +31,8 @@ import { SentryStub } from "../monitoring/sentry.js";
 import { createContextResolveHttpHandler } from "../retrieval/context-resolve-handler.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
+import { createAckStore, createCheckpointStore } from "../usage/index.js";
+import { createUsageAckHttpHandler } from "../usage/usage-ack-handler.js";
 import { searchWikiPages } from "../wiki/search.js";
 
 const isAddressInfo = (value: string | AddressInfo | null): value is AddressInfo =>
@@ -156,6 +158,8 @@ export function createAPIServer(
       error: "unauthorized"
     });
   };
+  const checkpointStore = !db.isPostgres ? createCheckpointStore(db) : undefined;
+  const ackStore = !db.isPostgres ? createAckStore(db) : undefined;
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: createDefaultRegistry({
       repository: activeServices.repository,
@@ -163,7 +167,8 @@ export function createAPIServer(
       factClaimService,
       graphReportService,
       archiveService
-    })
+    }),
+    checkpoint_store: checkpointStore
   });
 
   app.use(
@@ -237,9 +242,10 @@ export function createAPIServer(
   if (config.apiKey !== undefined) {
     app.use(createMcpRouter(activeServices, config));
   }
-  app.use(["/ingest_event", "/context_resolve"], requireAuthorizedHttpRoute);
+  app.use(["/ingest_event", "/context_resolve", "/usage_ack"], requireAuthorizedHttpRoute);
   app.post("/ingest_event", createIngestEventHttpHandler(db));
   app.post("/context_resolve", createContextResolveHttpHandler(retrievalOrchestrator));
+  app.post("/usage_ack", createUsageAckHttpHandler(ackStore, checkpointStore));
   app.use(
     createRouter({
       ...activeServices,

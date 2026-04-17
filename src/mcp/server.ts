@@ -14,6 +14,7 @@ import {
 } from "../config.js";
 import { HOST_EVENT_ENVELOPE_V1 } from "../core/contracts/envelope.js";
 import { INTENT_REQUEST_SCHEMA } from "../core/contracts/intent.js";
+import { USAGE_ACK_SCHEMA } from "../core/contracts/usage-ack.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { ConsolidationApprovalService } from "../core/consolidation-approval.js";
 import { ConsolidationDashboardService } from "../core/consolidation-dashboard.js";
@@ -43,6 +44,8 @@ import { publishWikiPages } from "../publishing/service.js";
 import { createContextResolveMcpTool } from "../retrieval/context-resolve-handler.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
+import { createAckStore, createCheckpointStore } from "../usage/index.js";
+import { createUsageAckMcpTool } from "../usage/usage-ack-handler.js";
 import { CrossReferenceService } from "../wiki/cross-reference.js";
 import { PageManager } from "../wiki/page-manager.js";
 import { reviewWikiPage, WIKI_REVIEW_ACTIONS } from "../wiki/review.js";
@@ -616,6 +619,12 @@ export function createMCPServer({
   const claimsService = factClaimService ?? new FactClaimService(activeRepository, config);
   const retrievalArchiveService = new ArchiveService(activeRepository, config);
   const retrievalFactClaimService = new FactClaimService(activeRepository, config);
+  const checkpointStore = !activeRepository.db.isPostgres
+    ? createCheckpointStore(activeRepository.db)
+    : undefined;
+  const ackStore = !activeRepository.db.isPostgres
+    ? createAckStore(activeRepository.db)
+    : undefined;
   const observer = {
     enabled: config.observerEnabled,
     service: observerService
@@ -640,10 +649,12 @@ export function createMCPServer({
       factClaimService: retrievalFactClaimService,
       graphReportService,
       archiveService: retrievalArchiveService
-    })
+    }),
+    checkpoint_store: checkpointStore
   });
   const ingestEventTool = createIngestEventMcpTool(activeRepository.db);
   const contextResolveTool = createContextResolveMcpTool(retrievalOrchestrator);
+  const usageAckTool = createUsageAckMcpTool(ackStore, checkpointStore);
 
   server.tool(
     "memory_graph",
@@ -1876,6 +1887,23 @@ export function createMCPServer({
     async (args) =>
       runTool(repository, contextResolveTool.name, args, observer, async () => {
         const result = await contextResolveTool.invoke(args);
+
+        return {
+          result,
+          resultCount: 1
+        };
+      })
+  );
+
+  server.registerTool(
+    usageAckTool.name,
+    {
+      description: usageAckTool.description,
+      inputSchema: USAGE_ACK_SCHEMA.shape
+    },
+    async (args: unknown) =>
+      runTool(repository, usageAckTool.name, args, observer, async () => {
+        const result = await usageAckTool.invoke(args);
 
         return {
           result,

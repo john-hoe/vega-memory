@@ -13,6 +13,7 @@ import { INTENT_REQUEST_SCHEMA } from "../core/contracts/intent.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
+import { createMCPServer } from "../mcp/server.js";
 import type { ContextResolveResponse } from "../retrieval/orchestrator.js";
 import { createContextResolveHttpHandler, createContextResolveMcpTool } from "../retrieval/context-resolve-handler.js";
 import { Repository } from "../db/repository.js";
@@ -20,6 +21,8 @@ import { SQLiteAdapter } from "../db/sqlite-adapter.js";
 import { createIngestEventMcpTool } from "../ingestion/ingest-event-handler.js";
 import { RAW_INBOX_TABLE, applyRawInboxMigration } from "../ingestion/raw-inbox.js";
 import { SearchEngine } from "../search/engine.js";
+import { createUsageAckHttpHandler, createUsageAckMcpTool } from "../usage/usage-ack-handler.js";
+import { createAckStore } from "../usage/index.js";
 
 const projectRoot = process.cwd();
 const cliPath = join(projectRoot, "dist", "cli", "index.js");
@@ -92,6 +95,92 @@ const createApiHarness = async (apiKey?: string): Promise<{
   };
 };
 
+const getRegisteredTools = (
+  server: ReturnType<typeof createMCPServer>
+): Record<
+  string,
+  {
+    handler: (
+      args: Record<string, unknown>,
+      extra: object
+    ) => Promise<{ isError?: boolean; content: Array<{ text?: string }> }>;
+  }
+> =>
+  (
+    server as unknown as {
+      _registeredTools: Record<
+        string,
+        {
+          handler: (
+            args: Record<string, unknown>,
+            extra: object
+          ) => Promise<{ isError?: boolean; content: Array<{ text?: string }> }>;
+        }
+      >;
+    }
+  )._registeredTools;
+
+const createMcpHarness = () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-wiring-mcp-"));
+  const config: VegaConfig = {
+    dbPath: join(tempDir, "memory.db"),
+    ollamaBaseUrl: "http://localhost:99999",
+    ollamaModel: "bge-m3",
+    tokenBudget: 2000,
+    similarityThreshold: 0.85,
+    shardingEnabled: false,
+    backupRetentionDays: 7,
+    apiPort: 0,
+    apiKey: undefined,
+    mode: "server",
+    serverUrl: undefined,
+    cacheDbPath: join(tempDir, "cache.db"),
+    telegramBotToken: undefined,
+    telegramChatId: undefined,
+    observerEnabled: false,
+    dbEncryption: false
+  };
+  const repository = new Repository(config.dbPath);
+  const searchEngine = new SearchEngine(repository, config);
+  const memoryService = new MemoryService(repository, config);
+  const recallService = new RecallService(repository, searchEngine, config);
+  const sessionService = new SessionService(repository, memoryService, recallService, config);
+  const compactService = new CompactService(repository, config);
+  const graphService = {
+    query: () => ({ entity: null, relations: [], memories: [] }),
+    getNeighbors: () => ({ entity: null, neighbors: [], relations: [], memories: [] }),
+    shortestPath: () => ({ from: null, to: null, entities: [], relations: [], memories: [], found: false }),
+    graphStats: () => ({
+      total_entities: 0,
+      total_relations: 0,
+      entity_types: {},
+      relation_types: {},
+      average_confidence: null,
+      tracked_code_files: 0,
+      tracked_doc_files: 0
+    }),
+    subgraph: () => ({ seed_entities: [], missing_entities: [], entities: [], relations: [], memories: [] })
+  };
+  const server = createMCPServer({
+    repository,
+    graphService,
+    memoryService,
+    recallService,
+    sessionService,
+    compactService,
+    config
+  });
+
+  return {
+    server,
+    async cleanup(): Promise<void> {
+      await server.close();
+      repository.close();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  };
+};
+
 test("CLI help output includes the replay command", () => {
   const output = runCli(["--help"], {
     VEGA_DB_PATH: ":memory:",
@@ -101,7 +190,7 @@ test("CLI help output includes the replay command", () => {
   assert.match(output, /\breplay\b/);
 });
 
-test("ingest_event and context.resolve MCP factories expose the expected tool names", () => {
+test("ingest_event, context.resolve, and usage.ack MCP factories expose the expected tool names", () => {
   const db = new SQLiteAdapter(":memory:");
 
   try {
@@ -124,9 +213,11 @@ test("ingest_event and context.resolve MCP factories expose the expected tool na
         } satisfies ContextResolveResponse;
       }
     } as never);
+    const usageAckTool = createUsageAckMcpTool(createAckStore(db));
 
     assert.equal(ingestEventTool.name, "ingest_event");
     assert.equal(contextResolveTool.name, "context.resolve");
+    assert.equal(usageAckTool.name, "usage.ack");
   } finally {
     db.close();
   }
@@ -198,7 +289,7 @@ test("intent request schema requires a non-empty query", () => {
   assert.equal(validQuery.success, true);
 });
 
-test("POST /ingest_event and POST /context_resolve are mounted on the HTTP API", async () => {
+test("POST /ingest_event, POST /context_resolve, and POST /usage_ack are mounted on the HTTP API", async () => {
   const harness = await createApiHarness();
 
   try {
@@ -216,9 +307,17 @@ test("POST /ingest_event and POST /context_resolve are mounted on the HTTP API",
       },
       body: JSON.stringify({})
     });
+    const usageAckResponse = await fetch(`${harness.baseUrl}/usage_ack`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({})
+    });
 
     assert.notEqual(ingestResponse.status, 404);
     assert.notEqual(contextResolveResponse.status, 404);
+    assert.notEqual(usageAckResponse.status, 404);
   } finally {
     await harness.cleanup();
   }
@@ -255,6 +354,49 @@ test("POST /context_resolve returns 401 without authorization when apiKey is con
     });
 
     assert.equal(response.status, 401);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("POST /usage_ack returns 401 without authorization when apiKey is configured", async () => {
+  const harness = await createApiHarness("top-secret");
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/usage_ack`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({})
+    });
+
+    assert.equal(response.status, 401);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("POST /usage_ack returns 200 with auth and a valid payload", async () => {
+  const harness = await createApiHarness("top-secret");
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/usage_ack`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer top-secret",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        checkpoint_id: "checkpoint-1",
+        bundle_digest: "bundle-1",
+        sufficiency: "sufficient",
+        host_tier: "T2"
+      })
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ack: true });
   } finally {
     await harness.cleanup();
   }
@@ -344,4 +486,41 @@ test("context resolve HTTP handler returns 400 when followup omits prev_checkpoi
     String((response.body as { detail?: string }).detail),
     /prev_checkpoint_id is required for followup intent/
   );
+});
+
+test("usage.ack HTTP handler returns a 400 validation response for invalid input", async () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const handler = createUsageAckHttpHandler(createAckStore(db));
+    const response = {
+      statusCode: 200,
+      body: undefined as unknown,
+      status(code: number) {
+        this.statusCode = code;
+        return this;
+      },
+      json(payload: unknown) {
+        this.body = payload;
+        return this;
+      }
+    };
+
+    await handler({ body: {} } as never, response as never);
+
+    assert.equal(response.statusCode, 400);
+    assert.equal((response.body as { error?: string }).error, "ValidationError");
+  } finally {
+    db.close();
+  }
+});
+
+test("MCP server registers usage.ack", async () => {
+  const harness = createMcpHarness();
+
+  try {
+    assert.equal(typeof getRegisteredTools(harness.server)["usage.ack"]?.handler, "function");
+  } finally {
+    await harness.cleanup();
+  }
 });
