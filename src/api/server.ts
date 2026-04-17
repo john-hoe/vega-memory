@@ -14,6 +14,7 @@ import {
   createAuthMiddleware,
   getBearerToken,
   getRequestTenantId,
+  isAuthorizedRequest,
   matchesConfiguredApiKey
 } from "./auth.js";
 import { applyRawInboxMigration } from "../ingestion/raw-inbox.js";
@@ -114,6 +115,16 @@ export function createAPIServer(
   const factClaimService = new FactClaimService(activeServices.repository, config);
   const graphReportService = new GraphReportService(activeServices.repository);
   const archiveService = new ArchiveService(activeServices.repository, config);
+  const requireAuthorizedHttpRoute: express.RequestHandler = (req, res, next) => {
+    if (isAuthorizedRequest(req, res, config, activeServices.repository)) {
+      next();
+      return;
+    }
+
+    res.status(401).json({
+      error: "unauthorized"
+    });
+  };
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: createDefaultRegistry({
       repository: activeServices.repository,
@@ -190,13 +201,14 @@ export function createAPIServer(
 
     res.type("text/plain").send(await metrics.getMetrics());
   });
-  app.post("/ingest_event", createIngestEventHttpHandler(db));
-  app.post("/context_resolve", createContextResolveHttpHandler(retrievalOrchestrator));
   app.use(createOidcRouter(config, activeServices.repository));
   app.use(createAuthMiddleware(config, activeServices.repository));
   if (config.apiKey !== undefined) {
     app.use(createMcpRouter(activeServices, config));
   }
+  app.use(["/ingest_event", "/context_resolve"], requireAuthorizedHttpRoute);
+  app.post("/ingest_event", createIngestEventHttpHandler(db));
+  app.post("/context_resolve", createContextResolveHttpHandler(retrievalOrchestrator));
   app.use(
     createRouter({
       ...activeServices,

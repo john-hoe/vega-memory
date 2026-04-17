@@ -40,7 +40,7 @@ const runCli = (args: string[], env: NodeJS.ProcessEnv): string =>
     }
   });
 
-const createApiHarness = async (): Promise<{
+const createApiHarness = async (apiKey?: string): Promise<{
   baseUrl: string;
   cleanup(): Promise<void>;
 }> => {
@@ -54,7 +54,7 @@ const createApiHarness = async (): Promise<{
     shardingEnabled: false,
     backupRetentionDays: 7,
     apiPort: 0,
-    apiKey: undefined,
+    apiKey,
     mode: "server",
     serverUrl: undefined,
     cacheDbPath: join(tempDir, "cache.db"),
@@ -151,6 +151,42 @@ test("POST /ingest_event and POST /context_resolve are mounted on the HTTP API",
 
     assert.notEqual(ingestResponse.status, 404);
     assert.notEqual(contextResolveResponse.status, 404);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("POST /ingest_event returns 401 without authorization when apiKey is configured", async () => {
+  const harness = await createApiHarness("top-secret");
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/ingest_event`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({})
+    });
+
+    assert.equal(response.status, 401);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("POST /context_resolve returns 401 without authorization when apiKey is configured", async () => {
+  const harness = await createApiHarness("top-secret");
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/context_resolve`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({})
+    });
+
+    assert.equal(response.status, 401);
   } finally {
     await harness.cleanup();
   }
