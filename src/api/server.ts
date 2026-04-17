@@ -7,6 +7,9 @@ import type { VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
 import { GraphReportService } from "../core/graph-report.js";
+import { MemoryService } from "../core/memory.js";
+import { SessionService } from "../core/session.js";
+import { createShadowAwareRepository } from "../db/shadow-aware-repository.js";
 import {
   createAuthMiddleware,
   getBearerToken,
@@ -15,6 +18,7 @@ import {
 } from "./auth.js";
 import { applyRawInboxMigration } from "../ingestion/raw-inbox.js";
 import { createIngestEventHttpHandler } from "../ingestion/ingest-event-handler.js";
+import { createShadowWriter } from "../ingestion/shadow-writer.js";
 import { createMcpRouter } from "./mcp.js";
 import { createOidcRouter } from "./oidc.js";
 import { createRouter, type APIRouterServices } from "./routes.js";
@@ -83,23 +87,42 @@ export function createAPIServer(
   });
   const requestCounter = metrics.counter("http_requests_total", "Total HTTP requests", ["method", "path", "status"]);
   const requestLatency = metrics.histogram("http_request_duration_seconds", "HTTP request duration", [0.05, 0.1, 0.5, 1, 2, 5], ["method", "path"]);
-  const db = services.repository.db;
-  const factClaimService = new FactClaimService(services.repository, config);
-  const graphReportService = new GraphReportService(services.repository);
-  const archiveService = new ArchiveService(services.repository, config);
+  let activeServices = services;
+  let db = activeServices.repository.db;
+
+  if (!db.isPostgres) {
+    applyRawInboxMigration(db);
+    const shadowWrite = createShadowWriter({ db });
+    const activeRepository = createShadowAwareRepository(activeServices.repository, shadowWrite);
+    const activeMemoryService = new MemoryService(activeRepository, config);
+    const activeSessionService = new SessionService(
+      activeRepository,
+      activeMemoryService,
+      activeServices.recallService,
+      config
+    );
+
+    activeServices = {
+      ...activeServices,
+      repository: activeRepository,
+      memoryService: activeMemoryService,
+      sessionService: activeSessionService
+    };
+    db = activeRepository.db;
+  }
+
+  const factClaimService = new FactClaimService(activeServices.repository, config);
+  const graphReportService = new GraphReportService(activeServices.repository);
+  const archiveService = new ArchiveService(activeServices.repository, config);
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: createDefaultRegistry({
-      repository: services.repository,
+      repository: activeServices.repository,
       wikiSearch: searchWikiPages,
       factClaimService,
       graphReportService,
       archiveService
     })
   });
-
-  if (!db.isPostgres) {
-    applyRawInboxMigration(db);
-  }
 
   app.use(
     "/api/billing/webhook",
@@ -133,7 +156,7 @@ export function createAPIServer(
         method: req.method.toUpperCase(),
         path: metricsPath
       });
-      services.repository.logPerformance({
+      activeServices.repository.logPerformance({
         timestamp: new Date().toISOString(),
         tenant_id: getRequestTenantId(res),
         operation: `${req.method.toUpperCase()} ${req.path}`,
@@ -169,14 +192,14 @@ export function createAPIServer(
   });
   app.post("/ingest_event", createIngestEventHttpHandler(db));
   app.post("/context_resolve", createContextResolveHttpHandler(retrievalOrchestrator));
-  app.use(createOidcRouter(config, services.repository));
-  app.use(createAuthMiddleware(config, services.repository));
+  app.use(createOidcRouter(config, activeServices.repository));
+  app.use(createAuthMiddleware(config, activeServices.repository));
   if (config.apiKey !== undefined) {
-    app.use(createMcpRouter(services, config));
+    app.use(createMcpRouter(activeServices, config));
   }
   app.use(
     createRouter({
-      ...services,
+      ...activeServices,
       config
     })
   );

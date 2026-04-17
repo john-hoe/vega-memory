@@ -1,10 +1,11 @@
-import { v5 as uuidv5, validate as isUuid } from "uuid";
-
 import type { HostEventEnvelopeV1 } from "../core/contracts/envelope.js";
 import { HOST_EVENT_ENVELOPE_V1 } from "../core/contracts/envelope.js";
 import { createLogger } from "../core/logging/index.js";
 import type { DatabaseAdapter } from "../db/adapter.js";
+import { memoryToEnvelope } from "./memory-to-envelope.js";
 import { applyRawInboxMigration, insertRawEvent } from "./raw-inbox.js";
+
+export { VEGA_BACKFILL_NAMESPACE } from "./memory-to-envelope.js";
 
 export interface BackfillOptions {
   since?: string;
@@ -35,42 +36,7 @@ interface MemoryBackfillRow {
   source_context: string | null;
 }
 
-interface ParsedSourceContext {
-  session_id?: string;
-}
-
 const logger = createLogger({ name: "raw-inbox-backfill" });
-
-export const VEGA_BACKFILL_NAMESPACE = "7e6d9c8a-1b2c-4d3e-8f5a-0b1c2d3e4f5a";
-
-const parseJson = (value: string | null): unknown => {
-  if (value === null) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return value;
-  }
-};
-
-const parseSourceContext = (value: string | null): ParsedSourceContext | null => {
-  if (value === null) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (typeof parsed !== "object" || parsed === null) {
-      return null;
-    }
-
-    return parsed as ParsedSourceContext;
-  } catch {
-    return null;
-  }
-};
 
 const normalizeLimit = (value?: number): number => {
   if (value === undefined || !Number.isInteger(value) || value < 1) {
@@ -78,47 +44,6 @@ const normalizeLimit = (value?: number): number => {
   }
 
   return value;
-};
-
-const deriveEventId = (memory: Pick<MemoryBackfillRow, "id" | "created_at">): string => {
-  if (isUuid(memory.id)) {
-    return memory.id;
-  }
-
-  return uuidv5(`${memory.id}:${memory.created_at}`, VEGA_BACKFILL_NAMESPACE);
-};
-
-const mapMemoryToEnvelope = (
-  memory: MemoryBackfillRow,
-  defaultSurface: string
-): HostEventEnvelopeV1 => {
-  const sourceContext = parseSourceContext(memory.source_context);
-
-  return {
-    schema_version: "1.0",
-    event_id: deriveEventId(memory),
-    surface: defaultSurface as HostEventEnvelopeV1["surface"],
-    session_id: sourceContext?.session_id ?? `legacy-${memory.id}`,
-    thread_id: null,
-    project: memory.project ?? null,
-    cwd: null,
-    host_timestamp: memory.created_at,
-    role: "system",
-    event_type: "decision",
-    payload: {
-      memory_type: memory.type,
-      title: memory.title,
-      content: memory.content,
-      summary: memory.summary,
-      tags: parseJson(memory.tags)
-    },
-    safety: {
-      redacted: false,
-      categories: []
-    },
-    artifacts: [],
-    source_kind: "vega_memory"
-  };
 };
 
 export function backfillMemoriesToRawInbox(
@@ -174,7 +99,9 @@ export function backfillMemoriesToRawInbox(
   const defaultSurface = options.default_surface ?? "api";
 
   for (const row of rows) {
-    const envelope = mapMemoryToEnvelope(row, defaultSurface);
+    const envelope = memoryToEnvelope(row, {
+      default_surface: defaultSurface
+    });
     const parsed = HOST_EVENT_ENVELOPE_V1.safeParse(envelope);
 
     if (!parsed.success) {

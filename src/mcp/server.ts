@@ -25,12 +25,17 @@ import { DiagnoseService } from "../core/diagnose.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
 import { GraphReportService } from "../core/graph-report.js";
 import { getHealthReport } from "../core/health.js";
+import { MemoryService } from "../core/memory.js";
+import { RecallService } from "../core/recall.js";
+import { SessionService } from "../core/session.js";
 import { TopicService } from "../core/topic-service.js";
+import { createShadowAwareRepository } from "../db/shadow-aware-repository.js";
 import { Repository } from "../db/repository.js";
 import { ContentDistiller } from "../ingestion/distiller.js";
 import { ContentFetcher } from "../ingestion/fetcher.js";
 import { createIngestEventMcpTool } from "../ingestion/ingest-event-handler.js";
 import { applyRawInboxMigration } from "../ingestion/raw-inbox.js";
+import { createShadowWriter } from "../ingestion/shadow-writer.js";
 import { IngestionService } from "../ingestion/service.js";
 import { publishWikiPages } from "../publishing/service.js";
 import { createContextResolveMcpTool } from "../retrieval/context-resolve-handler.js";
@@ -536,44 +541,68 @@ export function createMCPServer({
     name: "vega-memory",
     version: "0.1.0"
   });
-  const diagnoseService = new DiagnoseService(repository, config);
-  const graphReportService = new GraphReportService(repository);
-  const topicService = new TopicService(repository, config);
-  const approvalService = new ConsolidationApprovalService(repository);
-  const rawArchiveService = archiveService ?? new ArchiveService(repository, config);
-  const claimsService = factClaimService ?? new FactClaimService(repository, config);
-  const retrievalArchiveService = new ArchiveService(repository, config);
-  const retrievalFactClaimService = new FactClaimService(repository, config);
+  let activeRepository = repository;
+  let activeMemoryService = memoryService;
+  let activeSessionService = sessionService;
+
+  if (!repository.db.isPostgres) {
+    applyRawInboxMigration(repository.db);
+    const shadowWrite = createShadowWriter({ db: repository.db });
+    activeRepository = createShadowAwareRepository(repository, shadowWrite);
+
+    if (memoryService instanceof MemoryService) {
+      activeMemoryService = new MemoryService(activeRepository, config);
+    }
+
+    if (sessionService instanceof SessionService) {
+      const sessionMemoryService =
+        activeMemoryService instanceof MemoryService
+          ? activeMemoryService
+          : new MemoryService(activeRepository, config);
+      activeSessionService = new SessionService(
+        activeRepository,
+        sessionMemoryService,
+        recallService as RecallService,
+        config
+      );
+    }
+  }
+
+  const diagnoseService = new DiagnoseService(activeRepository, config);
+  const graphReportService = new GraphReportService(activeRepository);
+  const topicService = new TopicService(activeRepository, config);
+  const approvalService = new ConsolidationApprovalService(activeRepository);
+  const rawArchiveService = archiveService ?? new ArchiveService(activeRepository, config);
+  const claimsService = factClaimService ?? new FactClaimService(activeRepository, config);
+  const retrievalArchiveService = new ArchiveService(activeRepository, config);
+  const retrievalFactClaimService = new FactClaimService(activeRepository, config);
   const observer = {
     enabled: config.observerEnabled,
     service: observerService
   };
-  const pageManager = new PageManager(repository);
-  const synthesisEngine = new SynthesisEngine(repository, pageManager, config);
+  const pageManager = new PageManager(activeRepository);
+  const synthesisEngine = new SynthesisEngine(activeRepository, pageManager, config);
   const crossReferenceService = new CrossReferenceService(pageManager);
   const contentFetcher = new ContentFetcher();
   const contentDistiller = new ContentDistiller(config);
-  if (!repository.db.isPostgres) {
-    applyRawInboxMigration(repository.db);
-  }
   const ingestionService = new IngestionService(
     contentFetcher,
     contentDistiller,
     pageManager,
-    memoryService,
+    activeMemoryService,
     synthesisEngine,
     config
   );
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: createDefaultRegistry({
-      repository,
+      repository: activeRepository,
       wikiSearch: searchWikiPages,
       factClaimService: retrievalFactClaimService,
       graphReportService,
       archiveService: retrievalArchiveService
     })
   });
-  const ingestEventTool = createIngestEventMcpTool(repository.db);
+  const ingestEventTool = createIngestEventMcpTool(activeRepository.db);
   const contextResolveTool = createContextResolveMcpTool(retrievalOrchestrator);
 
   server.tool(
@@ -724,7 +753,7 @@ export function createMCPServer({
       }
 
       return runTool(repository, "consolidation_report", args, observer, async () => {
-        const engine = new ConsolidationReportEngine(repository, config);
+        const engine = new ConsolidationReportEngine(activeRepository, config);
         registerDefaultConsolidationDetectors(engine);
         const result = engine.generateReport(args.project, args.tenant_id ?? undefined);
 
@@ -754,7 +783,7 @@ export function createMCPServer({
       }
 
       return runTool(repository, "consolidation_dashboard", args, observer, async () => {
-        const dashboard = new ConsolidationDashboardService(repository, config);
+        const dashboard = new ConsolidationDashboardService(activeRepository, config);
         const result = dashboard.generateDashboard(args.project, args.tenant_id ?? undefined);
 
         return {
@@ -787,7 +816,7 @@ export function createMCPServer({
       }
 
       return runTool(repository, "consolidation_run", args, observer, async () => {
-        const scheduler = new ConsolidationScheduler(repository, config);
+        const scheduler = new ConsolidationScheduler(activeRepository, config);
         const result = scheduler.run(args.project, args.tenant_id ?? undefined, {
           mode: args.mode,
           trigger: args.trigger
@@ -993,7 +1022,7 @@ export function createMCPServer({
     async (args) =>
       runTool(repository, "memory_store", args, observer, async () => {
         const { source_actor, source_client, ...storeArgs } = args;
-        const result = await memoryService.store({
+        const result = await activeMemoryService.store({
           ...storeArgs,
           project: args.project ?? "global",
           auditContext: MCP_AUDIT_CONTEXT,
@@ -1005,7 +1034,7 @@ export function createMCPServer({
             integration: "mcp"
           })
         });
-        const memory = repository.getMemory(result.id);
+        const memory = activeRepository.getMemory(result.id);
 
         return {
           result: {
@@ -1263,7 +1292,7 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "memory_update", args, observer, async () => {
-        await memoryService.update(
+        await activeMemoryService.update(
           args.id,
           {
             title: args.title,
@@ -1292,7 +1321,7 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "memory_delete", args, observer, async () => {
-        await memoryService.delete(args.id, MCP_AUDIT_CONTEXT);
+        await activeMemoryService.delete(args.id, MCP_AUDIT_CONTEXT);
 
         return {
           result: {
@@ -1455,7 +1484,7 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "session_start", args, observer, async () => {
-        const result = await sessionService.sessionStart(
+        const result = await activeSessionService.sessionStart(
           args.working_directory,
           args.task_hint,
           undefined,
@@ -1483,7 +1512,7 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "session_end", args, observer, async () => {
-        await sessionService.sessionEnd(
+        await activeSessionService.sessionEnd(
           args.project,
           args.summary,
           args.completed_tasks,
@@ -1508,7 +1537,7 @@ export function createMCPServer({
       runTool(repository, "memory_health", {}, observer, async () => {
         const result =
           healthProvider === undefined
-            ? await getHealthReport(repository, config)
+            ? await getHealthReport(activeRepository, config)
             : await healthProvider();
 
         return {
@@ -1653,7 +1682,7 @@ export function createMCPServer({
     },
     async (args) =>
       runTool(repository, "wiki_search", args, observer, async () => {
-        const result = searchWikiPages(repository, args);
+        const result = searchWikiPages(activeRepository, args);
 
         return {
           result,
