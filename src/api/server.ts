@@ -31,7 +31,11 @@ import { SentryStub } from "../monitoring/sentry.js";
 import { createContextResolveHttpHandler } from "../retrieval/context-resolve-handler.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
-import { createAckStore, createCheckpointStore } from "../usage/index.js";
+import {
+  createAckStore,
+  createCheckpointFailureStore,
+  createCheckpointStore
+} from "../usage/index.js";
 import { createUsageAckHttpHandler } from "../usage/usage-ack-handler.js";
 import { searchWikiPages } from "../wiki/search.js";
 
@@ -160,6 +164,7 @@ export function createAPIServer(
   };
   const checkpointStore = !db.isPostgres ? createCheckpointStore(db) : undefined;
   const ackStore = !db.isPostgres ? createAckStore(db) : undefined;
+  const checkpointFailureStore = !db.isPostgres ? createCheckpointFailureStore(db) : undefined;
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: createDefaultRegistry({
       repository: activeServices.repository,
@@ -168,7 +173,8 @@ export function createAPIServer(
       graphReportService,
       archiveService
     }),
-    checkpoint_store: checkpointStore
+    checkpoint_store: checkpointStore,
+    checkpoint_failure_store: checkpointFailureStore
   });
 
   app.use(

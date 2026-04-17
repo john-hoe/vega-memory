@@ -44,7 +44,11 @@ import { publishWikiPages } from "../publishing/service.js";
 import { createContextResolveMcpTool } from "../retrieval/context-resolve-handler.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
-import { createAckStore, createCheckpointStore } from "../usage/index.js";
+import {
+  createAckStore,
+  createCheckpointFailureStore,
+  createCheckpointStore
+} from "../usage/index.js";
 import { createUsageAckMcpTool } from "../usage/usage-ack-handler.js";
 import { CrossReferenceService } from "../wiki/cross-reference.js";
 import { PageManager } from "../wiki/page-manager.js";
@@ -625,6 +629,9 @@ export function createMCPServer({
   const ackStore = !activeRepository.db.isPostgres
     ? createAckStore(activeRepository.db)
     : undefined;
+  const checkpointFailureStore = !activeRepository.db.isPostgres
+    ? createCheckpointFailureStore(activeRepository.db)
+    : undefined;
   const observer = {
     enabled: config.observerEnabled,
     service: observerService
@@ -650,7 +657,8 @@ export function createMCPServer({
       graphReportService,
       archiveService: retrievalArchiveService
     }),
-    checkpoint_store: checkpointStore
+    checkpoint_store: checkpointStore,
+    checkpoint_failure_store: checkpointFailureStore
   });
   const ingestEventTool = createIngestEventMcpTool(activeRepository.db);
   const contextResolveTool = createContextResolveMcpTool(retrievalOrchestrator);

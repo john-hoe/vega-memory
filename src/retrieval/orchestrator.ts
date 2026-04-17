@@ -9,6 +9,7 @@ import { recordKey } from "../core/contracts/checkpoint-record.js";
 import type { IntentRequest } from "../core/contracts/intent.js";
 import type { Mode } from "../core/contracts/enums.js";
 import { createLogger, createTraceId } from "../core/logging/index.js";
+import type { CheckpointFailureStore } from "../usage/checkpoint-failure-store.js";
 import type { CheckpointStore } from "../usage/checkpoint-store.js";
 
 import { applyBudget, type BudgetConfig, DEFAULT_BUDGET_CONFIG } from "./budget.js";
@@ -16,6 +17,7 @@ import { assembleBundle } from "./bundler.js";
 import { getProfile } from "./profiles.js";
 import { rank, type RankerConfig, DEFAULT_RANKER_CONFIG } from "./ranker.js";
 import { createResolveCache, type ResolveCache } from "./resolve-cache.js";
+import { classifySufficiency } from "./sufficiency-classifier.js";
 import type { SourceRegistry } from "./sources/registry.js";
 import type { SourceSearchInput } from "./sources/types.js";
 
@@ -34,6 +36,7 @@ export interface OrchestratorConfig {
   budget_config?: BudgetConfig;
   resolve_cache?: ResolveCache;
   checkpoint_store?: CheckpointStore;
+  checkpoint_failure_store?: CheckpointFailureStore;
 }
 
 const logger = createLogger({ name: "retrieval-orchestrator" });
@@ -81,6 +84,7 @@ export class RetrievalOrchestrator {
   readonly #budgetConfig?: BudgetConfig;
   readonly #resolveCache: ResolveCache;
   readonly #checkpointStore?: CheckpointStore;
+  readonly #checkpointFailureStore?: CheckpointFailureStore;
 
   constructor(config: OrchestratorConfig) {
     this.#registry = config.registry;
@@ -88,6 +92,7 @@ export class RetrievalOrchestrator {
     this.#budgetConfig = config.budget_config;
     this.#resolveCache = config.resolve_cache ?? createResolveCache();
     this.#checkpointStore = config.checkpoint_store;
+    this.#checkpointFailureStore = config.checkpoint_failure_store;
   }
 
   #errorResponse(
@@ -113,6 +118,43 @@ export class RetrievalOrchestrator {
     };
   }
 
+  #recordFailure(input: {
+    checkpoint_id: string;
+    reason: string;
+    request: IntentRequest;
+    mode: Mode;
+    profile_used: string;
+    ranker_version: string;
+    payload: Record<string, unknown>;
+  }): void {
+    if (!this.#checkpointFailureStore) {
+      return;
+    }
+
+    try {
+      this.#checkpointFailureStore.put({
+        checkpoint_id: input.checkpoint_id,
+        reason: input.reason,
+        intent: input.request.intent,
+        surface: input.request.surface,
+        session_id: input.request.session_id,
+        project: input.request.project ?? null,
+        cwd: input.request.cwd ?? null,
+        query_hash: createQueryHash(input.request.query),
+        mode: input.mode,
+        profile_used: input.profile_used,
+        ranker_version: input.ranker_version,
+        payload: JSON.stringify(input.payload)
+      });
+    } catch (error) {
+      logger.warn("CheckpointFailureStore put failed", {
+        checkpoint_id: input.checkpoint_id,
+        reason: input.reason,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
   resolve(request: IntentRequest): ContextResolveResponse {
     if (request.intent !== "followup") {
       const cached = this.#resolveCache.get(request);
@@ -135,6 +177,17 @@ export class RetrievalOrchestrator {
         traceLogger.warn("Previous checkpoint unavailable for followup", {
           checkpoint_id,
           prev_checkpoint_id: request.prev_checkpoint_id
+        });
+        this.#recordFailure({
+          checkpoint_id,
+          reason: "prev_checkpoint_not_found",
+          request,
+          mode,
+          profile_used,
+          ranker_version,
+          payload: {
+            prev_checkpoint_id: request.prev_checkpoint_id ?? null
+          }
         });
         return this.#errorResponse(
           checkpoint_id,
@@ -175,10 +228,19 @@ export class RetrievalOrchestrator {
         budget.truncated_count,
         budget.total_tokens
       );
-      const sufficiency_hint =
-        budget.truncated_count === 0 && budget.budgeted.length >= profile.default_top_k
-          ? "likely_sufficient"
-          : "may_need_followup";
+      const classification = classifySufficiency({
+        profile,
+        budgeted_count: budget.budgeted.length,
+        truncated_count: budget.truncated_count
+      });
+      const sufficiency_hint = classification.hint;
+
+      traceLogger.info("Sufficiency classified", {
+        checkpoint_id,
+        hint: classification.hint,
+        rules_fired: classification.rules_fired,
+        classifier_version: classification.classifier_version
+      });
 
       traceLogger.info("Finished retrieval orchestration", {
         checkpoint_id,
@@ -241,6 +303,17 @@ export class RetrievalOrchestrator {
         session_id: request.session_id,
         profile_used,
         error: error instanceof Error ? error.message : String(error)
+      });
+      this.#recordFailure({
+        checkpoint_id,
+        reason: "resolve_failed",
+        request,
+        mode,
+        profile_used,
+        ranker_version,
+        payload: {
+          error: error instanceof Error ? error.message : String(error)
+        }
       });
 
       return this.#errorResponse(checkpoint_id, "resolve_failed", profile_used, ranker_version);

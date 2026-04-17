@@ -7,6 +7,7 @@ import { createResolveCache } from "../retrieval/resolve-cache.js";
 import { SourceRegistry, type SourceAdapter, type SourceRecord } from "../retrieval/index.js";
 import type { IntentRequest } from "../core/contracts/intent.js";
 import type { SourceKind } from "../core/contracts/enums.js";
+import type { CheckpointFailureRecord, CheckpointFailureStore } from "../usage/index.js";
 
 const UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -307,6 +308,98 @@ test("error bundles are never cached", () => {
   assert.equal(second.bundle_digest, "error");
   assert.notEqual(first.checkpoint_id, second.checkpoint_id);
   assert.equal(cache.size(), 0);
+});
+
+test("failed resolutions are recorded in the checkpoint failure store without changing the error response", () => {
+  const registry = {
+    searchMany() {
+      throw new Error("registry exploded");
+    }
+  } as unknown as SourceRegistry;
+  const failures: CheckpointFailureRecord[] = [];
+  const failureStore: CheckpointFailureStore = {
+    put(record) {
+      const stored = {
+        ...record,
+        id: `failure-${failures.length + 1}`,
+        occurred_at: failures.length + 1
+      };
+      failures.push(stored);
+      return stored;
+    },
+    listRecent() {
+      return [...failures];
+    },
+    size() {
+      return failures.length;
+    }
+  };
+  const orchestrator = new RetrievalOrchestrator({
+    registry,
+    checkpoint_failure_store: failureStore
+  });
+
+  const response = orchestrator.resolve(createRequest());
+
+  assert.equal(response.bundle_digest, "error");
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0]?.reason, "resolve_failed");
+  assert.equal(failures[0]?.session_id, "session-orchestrator");
+});
+
+test("missing followup checkpoints are recorded in the checkpoint failure store", () => {
+  const failures: CheckpointFailureRecord[] = [];
+  const failureStore: CheckpointFailureStore = {
+    put(record) {
+      const stored = {
+        ...record,
+        id: `failure-${failures.length + 1}`,
+        occurred_at: failures.length + 1
+      };
+      failures.push(stored);
+      return stored;
+    },
+    listRecent() {
+      return [...failures];
+    },
+    size() {
+      return failures.length;
+    }
+  };
+  const registry = createRegistry([
+    createFakeAdapter("vega_memory", [createRecord("vega_memory", "mem-1")]),
+    createFakeAdapter("candidate", [createRecord("candidate", "cand-1")]),
+    createFakeAdapter("wiki", [createRecord("wiki", "wiki-1")])
+  ]);
+  const checkpointStore = {
+    put() {},
+    get() {
+      return undefined;
+    },
+    evictExpired() {
+      return 0;
+    },
+    size() {
+      return 0;
+    }
+  };
+  const orchestrator = new RetrievalOrchestrator({
+    registry,
+    checkpoint_store: checkpointStore,
+    checkpoint_failure_store: failureStore
+  });
+
+  const response = orchestrator.resolve(
+    createRequest({
+      intent: "followup",
+      prev_checkpoint_id: "missing-checkpoint"
+    })
+  );
+
+  assert.equal(response.bundle_digest, "error");
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0]?.reason, "prev_checkpoint_not_found");
+  assert.match(failures[0]?.payload ?? "", /missing-checkpoint/u);
 });
 
 test("bootstrap profile searches more sources than lookup", () => {

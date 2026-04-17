@@ -58,6 +58,9 @@ const createThrowingAckStore = (): AckStore => ({
   get() {
     return undefined;
   },
+  countRecent() {
+    return 0;
+  },
   size() {
     return 0;
   }

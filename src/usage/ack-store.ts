@@ -8,12 +8,20 @@ export interface AckRecord {
   host_tier: HostTier;
   evidence: string | null;
   turn_elapsed_ms: number | null;
+  session_id: string | null;
   acked_at: number;
+}
+
+export interface AckCountFilter {
+  session_id: string;
+  sufficiency: Sufficiency;
+  since: number;
 }
 
 export interface AckStore {
   put(ack: Omit<AckRecord, "acked_at">): AckRecord;
   get(checkpoint_id: string): AckRecord | undefined;
+  countRecent(filter: AckCountFilter): number;
   size(): number;
 }
 
@@ -28,7 +36,12 @@ interface AckRow {
   host_tier: HostTier;
   evidence: string | null;
   turn_elapsed_ms: number | null;
+  session_id: string | null;
   acked_at: number;
+}
+
+interface TableInfoRow {
+  name: string;
 }
 
 export const USAGE_ACKS_TABLE = "usage_acks";
@@ -41,16 +54,28 @@ const ACK_STORE_DDL = `
     host_tier TEXT NOT NULL,
     evidence TEXT,
     turn_elapsed_ms INTEGER,
+    session_id TEXT,
     acked_at INTEGER NOT NULL
   )
 `;
 
 const ACK_STORE_INDEXES = [
-  `CREATE INDEX IF NOT EXISTS idx_usage_acks_sufficiency ON ${USAGE_ACKS_TABLE}(sufficiency, acked_at DESC)`
+  `CREATE INDEX IF NOT EXISTS idx_usage_acks_sufficiency ON ${USAGE_ACKS_TABLE}(sufficiency, acked_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_usage_acks_session_sufficiency ON ${USAGE_ACKS_TABLE}(session_id, sufficiency, acked_at DESC)`
 ] as const;
 
 export function applyAckStoreMigration(db: DatabaseAdapter): void {
   db.exec(ACK_STORE_DDL);
+  const columnNames = new Set(
+    db
+      .prepare<[], TableInfoRow>(`PRAGMA table_info(${USAGE_ACKS_TABLE})`)
+      .all()
+      .map((column) => column.name)
+  );
+
+  if (!columnNames.has("session_id")) {
+    db.exec(`ALTER TABLE ${USAGE_ACKS_TABLE} ADD COLUMN session_id TEXT`);
+  }
 
   for (const statement of ACK_STORE_INDEXES) {
     db.exec(statement);
@@ -65,7 +90,7 @@ export function createAckStore(
 
   const now = options.now ?? (() => Date.now());
   const putStatement = db.prepare<
-    [string, string, Sufficiency, HostTier, string | null, number | null, number],
+    [string, string, Sufficiency, HostTier, string | null, number | null, string | null, number],
     never
   >(
     `INSERT OR REPLACE INTO ${USAGE_ACKS_TABLE} (
@@ -75,8 +100,9 @@ export function createAckStore(
       host_tier,
       evidence,
       turn_elapsed_ms,
+      session_id,
       acked_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const getStatement = db.prepare<[string], AckRow>(
     `SELECT
@@ -86,9 +112,17 @@ export function createAckStore(
       host_tier,
       evidence,
       turn_elapsed_ms,
+      session_id,
       acked_at
     FROM ${USAGE_ACKS_TABLE}
     WHERE checkpoint_id = ?`
+  );
+  const countRecentStatement = db.prepare<[string, Sufficiency, number], { count: number }>(
+    `SELECT COUNT(*) as count
+    FROM ${USAGE_ACKS_TABLE}
+    WHERE session_id = ?
+      AND sufficiency = ?
+      AND acked_at >= ?`
   );
 
   return {
@@ -97,6 +131,7 @@ export function createAckStore(
         ...ack,
         evidence: ack.evidence ?? null,
         turn_elapsed_ms: ack.turn_elapsed_ms ?? null,
+        session_id: ack.session_id ?? null,
         acked_at: now()
       };
 
@@ -107,6 +142,7 @@ export function createAckStore(
         stored.host_tier,
         stored.evidence,
         stored.turn_elapsed_ms,
+        stored.session_id,
         stored.acked_at
       );
 
@@ -114,6 +150,13 @@ export function createAckStore(
     },
     get(checkpoint_id: string): AckRecord | undefined {
       return getStatement.get(checkpoint_id);
+    },
+    countRecent(filter: AckCountFilter): number {
+      return countRecentStatement.get(
+        filter.session_id,
+        filter.sufficiency,
+        filter.since
+      )?.count ?? 0;
     },
     size(): number {
       return db.get<{ count: number }>(

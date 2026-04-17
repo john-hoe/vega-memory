@@ -12,7 +12,8 @@ import type { CheckpointStore } from "./checkpoint-store.js";
 
 export type UsageAckDegradedReason =
   | "usage_ack_unavailable"
-  | "persist_failed";
+  | "persist_failed"
+  | "needs_followup_loop_limit";
 
 export interface UsageAckResponse {
   ack: true;
@@ -76,6 +77,7 @@ function createUsageAckInputSchema(): object {
 }
 
 const USAGE_ACK_INPUT_SCHEMA = createUsageAckInputSchema();
+const DEFAULT_LOOP_GUARD_WINDOW_MS = 1_800_000;
 
 const formatValidationDetail = (issues: { path: PropertyKey[]; message: string }[]): string =>
   issues
@@ -98,23 +100,57 @@ function buildUsageAckResponse(ack: UsageAck): UsageAckResponse {
   return { ack: true };
 }
 
+function resolveLoopGuardWindowMs(): number {
+  const envValue = Number.parseInt(process.env.VEGA_LOOP_GUARD_WINDOW_MS ?? "", 10);
+  return Number.isInteger(envValue) && envValue > 0
+    ? envValue
+    : DEFAULT_LOOP_GUARD_WINDOW_MS;
+}
+
 function processUsageAck(
   ack: UsageAck,
   ackStore: AckStore | undefined,
-  checkpointStore?: CheckpointStore
+  checkpointStore?: CheckpointStore,
+  now: () => number = Date.now
 ): UsageAckResponse {
-  const response = buildUsageAckResponse(ack);
+  const response = { ...buildUsageAckResponse(ack) };
+  const loopGuardWindowMs = resolveLoopGuardWindowMs();
+  let session_id: string | null = null;
+  let loopGuardFired = false;
 
   if (checkpointStore !== undefined) {
     try {
-      if (checkpointStore.get(ack.checkpoint_id) === undefined) {
+      const checkpoint = checkpointStore.get(ack.checkpoint_id);
+
+      if (checkpoint === undefined) {
         logger.warn("ack_for_unknown_checkpoint", {
           checkpoint_id: ack.checkpoint_id
         });
+      } else {
+        session_id = checkpoint.session_id;
       }
     } catch (error) {
       logger.warn("ack_checkpoint_lookup_failed", {
         checkpoint_id: ack.checkpoint_id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  if (
+    ack.sufficiency === "needs_followup" &&
+    session_id !== null &&
+    ackStore !== undefined
+  ) {
+    try {
+      loopGuardFired = ackStore.countRecent({
+        session_id,
+        sufficiency: "needs_followup",
+        since: now() - loopGuardWindowMs
+      }) >= 1;
+    } catch (error) {
+      logger.warn("loop_guard_query_failed", {
+        session_id,
         error: error instanceof Error ? error.message : String(error)
       });
     }
@@ -137,9 +173,9 @@ function processUsageAck(
       sufficiency: ack.sufficiency,
       host_tier: ack.host_tier,
       evidence: ack.evidence ?? null,
-      turn_elapsed_ms: ack.turn_elapsed_ms ?? null
+      turn_elapsed_ms: ack.turn_elapsed_ms ?? null,
+      session_id
     });
-    return response;
   } catch (error) {
     logger.warn("ack_persist_failed", {
       checkpoint_id: ack.checkpoint_id,
@@ -150,11 +186,19 @@ function processUsageAck(
       degraded: "persist_failed"
     };
   }
+
+  if (loopGuardFired) {
+    delete response.follow_up_hint;
+    response.degraded = "needs_followup_loop_limit";
+  }
+
+  return response;
 }
 
 export function createUsageAckMcpTool(
   ackStore: AckStore | undefined,
-  checkpointStore?: CheckpointStore
+  checkpointStore?: CheckpointStore,
+  now?: () => number
 ): UsageAckMcpTool {
   return {
     name: "usage.ack",
@@ -162,14 +206,15 @@ export function createUsageAckMcpTool(
     inputSchema: USAGE_ACK_INPUT_SCHEMA,
     async invoke(request: unknown): Promise<UsageAckResponse> {
       const parsed = USAGE_ACK_SCHEMA.parse(request);
-      return processUsageAck(parsed, ackStore, checkpointStore);
+      return processUsageAck(parsed, ackStore, checkpointStore, now);
     }
   };
 }
 
 export function createUsageAckHttpHandler(
   ackStore: AckStore | undefined,
-  checkpointStore?: CheckpointStore
+  checkpointStore?: CheckpointStore,
+  now?: () => number
 ): (req: Request, res: Response) => Promise<void> {
   return async (req: Request, res: Response): Promise<void> => {
     const parsed = USAGE_ACK_SCHEMA.safeParse(req.body);
@@ -182,6 +227,6 @@ export function createUsageAckHttpHandler(
       return;
     }
 
-    res.status(200).json(processUsageAck(parsed.data, ackStore, checkpointStore));
+    res.status(200).json(processUsageAck(parsed.data, ackStore, checkpointStore, now));
   };
 }
