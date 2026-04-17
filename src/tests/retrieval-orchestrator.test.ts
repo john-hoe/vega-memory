@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { LogRecord } from "../core/logging/index.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
+import { createResolveCache } from "../retrieval/resolve-cache.js";
 import { SourceRegistry, type SourceAdapter, type SourceRecord } from "../retrieval/index.js";
 import type { IntentRequest } from "../core/contracts/intent.js";
 import type { SourceKind } from "../core/contracts/enums.js";
@@ -118,20 +119,78 @@ test("happy path assembles a bundle and returns a fresh UUID checkpoint", () => 
   assert.equal(response.bundle.bundle_digest, response.bundle_digest);
 });
 
-test("the same request resolved twice produces different checkpoint ids", () => {
+test("the same request resolved twice within the TTL reuses the cached checkpoint", () => {
   const registry = createRegistry([
     createFakeAdapter("vega_memory", [createRecord("vega_memory", "mem-1")]),
     createFakeAdapter("wiki", [createRecord("wiki", "wiki-1")]),
     createFakeAdapter("fact_claim", [createRecord("fact_claim", "fact-1")])
   ]);
-  const orchestrator = new RetrievalOrchestrator({ registry });
+  let now = 0;
+  const cache = createResolveCache({
+    ttl_ms: 60_000,
+    now: () => now
+  });
+  const orchestrator = new RetrievalOrchestrator({
+    registry,
+    resolve_cache: cache
+  });
   const request = createRequest();
+
+  const first = orchestrator.resolve(request);
+  now = 59_999;
+  const second = orchestrator.resolve(request);
+
+  assert.equal(first.checkpoint_id, second.checkpoint_id);
+  assert.equal(first.bundle_digest, second.bundle_digest);
+  assert.equal(cache.size(), 1);
+});
+
+test("the same request resolved after the TTL expires receives a new checkpoint", () => {
+  const registry = createRegistry([
+    createFakeAdapter("vega_memory", [createRecord("vega_memory", "mem-1")]),
+    createFakeAdapter("wiki", [createRecord("wiki", "wiki-1")]),
+    createFakeAdapter("fact_claim", [createRecord("fact_claim", "fact-1")])
+  ]);
+  let now = 0;
+  const orchestrator = new RetrievalOrchestrator({
+    registry,
+    resolve_cache: createResolveCache({
+      ttl_ms: 60_000,
+      now: () => now
+    })
+  });
+  const request = createRequest();
+
+  const first = orchestrator.resolve(request);
+  now = 60_001;
+  const second = orchestrator.resolve(request);
+
+  assert.notEqual(first.checkpoint_id, second.checkpoint_id);
+});
+
+test("followup requests are never cached", () => {
+  const registry = createRegistry([
+    createFakeAdapter("vega_memory", [createRecord("vega_memory", "mem-1")]),
+    createFakeAdapter("candidate", [createRecord("candidate", "cand-1")]),
+    createFakeAdapter("wiki", [createRecord("wiki", "wiki-1")]),
+    createFakeAdapter("fact_claim", [createRecord("fact_claim", "fact-1")])
+  ]);
+  const cache = createResolveCache();
+  const orchestrator = new RetrievalOrchestrator({
+    registry,
+    resolve_cache: cache
+  });
+  const request = createRequest({
+    intent: "followup",
+    prev_checkpoint_id: "checkpoint-previous"
+  });
 
   const first = orchestrator.resolve(request);
   const second = orchestrator.resolve(request);
 
+  assert.notEqual(first.bundle_digest, "error");
   assert.notEqual(first.checkpoint_id, second.checkpoint_id);
-  assert.equal(first.bundle_digest, second.bundle_digest);
+  assert.equal(cache.size(), 0);
 });
 
 test("fatal registry failures degrade to an error bundle and emit an error log", () => {
@@ -154,6 +213,27 @@ test("fatal registry failures degrade to an error bundle and emit an error log",
   assert.ok(errorLog);
   assert.equal(typeof errorLog?.trace_id, "string");
   assert.match(errorLog?.message ?? "", /Retrieval orchestration failed/u);
+});
+
+test("error bundles are never cached", () => {
+  const registry = {
+    searchMany() {
+      throw new Error("registry exploded");
+    }
+  } as unknown as SourceRegistry;
+  const cache = createResolveCache();
+  const orchestrator = new RetrievalOrchestrator({
+    registry,
+    resolve_cache: cache
+  });
+
+  const first = orchestrator.resolve(createRequest());
+  const second = orchestrator.resolve(createRequest());
+
+  assert.equal(first.bundle_digest, "error");
+  assert.equal(second.bundle_digest, "error");
+  assert.notEqual(first.checkpoint_id, second.checkpoint_id);
+  assert.equal(cache.size(), 0);
 });
 
 test("bootstrap profile searches more sources than lookup", () => {
@@ -186,6 +266,7 @@ test("budget_override tokens shrink the final bundle", () => {
   const baseline = orchestrator.resolve(createRequest());
   const constrained = orchestrator.resolve(
     createRequest({
+      session_id: "session-orchestrator-constrained",
       budget_override: {
         tokens: 1
       }

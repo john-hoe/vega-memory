@@ -51,10 +51,12 @@ export function assembleBundle(
 ): BundleAssembly {
   const sections = buildSections(budgeted);
   const bundle_digest = createBundleDigest({
+    schema_version: "1.0",
     bundle_digest: "",
     sections
   });
   const bundle = BUNDLE_SCHEMA.parse({
+    schema_version: "1.0",
     bundle_digest,
     sections
   });

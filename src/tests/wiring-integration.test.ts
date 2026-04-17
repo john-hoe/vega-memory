@@ -9,6 +9,7 @@ import test from "node:test";
 import { createAPIServer } from "../api/server.js";
 import type { VegaConfig } from "../config.js";
 import { CompactService } from "../core/compact.js";
+import { INTENT_REQUEST_SCHEMA } from "../core/contracts/intent.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
@@ -113,6 +114,7 @@ test("ingest_event and context.resolve MCP factories expose the expected tool na
           checkpoint_id: "checkpoint-1",
           bundle_digest: "bundle-1",
           bundle: {
+            schema_version: "1.0",
             bundle_digest: "bundle-1",
             sections: []
           },
@@ -127,6 +129,39 @@ test("ingest_event and context.resolve MCP factories expose the expected tool na
     assert.equal(contextResolveTool.name, "context.resolve");
   } finally {
     db.close();
+  }
+});
+
+test("intent request schema requires prev_checkpoint_id only for followup", () => {
+  const followupWithoutPrev = INTENT_REQUEST_SCHEMA.safeParse({
+    intent: "followup",
+    surface: "codex",
+    session_id: "session-1",
+    project: "vega-memory",
+    cwd: "/Users/johnmacmini/workspace/vega-memory"
+  });
+  const followupWithPrev = INTENT_REQUEST_SCHEMA.safeParse({
+    intent: "followup",
+    surface: "codex",
+    session_id: "session-1",
+    project: "vega-memory",
+    cwd: "/Users/johnmacmini/workspace/vega-memory",
+    prev_checkpoint_id: "checkpoint-1"
+  });
+
+  assert.equal(followupWithoutPrev.success, false);
+  assert.equal(followupWithPrev.success, true);
+
+  for (const intent of ["lookup", "bootstrap", "evidence"] as const) {
+    const result = INTENT_REQUEST_SCHEMA.safeParse({
+      intent,
+      surface: "codex",
+      session_id: "session-1",
+      project: "vega-memory",
+      cwd: "/Users/johnmacmini/workspace/vega-memory"
+    });
+
+    assert.equal(result.success, true);
   }
 });
 
@@ -234,4 +269,45 @@ test("context resolve HTTP handler returns a 400 validation response for invalid
 
   assert.equal(response.statusCode, 400);
   assert.equal((response.body as { error?: string }).error, "ValidationError");
+});
+
+test("context resolve HTTP handler returns 400 when followup omits prev_checkpoint_id", async () => {
+  const handler = createContextResolveHttpHandler({
+    resolve() {
+      throw new Error("should not be called");
+    }
+  } as never);
+
+  const response = {
+    statusCode: 200,
+    body: undefined as unknown,
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload: unknown) {
+      this.body = payload;
+      return this;
+    }
+  };
+
+  await handler(
+    {
+      body: {
+        intent: "followup",
+        surface: "codex",
+        session_id: "session-1",
+        project: "vega-memory",
+        cwd: "/Users/johnmacmini/workspace/vega-memory"
+      }
+    } as never,
+    response as never
+  );
+
+  assert.equal(response.statusCode, 400);
+  assert.equal((response.body as { error?: string }).error, "ValidationError");
+  assert.match(
+    String((response.body as { detail?: string }).detail),
+    /prev_checkpoint_id is required for followup intent/
+  );
 });

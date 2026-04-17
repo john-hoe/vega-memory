@@ -21,6 +21,7 @@ export const BUNDLE_SECTION_SCHEMA = z.object({
 });
 
 export const BUNDLE_SCHEMA = z.object({
+  schema_version: z.literal("1.0"),
   bundle_digest: z.string(),
   sections: z.array(BUNDLE_SECTION_SCHEMA)
 });

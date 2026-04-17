@@ -37,6 +37,7 @@ function createBudgetedRecord(overrides: Partial<BudgetedRecord> = {}): Budgeted
 test("empty input produces an empty bundle with a digest", () => {
   const assembly = assembleBundle([], 0, 0);
 
+  assert.equal(assembly.bundle.schema_version, "1.0");
   assert.equal(typeof assembly.bundle_digest, "string");
   assert.ok(assembly.bundle_digest.length > 0);
   assert.deepEqual(assembly.bundle.sections, []);

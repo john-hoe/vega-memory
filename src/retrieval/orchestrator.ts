@@ -10,6 +10,7 @@ import { applyBudget, type BudgetConfig, DEFAULT_BUDGET_CONFIG } from "./budget.
 import { assembleBundle } from "./bundler.js";
 import { getProfile } from "./profiles.js";
 import { rank, type RankerConfig, DEFAULT_RANKER_CONFIG } from "./ranker.js";
+import { createResolveCache, type ResolveCache } from "./resolve-cache.js";
 import type { SourceRegistry } from "./sources/registry.js";
 import type { SourceSearchInput } from "./sources/types.js";
 
@@ -26,10 +27,12 @@ export interface OrchestratorConfig {
   registry: SourceRegistry;
   ranker_config?: RankerConfig;
   budget_config?: BudgetConfig;
+  resolve_cache?: ResolveCache;
 }
 
 const logger = createLogger({ name: "retrieval-orchestrator" });
 const ERROR_BUNDLE = BUNDLE_SCHEMA.parse({
+  schema_version: "1.0",
   bundle_digest: "error",
   sections: []
 });
@@ -66,14 +69,23 @@ export class RetrievalOrchestrator {
   readonly #registry: SourceRegistry;
   readonly #rankerConfig?: RankerConfig;
   readonly #budgetConfig?: BudgetConfig;
+  readonly #resolveCache: ResolveCache;
 
   constructor(config: OrchestratorConfig) {
     this.#registry = config.registry;
     this.#rankerConfig = config.ranker_config;
     this.#budgetConfig = config.budget_config;
+    this.#resolveCache = config.resolve_cache ?? createResolveCache();
   }
 
   resolve(request: IntentRequest): ContextResolveResponse {
+    if (request.intent !== "followup") {
+      const cached = this.#resolveCache.get(request);
+      if (cached !== undefined) {
+        return cached;
+      }
+    }
+
     const checkpoint_id = uuidv4();
     const traceLogger = logger.withTraceId(createTraceId());
     const profile_used = request.intent;
@@ -121,7 +133,7 @@ export class RetrievalOrchestrator {
         truncated_count: budget.truncated_count
       });
 
-      return {
+      const response: ContextResolveResponse = {
         checkpoint_id,
         bundle_digest: assembly.bundle_digest,
         bundle: assembly.bundle,
@@ -129,6 +141,12 @@ export class RetrievalOrchestrator {
         profile_used: profile.intent,
         ranker_version
       };
+
+      if (request.intent !== "followup" && response.bundle_digest !== "error") {
+        this.#resolveCache.set(request, response);
+      }
+
+      return response;
     } catch (error) {
       traceLogger.error("Retrieval orchestration failed", {
         intent: request.intent,

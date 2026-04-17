@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 
-import { createDefaultEnvelopeDispatcher } from "../core/contracts/schema-version.js";
+import { createDefaultBundleDispatcher, createDefaultEnvelopeDispatcher } from "../core/contracts/schema-version.js";
 
 const createValidEnvelope = (): Record<string, unknown> => ({
   schema_version: "1.0",
@@ -61,5 +61,34 @@ describe("schema version dispatcher", () => {
     });
 
     assert.equal(result.success, false);
+  });
+});
+
+describe("bundle schema version dispatcher", () => {
+  it("dispatches a valid default bundle", () => {
+    const dispatcher = createDefaultBundleDispatcher();
+    const input = {
+      schema_version: "1.0",
+      bundle_digest: "bundle-1",
+      sections: []
+    };
+
+    const result = dispatcher.dispatch(input);
+
+    assert.equal(result.version, "1.0");
+    assert.deepEqual(result.data, input);
+  });
+
+  it("throws when bundle schema_version is missing", () => {
+    const dispatcher = createDefaultBundleDispatcher();
+
+    assert.throws(
+      () =>
+        dispatcher.dispatch({
+          bundle_digest: "bundle-1",
+          sections: []
+        }),
+      /schema_version/
+    );
   });
 });
