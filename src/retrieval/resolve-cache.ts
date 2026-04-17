@@ -23,24 +23,70 @@ interface ResolveCacheEntry {
 
 const DEFAULT_TTL_MS = 60_000;
 
+type CanonicalValue =
+  | null
+  | boolean
+  | number
+  | string
+  | CanonicalValue[]
+  | { [key: string]: CanonicalValue };
+
 function resolveMode(request: IntentRequest): IntentRequest["mode"] {
   return request.mode ?? "L1";
 }
 
-function createQueryHash(query: string | undefined): string {
-  return createHash("sha256").update(query ?? "").digest("hex");
+function createQueryHash(query: string): string {
+  return createHash("sha256").update(query).digest("hex");
+}
+
+function canonicalize(value: unknown): CanonicalValue | undefined {
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => canonicalize(entry))
+      .filter((entry): entry is CanonicalValue => entry !== undefined);
+  }
+
+  if (typeof value !== "object") {
+    return undefined;
+  }
+
+  const canonical: Record<string, CanonicalValue> = {};
+
+  for (const [key, entry] of Object.entries(value).sort(([left], [right]) => left.localeCompare(right))) {
+    const normalized = canonicalize(entry);
+
+    if (normalized !== undefined) {
+      canonical[key] = normalized;
+    }
+  }
+
+  return canonical;
 }
 
 export function cacheKey(request: IntentRequest): string {
-  const canonical = JSON.stringify({
+  const canonical = canonicalize({
+    budget_override: request.budget_override ?? null,
+    cwd: request.cwd,
     intent: request.intent,
-    surface: request.surface,
-    session_id: request.session_id,
+    mode: resolveMode(request),
+    project: request.project,
     query_hash: createQueryHash(request.query),
-    mode: resolveMode(request)
+    session_id: request.session_id,
+    surface: request.surface
   });
 
-  return createHash("sha256").update(canonical).digest("hex").slice(0, 16);
+  return createHash("sha256")
+    .update(JSON.stringify(canonical))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 export function createResolveCache(options: ResolveCacheOptions = {}): ResolveCache {

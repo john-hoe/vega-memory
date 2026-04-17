@@ -145,6 +145,79 @@ test("the same request resolved twice within the TTL reuses the cached checkpoin
   assert.equal(cache.size(), 1);
 });
 
+test("requests with different project values do not reuse cached checkpoints", () => {
+  const registry = createRegistry([
+    createFakeAdapter("vega_memory", [createRecord("vega_memory", "mem-1")]),
+    createFakeAdapter("wiki", [createRecord("wiki", "wiki-1")]),
+    createFakeAdapter("fact_claim", [createRecord("fact_claim", "fact-1")])
+  ]);
+  const cache = createResolveCache();
+  const orchestrator = new RetrievalOrchestrator({
+    registry,
+    resolve_cache: cache
+  });
+
+  const first = orchestrator.resolve(createRequest());
+  const second = orchestrator.resolve(
+    createRequest({
+      project: "vega-memory-alt"
+    })
+  );
+
+  assert.notEqual(first.checkpoint_id, second.checkpoint_id);
+  assert.equal(cache.size(), 2);
+});
+
+test("requests with different cwd values do not reuse cached checkpoints", () => {
+  const registry = createRegistry([
+    createFakeAdapter("vega_memory", [createRecord("vega_memory", "mem-1")]),
+    createFakeAdapter("wiki", [createRecord("wiki", "wiki-1")]),
+    createFakeAdapter("fact_claim", [createRecord("fact_claim", "fact-1")])
+  ]);
+  const cache = createResolveCache();
+  const orchestrator = new RetrievalOrchestrator({
+    registry,
+    resolve_cache: cache
+  });
+
+  const first = orchestrator.resolve(createRequest());
+  const second = orchestrator.resolve(
+    createRequest({
+      cwd: "/Users/johnmacmini/workspace/vega-memory-alt"
+    })
+  );
+
+  assert.notEqual(first.checkpoint_id, second.checkpoint_id);
+  assert.equal(cache.size(), 2);
+});
+
+test("requests with different budget overrides do not reuse cached checkpoints", () => {
+  const largeContent = "x".repeat(320);
+  const registry = createRegistry([
+    createFakeAdapter("vega_memory", [createRecord("vega_memory", "mem-1", largeContent)]),
+    createFakeAdapter("wiki", [createRecord("wiki", "wiki-1", largeContent)]),
+    createFakeAdapter("fact_claim", [createRecord("fact_claim", "fact-1", largeContent)])
+  ]);
+  const cache = createResolveCache();
+  const orchestrator = new RetrievalOrchestrator({
+    registry,
+    resolve_cache: cache
+  });
+
+  const baseline = orchestrator.resolve(createRequest());
+  const constrained = orchestrator.resolve(
+    createRequest({
+      budget_override: {
+        tokens: 1
+      }
+    })
+  );
+
+  assert.notEqual(baseline.checkpoint_id, constrained.checkpoint_id);
+  assert.ok(countBundleRecords(baseline) > countBundleRecords(constrained));
+  assert.equal(cache.size(), 2);
+});
+
 test("the same request resolved after the TTL expires receives a new checkpoint", () => {
   const registry = createRegistry([
     createFakeAdapter("vega_memory", [createRecord("vega_memory", "mem-1")]),
