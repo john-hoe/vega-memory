@@ -10,7 +10,9 @@ export const INTENT_REQUEST_SCHEMA = z
   .object({
     intent: z.enum(INTENTS),
     mode: z.enum(MODES).default("L1"),
-    query: z.string().optional(),
+    // TODO(Wave 5, issue #29): relax to optional once source adapters support queryless
+    // browsing via listRecent()-style retrieval instead of empty-query short-circuiting.
+    query: z.string().min(1),
     surface: z.enum(SURFACES),
     session_id: z.string(),
     project: z.string().nullable(),

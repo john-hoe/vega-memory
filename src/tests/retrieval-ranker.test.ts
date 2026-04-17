@@ -45,22 +45,6 @@ test("higher source prior wins when raw scores match", () => {
   assert.ok((ranked[0]?.final_score ?? 0) > (ranked[1]?.final_score ?? 0));
 });
 
-test("host_memory_file score respects the configured floor", () => {
-  const ranked = rank(
-    [createRecord({ id: "host-1", source_kind: "host_memory_file", raw_score: 0 })],
-    request,
-    {
-      source_priors: {
-        host_memory_file: 0
-      },
-      host_memory_file_floor: 0.42,
-      score_version: "v1.0"
-    }
-  );
-
-  assert.equal(ranked[0]?.final_score, 0.42);
-});
-
 test("results are returned in descending final_score order", () => {
   const ranked = rank(
     [
@@ -77,13 +61,10 @@ test("results are returned in descending final_score order", () => {
   );
 });
 
-test("score breakdown exposes all four component fields", () => {
+test("score breakdown only exposes signals the ranker actually computes", () => {
   const [ranked] = rank([createRecord({ id: "fact-1", source_kind: "fact_claim" })], request);
 
-  assert.deepEqual(Object.keys(ranked?.score_breakdown ?? {}).sort(), [
-    "base",
-    "recency",
-    "safety_penalty",
-    "source_prior"
-  ]);
+  assert.deepEqual(Object.keys(ranked?.score_breakdown ?? {}).sort(), ["base", "source_prior"]);
+  assert.equal("recency" in (ranked?.score_breakdown ?? {}), false);
+  assert.equal("safety_penalty" in (ranked?.score_breakdown ?? {}), false);
 });

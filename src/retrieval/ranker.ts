@@ -10,14 +10,11 @@ export interface RankedRecord extends SourceRecord {
   score_breakdown: {
     base: number;
     source_prior: number;
-    recency: number;
-    safety_penalty: number;
   };
 }
 
 export interface RankerConfig {
   source_priors: Partial<Record<SourceKind, number>>;
-  host_memory_file_floor: number;
   score_version: string;
 }
 
@@ -31,7 +28,6 @@ export const DEFAULT_RANKER_CONFIG: RankerConfig = {
     candidate: 0.4,
     host_memory_file: 0.3
   },
-  host_memory_file_floor: 0.15,
   score_version: "v1.0"
 };
 
@@ -46,8 +42,8 @@ function mergeConfig(config?: RankerConfig): RankerConfig {
       ...DEFAULT_RANKER_CONFIG.source_priors,
       ...(config?.source_priors ?? {})
     },
-    host_memory_file_floor:
-      config?.host_memory_file_floor ?? DEFAULT_RANKER_CONFIG.host_memory_file_floor,
+    // TODO(Wave 5, issue #32): re-introduce host_memory_file-specific ranker config
+    // when the adapter returns real records instead of remaining a disabled stub.
     score_version: config?.score_version ?? DEFAULT_RANKER_CONFIG.score_version
   };
 }

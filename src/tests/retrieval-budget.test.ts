@@ -22,9 +22,7 @@ function createRankedRecord(overrides: Partial<RankedRecord> = {}): RankedRecord
     final_score: 0.8,
     score_breakdown: {
       base: 0.7,
-      source_prior: 0.5,
-      recency: 1,
-      safety_penalty: 0
+      source_prior: 0.5
     },
     ...overrides
   };
@@ -87,7 +85,7 @@ test("tiny budgets downgrade records to references when that is the only fit", (
   assert.equal(result.truncated_count, 2);
 });
 
-test("host_memory_file reserve pulls back at least one record when it was initially crowded out", () => {
+test("manual host_memory_file reserve config still pulls back a record when explicitly enabled", () => {
   const crowded = createRankedRecord({
     id: "crowded",
     source_kind: "vega_memory",

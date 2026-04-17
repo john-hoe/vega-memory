@@ -12,7 +12,9 @@ export interface IntentProfile {
 
 export const BOOTSTRAP_PROFILE: IntentProfile = {
   intent: "bootstrap",
-  default_sources: ["vega_memory", "wiki", "fact_claim", "graph", "host_memory_file", "archive"],
+  // TODO(Wave 5, issue #32): re-add "host_memory_file" to bootstrap/lookup profiles
+  // when HostMemoryFileAdapter (P8-028) is implemented.
+  default_sources: ["vega_memory", "wiki", "fact_claim", "graph", "archive"],
   default_depth: "standard",
   default_top_k: 5,
   description: "Session bootstrap recall across promoted, documentary, and archival sources."

@@ -135,6 +135,7 @@ test("ingest_event and context.resolve MCP factories expose the expected tool na
 test("intent request schema requires prev_checkpoint_id only for followup", () => {
   const followupWithoutPrev = INTENT_REQUEST_SCHEMA.safeParse({
     intent: "followup",
+    query: "checkpoint followup",
     surface: "codex",
     session_id: "session-1",
     project: "vega-memory",
@@ -142,6 +143,7 @@ test("intent request schema requires prev_checkpoint_id only for followup", () =
   });
   const followupWithPrev = INTENT_REQUEST_SCHEMA.safeParse({
     intent: "followup",
+    query: "checkpoint followup",
     surface: "codex",
     session_id: "session-1",
     project: "vega-memory",
@@ -155,6 +157,7 @@ test("intent request schema requires prev_checkpoint_id only for followup", () =
   for (const intent of ["lookup", "bootstrap", "evidence"] as const) {
     const result = INTENT_REQUEST_SCHEMA.safeParse({
       intent,
+      query: `${intent} query`,
       surface: "codex",
       session_id: "session-1",
       project: "vega-memory",
@@ -163,6 +166,36 @@ test("intent request schema requires prev_checkpoint_id only for followup", () =
 
     assert.equal(result.success, true);
   }
+});
+
+test("intent request schema requires a non-empty query", () => {
+  const missingQuery = INTENT_REQUEST_SCHEMA.safeParse({
+    intent: "lookup",
+    surface: "codex",
+    session_id: "session-1",
+    project: "vega-memory",
+    cwd: "/Users/johnmacmini/workspace/vega-memory"
+  });
+  const emptyQuery = INTENT_REQUEST_SCHEMA.safeParse({
+    intent: "lookup",
+    query: "",
+    surface: "codex",
+    session_id: "session-1",
+    project: "vega-memory",
+    cwd: "/Users/johnmacmini/workspace/vega-memory"
+  });
+  const validQuery = INTENT_REQUEST_SCHEMA.safeParse({
+    intent: "lookup",
+    query: "SQLite backup evidence",
+    surface: "codex",
+    session_id: "session-1",
+    project: "vega-memory",
+    cwd: "/Users/johnmacmini/workspace/vega-memory"
+  });
+
+  assert.equal(missingQuery.success, false);
+  assert.equal(emptyQuery.success, false);
+  assert.equal(validQuery.success, true);
 });
 
 test("POST /ingest_event and POST /context_resolve are mounted on the HTTP API", async () => {
@@ -295,6 +328,7 @@ test("context resolve HTTP handler returns 400 when followup omits prev_checkpoi
     {
       body: {
         intent: "followup",
+        query: "checkpoint followup",
         surface: "codex",
         session_id: "session-1",
         project: "vega-memory",

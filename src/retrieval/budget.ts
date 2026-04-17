@@ -17,7 +17,9 @@ export const DEFAULT_BUDGET_CONFIG: BudgetConfig = {
     L2: 6000,
     L3: 12000
   },
-  host_memory_file_reserved: 200
+  // TODO(Wave 5, issue #32): raise host_memory_file_reserved when the adapter provides
+  // real records and the reserve path should become active by default again.
+  host_memory_file_reserved: 0
 };
 
 export type { LadderLevel };

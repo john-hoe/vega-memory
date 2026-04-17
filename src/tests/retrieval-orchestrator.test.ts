@@ -251,7 +251,7 @@ test("bootstrap profile searches more sources than lookup", () => {
   const bootstrapResponse = orchestrator.resolve(createRequest({ intent: "bootstrap" }));
 
   assert.equal(lookupResponse.bundle.sections.length, 3);
-  assert.equal(bootstrapResponse.bundle.sections.length, 6);
+  assert.equal(bootstrapResponse.bundle.sections.length, 5);
 });
 
 test("budget_override tokens shrink the final bundle", () => {
