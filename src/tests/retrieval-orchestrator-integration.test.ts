@@ -5,8 +5,16 @@ import { SOURCE_KINDS } from "../core/contracts/enums.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 
+const createMissingDeps = () => ({
+  repository: undefined,
+  wikiSearch: undefined,
+  factClaimService: undefined,
+  graphReportService: undefined,
+  archiveService: undefined
+});
+
 test("createDefaultRegistry registers every source kind and falls back to disabled stubs", () => {
-  const registry = createDefaultRegistry({});
+  const registry = createDefaultRegistry(createMissingDeps());
 
   assert.deepEqual(
     registry
@@ -26,7 +34,7 @@ test("createDefaultRegistry registers every source kind and falls back to disabl
 });
 
 test("orchestrator resolves safely against the default fallback registry", () => {
-  const registry = createDefaultRegistry({});
+  const registry = createDefaultRegistry(createMissingDeps());
   const orchestrator = new RetrievalOrchestrator({ registry });
 
   const response = orchestrator.resolve({

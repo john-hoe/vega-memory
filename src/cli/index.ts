@@ -31,6 +31,7 @@ import { registerOpenClawCommands } from "./commands/openclaw.js";
 import { registerQualityCommand } from "./commands/quality.js";
 import { registerRecallCommand } from "./commands/recall.js";
 import { registerReindexCommand } from "./commands/reindex.js";
+import { createReplayCommand } from "./commands/replay.js";
 import { registerRSSCommands } from "./commands/rss.js";
 import { registerScreenshotCommand } from "./commands/screenshot.js";
 import { registerSessionCommands } from "./commands/session.js";
@@ -221,6 +222,7 @@ async function main(): Promise<void> {
   );
   registerWhiteLabelCommand(program, whiteLabelConfig);
   registerOpenClawCommands(program, openClawClient);
+  program.addCommand(createReplayCommand());
 
   try {
     await program.parseAsync(process.argv);

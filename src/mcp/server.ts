@@ -12,6 +12,8 @@ import {
   isFactClaimsEnabled,
   type VegaConfig
 } from "../config.js";
+import { HOST_EVENT_ENVELOPE_V1 } from "../core/contracts/envelope.js";
+import { INTENT_REQUEST_SCHEMA } from "../core/contracts/intent.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { ConsolidationApprovalService } from "../core/consolidation-approval.js";
 import { ConsolidationDashboardService } from "../core/consolidation-dashboard.js";
@@ -27,8 +29,13 @@ import { TopicService } from "../core/topic-service.js";
 import { Repository } from "../db/repository.js";
 import { ContentDistiller } from "../ingestion/distiller.js";
 import { ContentFetcher } from "../ingestion/fetcher.js";
+import { createIngestEventMcpTool } from "../ingestion/ingest-event-handler.js";
+import { applyRawInboxMigration } from "../ingestion/raw-inbox.js";
 import { IngestionService } from "../ingestion/service.js";
 import { publishWikiPages } from "../publishing/service.js";
+import { createContextResolveMcpTool } from "../retrieval/context-resolve-handler.js";
+import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
+import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
 import { CrossReferenceService } from "../wiki/cross-reference.js";
 import { PageManager } from "../wiki/page-manager.js";
 import { reviewWikiPage, WIKI_REVIEW_ACTIONS } from "../wiki/review.js";
@@ -535,6 +542,8 @@ export function createMCPServer({
   const approvalService = new ConsolidationApprovalService(repository);
   const rawArchiveService = archiveService ?? new ArchiveService(repository, config);
   const claimsService = factClaimService ?? new FactClaimService(repository, config);
+  const retrievalArchiveService = new ArchiveService(repository, config);
+  const retrievalFactClaimService = new FactClaimService(repository, config);
   const observer = {
     enabled: config.observerEnabled,
     service: observerService
@@ -544,6 +553,9 @@ export function createMCPServer({
   const crossReferenceService = new CrossReferenceService(pageManager);
   const contentFetcher = new ContentFetcher();
   const contentDistiller = new ContentDistiller(config);
+  if (!repository.db.isPostgres) {
+    applyRawInboxMigration(repository.db);
+  }
   const ingestionService = new IngestionService(
     contentFetcher,
     contentDistiller,
@@ -552,6 +564,17 @@ export function createMCPServer({
     synthesisEngine,
     config
   );
+  const retrievalOrchestrator = new RetrievalOrchestrator({
+    registry: createDefaultRegistry({
+      repository,
+      wikiSearch: searchWikiPages,
+      factClaimService: retrievalFactClaimService,
+      graphReportService,
+      archiveService: retrievalArchiveService
+    })
+  });
+  const ingestEventTool = createIngestEventMcpTool(repository.db);
+  const contextResolveTool = createContextResolveMcpTool(retrievalOrchestrator);
 
   server.tool(
     "memory_graph",
@@ -1750,6 +1773,40 @@ export function createMCPServer({
           args.action,
           args.content
         );
+
+        return {
+          result,
+          resultCount: 1
+        };
+      })
+  );
+
+  server.registerTool(
+    ingestEventTool.name,
+    {
+      description: ingestEventTool.description,
+      inputSchema: HOST_EVENT_ENVELOPE_V1.shape
+    },
+    async (args) =>
+      runTool(repository, ingestEventTool.name, args, observer, async () => {
+        const result = await ingestEventTool.invoke(args);
+
+        return {
+          result,
+          resultCount: 1
+        };
+      })
+  );
+
+  server.registerTool(
+    contextResolveTool.name,
+    {
+      description: contextResolveTool.description,
+      inputSchema: INTENT_REQUEST_SCHEMA.shape
+    },
+    async (args) =>
+      runTool(repository, contextResolveTool.name, args, observer, async () => {
+        const result = await contextResolveTool.invoke(args);
 
         return {
           result,

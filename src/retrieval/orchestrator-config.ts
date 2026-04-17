@@ -1,9 +1,10 @@
 import { ArchiveService } from "../core/archive-service.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
-import { KnowledgeGraphService } from "../core/knowledge-graph.js";
+import { GraphReportService } from "../core/graph-report.js";
 import { createLogger } from "../core/logging/index.js";
 import { Repository } from "../db/repository.js";
 import type { SourceKind } from "../core/contracts/enums.js";
+import { searchWikiPages } from "../wiki/search.js";
 
 import {
   createArchiveSource,
@@ -18,10 +19,11 @@ import { SourceRegistry } from "./sources/registry.js";
 import type { SourceAdapter } from "./sources/types.js";
 
 export interface DefaultRegistryDependencies {
-  repository?: Repository;
-  fact_claim_service?: FactClaimService;
-  knowledge_graph_service?: KnowledgeGraphService;
-  archive_service?: ArchiveService;
+  repository: Repository | undefined;
+  wikiSearch: typeof searchWikiPages | undefined;
+  factClaimService: FactClaimService | undefined;
+  graphReportService: GraphReportService | undefined;
+  archiveService: ArchiveService | undefined;
 }
 
 const logger = createLogger({ name: "retrieval-orchestrator-config" });
@@ -65,24 +67,54 @@ function resolveAdapter<Dependency>(
 
 export function createDefaultRegistry(deps: DefaultRegistryDependencies): SourceRegistry {
   const registry = new SourceRegistry();
+  const wikiSourceDependency =
+    deps.repository === undefined || deps.wikiSearch === undefined
+      ? undefined
+      : {
+          repository: deps.repository,
+          wikiSearch: deps.wikiSearch
+        };
 
   registry.register(
     resolveAdapter("vega_memory", "promoted-memory", deps.repository, createPromotedMemorySource)
   );
   registry.register(createCandidateMemorySource());
-  registry.register(resolveAdapter("wiki", "wiki", deps.repository, createWikiSource));
   registry.register(
-    resolveAdapter("fact_claim", "fact-claim", deps.fact_claim_service, createFactClaimSource)
+    resolveAdapter("wiki", "wiki", wikiSourceDependency, ({ repository }) => {
+      return createWikiSource(repository);
+    })
   );
   registry.register(
-    resolveAdapter("graph", "graph", deps.knowledge_graph_service, (knowledgeGraphService) =>
-      createGraphSource(knowledgeGraphService)
+    resolveAdapter("fact_claim", "fact-claim", deps.factClaimService, createFactClaimSource)
+  );
+  registry.register(
+    resolveAdapter("graph", "graph", deps.graphReportService, (graphReportService) =>
+      createGraphSource(resolveGraphSourceDependency(graphReportService))
     )
   );
   registry.register(
-    resolveAdapter("archive", "archive", deps.archive_service, createArchiveSource)
+    resolveAdapter("archive", "archive", deps.archiveService, createArchiveSource)
   );
   registry.register(createHostMemoryFileSource());
 
   return registry;
+}
+
+function resolveGraphSourceDependency(
+  graphReportService: GraphReportService
+): Parameters<typeof createGraphSource>[0] {
+  const knowledgeGraphService = Reflect.get(
+    graphReportService as object,
+    "knowledgeGraphService"
+  );
+
+  if (
+    typeof knowledgeGraphService !== "object" ||
+    knowledgeGraphService === null ||
+    typeof Reflect.get(knowledgeGraphService as object, "getNeighbors") !== "function"
+  ) {
+    throw new Error("GraphReportService is missing a usable knowledge graph service");
+  }
+
+  return knowledgeGraphService as Parameters<typeof createGraphSource>[0];
 }

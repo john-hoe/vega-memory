@@ -4,18 +4,27 @@ import type { AddressInfo } from "node:net";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 
 import type { VegaConfig } from "../config.js";
+import { ArchiveService } from "../core/archive-service.js";
+import { FactClaimService } from "../core/fact-claim-service.js";
+import { GraphReportService } from "../core/graph-report.js";
 import {
   createAuthMiddleware,
   getBearerToken,
   getRequestTenantId,
   matchesConfiguredApiKey
 } from "./auth.js";
+import { applyRawInboxMigration } from "../ingestion/raw-inbox.js";
+import { createIngestEventHttpHandler } from "../ingestion/ingest-event-handler.js";
 import { createMcpRouter } from "./mcp.js";
 import { createOidcRouter } from "./oidc.js";
 import { createRouter, type APIRouterServices } from "./routes.js";
 import { StructuredLogger } from "../monitoring/logger.js";
 import { MetricsCollector } from "../monitoring/metrics.js";
 import { SentryStub } from "../monitoring/sentry.js";
+import { createContextResolveHttpHandler } from "../retrieval/context-resolve-handler.js";
+import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
+import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
+import { searchWikiPages } from "../wiki/search.js";
 
 const isAddressInfo = (value: string | AddressInfo | null): value is AddressInfo =>
   typeof value === "object" && value !== null;
@@ -74,6 +83,23 @@ export function createAPIServer(
   });
   const requestCounter = metrics.counter("http_requests_total", "Total HTTP requests", ["method", "path", "status"]);
   const requestLatency = metrics.histogram("http_request_duration_seconds", "HTTP request duration", [0.05, 0.1, 0.5, 1, 2, 5], ["method", "path"]);
+  const db = services.repository.db;
+  const factClaimService = new FactClaimService(services.repository, config);
+  const graphReportService = new GraphReportService(services.repository);
+  const archiveService = new ArchiveService(services.repository, config);
+  const retrievalOrchestrator = new RetrievalOrchestrator({
+    registry: createDefaultRegistry({
+      repository: services.repository,
+      wikiSearch: searchWikiPages,
+      factClaimService,
+      graphReportService,
+      archiveService
+    })
+  });
+
+  if (!db.isPostgres) {
+    applyRawInboxMigration(db);
+  }
 
   app.use(
     "/api/billing/webhook",
@@ -141,6 +167,8 @@ export function createAPIServer(
 
     res.type("text/plain").send(await metrics.getMetrics());
   });
+  app.post("/ingest_event", createIngestEventHttpHandler(db));
+  app.post("/context_resolve", createContextResolveHttpHandler(retrievalOrchestrator));
   app.use(createOidcRouter(config, services.repository));
   app.use(createAuthMiddleware(config, services.repository));
   if (config.apiKey !== undefined) {
