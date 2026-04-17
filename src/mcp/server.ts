@@ -25,6 +25,7 @@ import { DiagnoseService } from "../core/diagnose.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
 import { GraphReportService } from "../core/graph-report.js";
 import { getHealthReport } from "../core/health.js";
+import { createLogger } from "../core/logging/index.js";
 import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
@@ -34,6 +35,7 @@ import { Repository } from "../db/repository.js";
 import { ContentDistiller } from "../ingestion/distiller.js";
 import { ContentFetcher } from "../ingestion/fetcher.js";
 import { createIngestEventMcpTool } from "../ingestion/ingest-event-handler.js";
+import { memoryToEnvelope } from "../ingestion/memory-to-envelope.js";
 import { applyRawInboxMigration } from "../ingestion/raw-inbox.js";
 import { createShadowWriter } from "../ingestion/shadow-writer.js";
 import { IngestionService } from "../ingestion/service.js";
@@ -98,6 +100,7 @@ const FACT_CLAIM_STATUSES = [
   "conflict"
 ] as const satisfies readonly FactClaimStatus[];
 const MCP_AUDIT_CONTEXT: AuditContext = { actor: "mcp", ip: null };
+const logger = createLogger({ name: "mcp-server" });
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -548,17 +551,54 @@ export function createMCPServer({
   if (!repository.db.isPostgres) {
     applyRawInboxMigration(repository.db);
     const shadowWrite = createShadowWriter({ db: repository.db });
+    const shadowWriteForMemoryService = (memory: Memory): void => {
+      try {
+        const outcome = shadowWrite(
+          memoryToEnvelope(memory, {
+            default_surface: "api"
+          })
+        );
+
+        if (outcome.executed && outcome.reason === "error") {
+          logger.warn("MemoryService shadow write failed", {
+            memory_id: memory.id,
+            error: outcome.error ?? "unknown error"
+          });
+        }
+      } catch (error) {
+        logger.warn("MemoryService shadow write throw caught", {
+          memory_id: memory.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    };
     activeRepository = createShadowAwareRepository(repository, shadowWrite);
 
     if (memoryService instanceof MemoryService) {
-      activeMemoryService = new MemoryService(activeRepository, config);
+      activeMemoryService = new MemoryService(
+        activeRepository,
+        config,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        shadowWriteForMemoryService
+      );
     }
 
     if (sessionService instanceof SessionService) {
       const sessionMemoryService =
         activeMemoryService instanceof MemoryService
           ? activeMemoryService
-          : new MemoryService(activeRepository, config);
+          : new MemoryService(
+              activeRepository,
+              config,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              shadowWriteForMemoryService
+            );
       activeSessionService = new SessionService(
         activeRepository,
         sessionMemoryService,

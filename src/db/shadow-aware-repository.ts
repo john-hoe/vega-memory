@@ -7,8 +7,6 @@ import type { Repository } from "./repository.js";
 
 type CreateMemoryInput = Parameters<Repository["createMemory"]>[0];
 type CreateMemoryAuditContext = Parameters<Repository["createMemory"]>[1];
-type UpdateMemoryInput = Parameters<Repository["updateMemory"]>[1];
-type UpdateMemoryOptions = Parameters<Repository["updateMemory"]>[2];
 
 export function createShadowAwareRepository(
   inner: Repository,
@@ -49,23 +47,6 @@ export function createShadowAwareRepository(
         ) {
           const result = target.createMemory(memory, auditContext);
           writeShadowEnvelope(memory);
-          return result;
-        };
-      }
-
-      if (prop === "updateMemory") {
-        return function shadowingUpdateMemory(
-          id: string,
-          updates: UpdateMemoryInput,
-          updateOptions?: UpdateMemoryOptions
-        ) {
-          const result = target.updateMemory(id, updates, updateOptions);
-          const updatedMemory = target.getMemory(id);
-
-          if (updatedMemory !== null) {
-            writeShadowEnvelope(updatedMemory);
-          }
-
           return result;
         };
       }

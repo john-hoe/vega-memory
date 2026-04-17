@@ -7,6 +7,7 @@ import type { VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
 import { GraphReportService } from "../core/graph-report.js";
+import type { Memory } from "../core/types.js";
 import { MemoryService } from "../core/memory.js";
 import { SessionService } from "../core/session.js";
 import { createShadowAwareRepository } from "../db/shadow-aware-repository.js";
@@ -18,6 +19,7 @@ import {
   matchesConfiguredApiKey
 } from "./auth.js";
 import { applyRawInboxMigration } from "../ingestion/raw-inbox.js";
+import { memoryToEnvelope } from "../ingestion/memory-to-envelope.js";
 import { createIngestEventHttpHandler } from "../ingestion/ingest-event-handler.js";
 import { createShadowWriter } from "../ingestion/shadow-writer.js";
 import { createMcpRouter } from "./mcp.js";
@@ -95,7 +97,36 @@ export function createAPIServer(
     applyRawInboxMigration(db);
     const shadowWrite = createShadowWriter({ db });
     const activeRepository = createShadowAwareRepository(activeServices.repository, shadowWrite);
-    const activeMemoryService = new MemoryService(activeRepository, config);
+    const shadowWriteForMemoryService = (memory: Memory): void => {
+      try {
+        const outcome = shadowWrite(
+          memoryToEnvelope(memory, {
+            default_surface: "api"
+          })
+        );
+
+        if (outcome.executed && outcome.reason === "error") {
+          logger.warn("MemoryService shadow write failed", {
+            memory_id: memory.id,
+            error: outcome.error ?? "unknown error"
+          });
+        }
+      } catch (error) {
+        logger.warn("MemoryService shadow write throw caught", {
+          memory_id: memory.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    };
+    const activeMemoryService = new MemoryService(
+      activeRepository,
+      config,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      shadowWriteForMemoryService
+    );
     const activeSessionService = new SessionService(
       activeRepository,
       activeMemoryService,

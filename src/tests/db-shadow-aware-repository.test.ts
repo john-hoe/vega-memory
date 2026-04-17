@@ -161,7 +161,7 @@ test("repeated createMemory calls can dedupe the shadow write without throwing",
   });
 });
 
-test("flag on shadows updateMemory without changing repository behavior", () => {
+test("flag on keeps updateMemory transparent and does not shadow maintenance updates", () => {
   withFeatureFlag("true", () => {
     const repository = new Repository(":memory:");
 
@@ -188,19 +188,11 @@ test("flag on shadows updateMemory without changing repository behavior", () => 
       });
 
       const stored = wrapped.getMemory(memory.id);
-      const rows = queryRawInbox(repository.db);
 
       assert.equal(stored?.content, "Updated content");
-      assert.equal(shadowCalls.length, 2);
+      assert.equal(shadowCalls.length, 1);
       assert.equal(shadowCalls[0]?.accepted, true);
-      assert.deepEqual(shadowCalls[1], {
-        executed: true,
-        accepted: false,
-        reason: "deduped",
-        event_id: memory.id
-      });
-      assert.equal(rows.length, 1);
-      assert.equal(rows[0]?.event_id, memory.id);
+      assert.equal(queryRawInbox(repository.db).length, 1);
     } finally {
       repository.close();
     }

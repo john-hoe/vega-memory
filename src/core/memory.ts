@@ -19,6 +19,7 @@ import { ArchiveService } from "./archive-service.js";
 import { FactClaimService } from "./fact-claim-service.js";
 import { Repository } from "../db/repository.js";
 import { generateEmbedding, cosineSimilarity } from "../embedding/ollama.js";
+import { createLogger } from "./logging/index.js";
 import { shouldExclude } from "../security/exclusion.js";
 import { redactSensitiveData } from "../security/redactor.js";
 import { KnowledgeGraphService } from "./knowledge-graph.js";
@@ -53,6 +54,8 @@ const STOP_WORDS = new Set([
   "project",
   "memory"
 ]);
+
+const logger = createLogger({ name: "memory-service" });
 
 const toEmbeddingBuffer = (embedding: Float32Array | null): Buffer | null => {
   if (embedding === null) {
@@ -169,7 +172,8 @@ export class MemoryService {
     private readonly knowledgeGraphService = new KnowledgeGraphService(repository),
     private readonly archiveService = new ArchiveService(repository, config),
     private readonly factClaimService = new FactClaimService(repository, config),
-    private readonly sidecarReconciler = new SidecarReconciler(repository, config)
+    private readonly sidecarReconciler = new SidecarReconciler(repository, config),
+    private readonly shadowWrite?: (memory: Memory) => void
   ) {}
 
   private shouldPreserveRaw(preserveRaw?: boolean): boolean {
@@ -471,6 +475,18 @@ export class MemoryService {
         },
         { auditContext }
       );
+      const updatedMemory = this.repository.getMemory(matched.memory.id);
+
+      if (updatedMemory !== null) {
+        try {
+          this.shadowWrite?.(updatedMemory);
+        } catch (error) {
+          logger.warn("MemoryService shadow write throw caught", {
+            memory_id: matched.memory.id,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
 
       if (params.type === "task_state") {
         this.archiveSupersededTaskStates(
