@@ -18,6 +18,8 @@ export const RAW_INBOX_DDL = `
     event_type TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     safety_json TEXT NOT NULL,
+    source_kind TEXT,
+    artifacts_json TEXT NOT NULL DEFAULT '[]',
     received_at TEXT NOT NULL
   )
 `;
@@ -44,6 +46,8 @@ export interface RawInboxRow {
   event_type: string;
   payload_json: string;
   safety_json: string;
+  source_kind: string | null;
+  artifacts_json: string;
   received_at: string;
 }
 
@@ -70,7 +74,7 @@ interface EventIdRow {
 }
 
 const DEFAULT_QUERY_LIMIT = 100;
-const MAX_QUERY_LIMIT = 10_000;
+const MAX_QUERY_LIMIT = Number.MAX_SAFE_INTEGER;
 
 const toJson = (value: unknown): string => JSON.stringify(value);
 
@@ -113,6 +117,8 @@ export function insertRawEvent(db: DatabaseAdapter, envelope: HostEventEnvelopeV
       string,
       string,
       string,
+      string | null,
+      string,
       string
     ],
     never
@@ -130,8 +136,10 @@ export function insertRawEvent(db: DatabaseAdapter, envelope: HostEventEnvelopeV
       event_type,
       payload_json,
       safety_json,
+      source_kind,
+      artifacts_json,
       received_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
   return db.transaction(() => {
@@ -159,6 +167,8 @@ export function insertRawEvent(db: DatabaseAdapter, envelope: HostEventEnvelopeV
       parsed.event_type,
       toJson(parsed.payload),
       toJson(parsed.safety),
+      parsed.source_kind ?? null,
+      toJson(parsed.artifacts),
       receivedAt
     );
 
@@ -241,6 +251,8 @@ export function queryRawInbox(
        event_type,
        payload_json,
        safety_json,
+       source_kind,
+       artifacts_json,
        received_at
      FROM ${RAW_INBOX_TABLE}
      ${where}

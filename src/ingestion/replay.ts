@@ -32,12 +32,36 @@ const parseJsonRecord = (value: string): Record<string, unknown> => {
   return parsed as Record<string, unknown>;
 };
 
+const parseArtifacts = (value: string, eventId: string): HostEventEnvelopeV1["artifacts"] => {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error("expected JSON array");
+    }
+
+    return parsed as HostEventEnvelopeV1["artifacts"];
+  } catch (error) {
+    logger.warn("Falling back to empty artifacts during replay", {
+      event_id: eventId,
+      issue: error instanceof Error ? error.message : String(error)
+    });
+    return [];
+  }
+};
+
+/**
+ * Replay reads the full offline raw inbox by default. Callers that need bounded
+ * reads must pass an explicit limit and should consider memory pressure.
+ */
 export function replayFromRawInbox(
   db: DatabaseAdapter,
   filter: ReplayFilter,
   options: ReplayOptions = {}
 ): ReplayedEvent[] {
-  const rows = queryRawInbox(db, filter);
+  const rows = queryRawInbox(db, {
+    ...filter,
+    limit: filter.limit ?? Number.MAX_SAFE_INTEGER
+  });
   const replayedAt = new Date().toISOString();
   const replayed: ReplayedEvent[] = [];
 
@@ -56,7 +80,8 @@ export function replayFromRawInbox(
         event_type: row.event_type,
         payload: parseJsonRecord(row.payload_json),
         safety: parseJsonRecord(row.safety_json),
-        artifacts: []
+        artifacts: parseArtifacts(row.artifacts_json, row.event_id),
+        source_kind: row.source_kind ?? undefined
       };
       const parsed = HOST_EVENT_ENVELOPE_V1.safeParse(envelope);
 

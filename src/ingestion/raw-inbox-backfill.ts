@@ -1,4 +1,4 @@
-import { v4 as uuidv4, validate as isUuid } from "uuid";
+import { v5 as uuidv5, validate as isUuid } from "uuid";
 
 import type { HostEventEnvelopeV1 } from "../core/contracts/envelope.js";
 import { HOST_EVENT_ENVELOPE_V1 } from "../core/contracts/envelope.js";
@@ -41,6 +41,8 @@ interface ParsedSourceContext {
 
 const logger = createLogger({ name: "raw-inbox-backfill" });
 
+export const VEGA_BACKFILL_NAMESPACE = "7e6d9c8a-1b2c-4d3e-8f5a-0b1c2d3e4f5a";
+
 const parseJson = (value: string | null): unknown => {
   if (value === null) {
     return null;
@@ -78,6 +80,14 @@ const normalizeLimit = (value?: number): number => {
   return value;
 };
 
+const deriveEventId = (memory: Pick<MemoryBackfillRow, "id" | "created_at">): string => {
+  if (isUuid(memory.id)) {
+    return memory.id;
+  }
+
+  return uuidv5(`${memory.id}:${memory.created_at}`, VEGA_BACKFILL_NAMESPACE);
+};
+
 const mapMemoryToEnvelope = (
   memory: MemoryBackfillRow,
   defaultSurface: string
@@ -86,7 +96,7 @@ const mapMemoryToEnvelope = (
 
   return {
     schema_version: "1.0",
-    event_id: isUuid(memory.id) ? memory.id : uuidv4(),
+    event_id: deriveEventId(memory),
     surface: defaultSurface as HostEventEnvelopeV1["surface"],
     session_id: sourceContext?.session_id ?? `legacy-${memory.id}`,
     thread_id: null,

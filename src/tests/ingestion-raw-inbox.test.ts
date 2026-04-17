@@ -113,6 +113,50 @@ test("queryRawInbox filters by session_id", () => {
   }
 });
 
+test("insertRawEvent and queryRawInbox preserve source_kind and artifacts payloads", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    applyRawInboxMigration(db);
+
+    insertRawEvent(
+      db,
+      createEnvelope({
+        event_id: "12121212-1212-4212-8212-121212121212",
+        source_kind: "host_memory_file",
+        artifacts: [
+          {
+            id: "artifact-1",
+            kind: "log",
+            uri: "file:///tmp/artifact.log",
+            size_bytes: 128
+          }
+        ]
+      })
+    );
+
+    const rows = queryRawInbox(db, {
+      event_id: "12121212-1212-4212-8212-121212121212"
+    });
+
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.source_kind, "host_memory_file");
+    assert.equal(
+      rows[0]?.artifacts_json,
+      JSON.stringify([
+        {
+          id: "artifact-1",
+          kind: "log",
+          uri: "file:///tmp/artifact.log",
+          size_bytes: 128
+        }
+      ])
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test("insertRawEvent throws when the envelope fails schema validation", () => {
   const db = new SQLiteAdapter(":memory:");
 

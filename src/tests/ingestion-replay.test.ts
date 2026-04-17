@@ -128,3 +128,61 @@ test("replayFromRawInbox filters by session_id", () => {
     db.close();
   }
 });
+
+test("replayFromRawInbox does not apply the browsing default limit unless explicitly requested", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    applyRawInboxMigration(db);
+
+    for (let index = 0; index < 101; index += 1) {
+      insertRawEvent(
+        db,
+        createEnvelope({
+          event_id: `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+          host_timestamp: `2026-04-17T00:${Math.floor(index / 60)
+            .toString()
+            .padStart(2, "0")}:${(index % 60).toString().padStart(2, "0")}.000Z`
+        })
+      );
+    }
+
+    const replayed = replayFromRawInbox(db, {});
+    const limited = replayFromRawInbox(db, { limit: 50 });
+
+    assert.equal(replayed.length, 101);
+    assert.equal(limited.length, 50);
+  } finally {
+    db.close();
+  }
+});
+
+test("replayFromRawInbox preserves source_kind and artifacts from stored raw events", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    applyRawInboxMigration(db);
+    const envelope = createEnvelope({
+      event_id: "78787878-7878-4878-8878-787878787878",
+      source_kind: "host_memory_file",
+      artifacts: [
+        {
+          id: "artifact-replay",
+          kind: "transcript",
+          uri: "file:///tmp/transcript.json",
+          size_bytes: 42
+        }
+      ]
+    });
+    insertRawEvent(db, envelope);
+
+    const replayed = replayFromRawInbox(db, {
+      event_id: "78787878-7878-4878-8878-787878787878"
+    });
+
+    assert.equal(replayed.length, 1);
+    assert.deepEqual(replayed[0]?.envelope, envelope);
+  } finally {
+    db.close();
+  }
+});

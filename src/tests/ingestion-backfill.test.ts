@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import Database from "better-sqlite3-multiple-ciphers";
+import { v5 as uuidv5 } from "uuid";
 
 import { SQLiteAdapter } from "../db/sqlite-adapter.js";
 import {
-  backfillMemoriesToRawInbox
+  backfillMemoriesToRawInbox,
+  VEGA_BACKFILL_NAMESPACE
 } from "../ingestion/raw-inbox-backfill.js";
 import { applyRawInboxMigration, queryRawInbox } from "../ingestion/raw-inbox.js";
 
@@ -159,6 +161,56 @@ test("backfill skips memories that cannot be mapped into valid envelopes", () =>
       deduped: 0
     });
     assert.equal(queryRawInbox(db).length, 0);
+  } finally {
+    db.close();
+  }
+});
+
+test("backfill uses deterministic event ids for legacy non-uuid memories", () => {
+  const db = new SQLiteAdapter(new Database(":memory:"));
+
+  try {
+    createMemoriesTable(db);
+    applyRawInboxMigration(db);
+    const createdAt = "2026-04-17T00:04:00.000Z";
+    db.run(
+      `INSERT INTO memories (id, type, project, title, content, summary, tags, created_at, source_context)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      "legacy-abc",
+      "decision",
+      "vega-memory",
+      "Legacy Memory",
+      "Legacy Content",
+      "Legacy Summary",
+      JSON.stringify(["phase-8", "legacy"]),
+      createdAt,
+      JSON.stringify({ session_id: "session-legacy" })
+    );
+
+    const first = backfillMemoriesToRawInbox(db);
+    const firstRows = queryRawInbox(db);
+    const second = backfillMemoriesToRawInbox(db);
+    const secondRows = queryRawInbox(db);
+    const expectedEventId = uuidv5(`legacy-abc:${createdAt}`, VEGA_BACKFILL_NAMESPACE);
+
+    assert.deepEqual(first, {
+      scanned: 1,
+      mapped: 1,
+      skipped: 0,
+      inserted: 1,
+      deduped: 0
+    });
+    assert.deepEqual(second, {
+      scanned: 1,
+      mapped: 1,
+      skipped: 0,
+      inserted: 0,
+      deduped: 1
+    });
+    assert.equal(firstRows.length, 1);
+    assert.equal(secondRows.length, 1);
+    assert.equal(firstRows[0]?.event_id, expectedEventId);
+    assert.equal(secondRows[0]?.event_id, expectedEventId);
   } finally {
     db.close();
   }
