@@ -73,8 +73,16 @@ interface EventIdRow {
   received_at: string;
 }
 
+interface TableInfoRow {
+  name: string;
+}
+
 const DEFAULT_QUERY_LIMIT = 100;
 const MAX_QUERY_LIMIT = Number.MAX_SAFE_INTEGER;
+const RAW_INBOX_ADD_COLUMNS = [
+  `ALTER TABLE ${RAW_INBOX_TABLE} ADD COLUMN source_kind TEXT`,
+  `ALTER TABLE ${RAW_INBOX_TABLE} ADD COLUMN artifacts_json TEXT NOT NULL DEFAULT '[]'`
+] as const;
 
 const toJson = (value: unknown): string => JSON.stringify(value);
 
@@ -92,6 +100,20 @@ const normalizeLimit = (value?: number): number => {
 
 export function applyRawInboxMigration(db: DatabaseAdapter): void {
   db.exec(RAW_INBOX_DDL);
+  const existingColumns = new Set(
+    db
+      .prepare<[], TableInfoRow>(`PRAGMA table_info(${RAW_INBOX_TABLE})`)
+      .all()
+      .map((column) => column.name)
+  );
+
+  if (!existingColumns.has("source_kind")) {
+    db.exec(RAW_INBOX_ADD_COLUMNS[0]);
+  }
+
+  if (!existingColumns.has("artifacts_json")) {
+    db.exec(RAW_INBOX_ADD_COLUMNS[1]);
+  }
 
   for (const statement of RAW_INBOX_INDEXES) {
     db.exec(statement);

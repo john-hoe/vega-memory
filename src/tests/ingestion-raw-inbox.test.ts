@@ -48,6 +48,64 @@ test("applyRawInboxMigration is idempotent", () => {
   }
 });
 
+test("applyRawInboxMigration additively upgrades legacy raw_inbox tables", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    db.exec(`
+      CREATE TABLE raw_inbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        schema_version TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        surface TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        thread_id TEXT,
+        project TEXT,
+        cwd TEXT,
+        host_timestamp TEXT NOT NULL,
+        role TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        safety_json TEXT NOT NULL,
+        received_at TEXT NOT NULL
+      )
+    `);
+
+    applyRawInboxMigration(db);
+
+    const columns = db
+      .prepare<[], { name: string }>("PRAGMA table_info(raw_inbox)")
+      .all()
+      .map((column) => column.name);
+
+    assert.deepEqual(columns.includes("source_kind"), true);
+    assert.deepEqual(columns.includes("artifacts_json"), true);
+
+    const result = insertRawEvent(
+      db,
+      createEnvelope({
+        event_id: "99999999-9999-4999-8999-999999999999",
+        source_kind: "host_memory_file",
+        artifacts: [
+          {
+            id: "artifact-upgrade",
+            kind: "log",
+            uri: "file:///tmp/upgrade.log"
+          }
+        ]
+      })
+    );
+
+    assert.equal(result.accepted, true);
+    assert.equal(
+      queryRawInbox(db, { event_id: "99999999-9999-4999-8999-999999999999" }).length,
+      1
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test("insertRawEvent accepts a valid envelope", () => {
   const db = new SQLiteAdapter(":memory:");
 

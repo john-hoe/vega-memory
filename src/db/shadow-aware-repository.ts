@@ -7,6 +7,8 @@ import type { Repository } from "./repository.js";
 
 type CreateMemoryInput = Parameters<Repository["createMemory"]>[0];
 type CreateMemoryAuditContext = Parameters<Repository["createMemory"]>[1];
+type UpdateMemoryInput = Parameters<Repository["updateMemory"]>[1];
+type UpdateMemoryOptions = Parameters<Repository["updateMemory"]>[2];
 
 export function createShadowAwareRepository(
   inner: Repository,
@@ -14,6 +16,29 @@ export function createShadowAwareRepository(
   options?: { default_surface?: string }
 ): Repository {
   const logger = createLogger({ name: "shadow-aware-repository" });
+  const defaultSurface = options?.default_surface ?? "api";
+
+  const writeShadowEnvelope = (memory: CreateMemoryInput): void => {
+    try {
+      const envelope = memoryToEnvelope(memory, {
+        default_surface: defaultSurface,
+        force_event_id: isUuid(memory.id) ? memory.id : undefined
+      });
+      const outcome = shadowWrite(envelope);
+
+      if (outcome.executed && outcome.reason === "error") {
+        logger.warn("Shadow write failed", {
+          memory_id: memory.id,
+          error: outcome.error ?? "unknown error"
+        });
+      }
+    } catch (error) {
+      logger.warn("Shadow write throw caught", {
+        memory_id: memory.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  };
 
   return new Proxy(inner, {
     get(target, prop) {
@@ -23,25 +48,22 @@ export function createShadowAwareRepository(
           auditContext?: CreateMemoryAuditContext
         ) {
           const result = target.createMemory(memory, auditContext);
+          writeShadowEnvelope(memory);
+          return result;
+        };
+      }
 
-          try {
-            const envelope = memoryToEnvelope(memory, {
-              default_surface: options?.default_surface ?? "api",
-              force_event_id: isUuid(memory.id) ? memory.id : undefined
-            });
-            const outcome = shadowWrite(envelope);
+      if (prop === "updateMemory") {
+        return function shadowingUpdateMemory(
+          id: string,
+          updates: UpdateMemoryInput,
+          updateOptions?: UpdateMemoryOptions
+        ) {
+          const result = target.updateMemory(id, updates, updateOptions);
+          const updatedMemory = target.getMemory(id);
 
-            if (outcome.executed && outcome.reason === "error") {
-              logger.warn("Shadow write failed", {
-                memory_id: memory.id,
-                error: outcome.error ?? "unknown error"
-              });
-            }
-          } catch (error) {
-            logger.warn("Shadow write throw caught", {
-              memory_id: memory.id,
-              error: error instanceof Error ? error.message : String(error)
-            });
+          if (updatedMemory !== null) {
+            writeShadowEnvelope(updatedMemory);
           }
 
           return result;

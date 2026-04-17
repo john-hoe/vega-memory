@@ -42,6 +42,33 @@ function createMemory(overrides: Partial<Memory> = {}): Memory {
   };
 }
 
+function captureStructuredLogs<T>(run: () => T): { result: T; logs: Array<{ message: string; context?: Record<string, unknown> }> } {
+  const originalConsoleLog = console.log;
+  const logs: Array<{ message: string; context?: Record<string, unknown> }> = [];
+
+  console.log = ((...args: unknown[]) => {
+    if (args.length !== 1 || typeof args[0] !== "string") {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(args[0]) as { message: string; context?: Record<string, unknown> };
+      logs.push(parsed);
+    } catch {
+      return;
+    }
+  }) as typeof console.log;
+
+  try {
+    return {
+      result: run(),
+      logs
+    };
+  } finally {
+    console.log = originalConsoleLog;
+  }
+}
+
 test("memoryToEnvelope uses a UUID memory id as the envelope event_id", () => {
   const envelope = memoryToEnvelope(createMemory());
 
@@ -87,6 +114,71 @@ test("memoryToEnvelope applies default_surface when provided", () => {
   });
 
   assert.equal(envelope.surface, "cli");
+});
+
+test("memoryToEnvelope prefers source_context.surface when it is canonical", () => {
+  const envelope = memoryToEnvelope(
+    createMemory({
+      source_context: {
+        actor: "tester",
+        channel: "cli",
+        device_id: "device-1",
+        device_name: "Mac",
+        platform: "darwin",
+        session_id: "session-1",
+        surface: "codex"
+      }
+    }),
+    {
+      default_surface: "api"
+    }
+  );
+
+  assert.equal(envelope.surface, "codex");
+});
+
+test("memoryToEnvelope falls back and warns when source_context.surface is invalid", () => {
+  const { result, logs } = captureStructuredLogs(() =>
+    memoryToEnvelope(
+      createMemory({
+        source_context: {
+          actor: "tester",
+          channel: "cli",
+          device_id: "device-1",
+          device_name: "Mac",
+          platform: "darwin",
+          session_id: "session-1",
+          surface: "claude-code" as "codex"
+        }
+      }),
+      {
+        default_surface: "cursor"
+      }
+    )
+  );
+
+  assert.equal(result.surface, "cursor");
+  assert.ok(
+    logs.some(
+      (record) =>
+        record.message === "Invalid source_context surface on memory envelope" &&
+        record.context?.memory_id === "11111111-1111-4111-8111-111111111111" &&
+        record.context?.surface === "claude-code"
+    )
+  );
+});
+
+test("memoryToEnvelope falls back to default_surface when source_context is null", () => {
+  const envelope = memoryToEnvelope(
+    createMemory({
+      source_context: null
+    }),
+    {
+      default_surface: "cursor"
+    }
+  );
+
+  assert.equal(envelope.surface, "cursor");
 });
 
 test("memoryToEnvelope force_event_id overrides the derived event id", () => {

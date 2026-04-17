@@ -161,6 +161,52 @@ test("repeated createMemory calls can dedupe the shadow write without throwing",
   });
 });
 
+test("flag on shadows updateMemory without changing repository behavior", () => {
+  withFeatureFlag("true", () => {
+    const repository = new Repository(":memory:");
+
+    try {
+      applyRawInboxMigration(repository.db);
+      const shadowWriter = createShadowWriter({ db: repository.db });
+      const shadowCalls: ShadowWriteOutcome[] = [];
+      const wrapped = createShadowAwareRepository(
+        repository,
+        (envelope) => {
+          const outcome = shadowWriter(envelope);
+          shadowCalls.push(outcome);
+          return outcome;
+        }
+      );
+      const memory = createMemory();
+
+      wrapped.createMemory(memory);
+      assert.equal(queryRawInbox(repository.db).length, 1);
+
+      wrapped.updateMemory(memory.id, {
+        content: "Updated content",
+        updated_at: "2026-04-17T00:05:00.000Z"
+      });
+
+      const stored = wrapped.getMemory(memory.id);
+      const rows = queryRawInbox(repository.db);
+
+      assert.equal(stored?.content, "Updated content");
+      assert.equal(shadowCalls.length, 2);
+      assert.equal(shadowCalls[0]?.accepted, true);
+      assert.deepEqual(shadowCalls[1], {
+        executed: true,
+        accepted: false,
+        reason: "deduped",
+        event_id: memory.id
+      });
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.event_id, memory.id);
+    } finally {
+      repository.close();
+    }
+  });
+});
+
 test("shadow writer error outcomes are logged without breaking createMemory", () => {
   const repository = new Repository(":memory:");
 
