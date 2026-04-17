@@ -1,10 +1,15 @@
+import { createHash } from "node:crypto";
+
 import { v4 as uuidv4 } from "uuid";
 
 import type { Bundle } from "../core/contracts/bundle.js";
 import { BUNDLE_SCHEMA } from "../core/contracts/bundle.js";
+import type { CheckpointRecord } from "../core/contracts/checkpoint-record.js";
+import { recordKey } from "../core/contracts/checkpoint-record.js";
 import type { IntentRequest } from "../core/contracts/intent.js";
 import type { Mode } from "../core/contracts/enums.js";
 import { createLogger, createTraceId } from "../core/logging/index.js";
+import type { CheckpointStore } from "../usage/checkpoint-store.js";
 
 import { applyBudget, type BudgetConfig, DEFAULT_BUDGET_CONFIG } from "./budget.js";
 import { assembleBundle } from "./bundler.js";
@@ -28,6 +33,7 @@ export interface OrchestratorConfig {
   ranker_config?: RankerConfig;
   budget_config?: BudgetConfig;
   resolve_cache?: ResolveCache;
+  checkpoint_store?: CheckpointStore;
 }
 
 const logger = createLogger({ name: "retrieval-orchestrator" });
@@ -39,6 +45,10 @@ const ERROR_BUNDLE = BUNDLE_SCHEMA.parse({
 
 function resolveMode(request: IntentRequest): Mode {
   return request.mode ?? "L1";
+}
+
+function createQueryHash(query: string): string {
+  return createHash("sha256").update(query).digest("hex");
 }
 
 function resolveRankerVersion(config?: RankerConfig): string {
@@ -70,12 +80,37 @@ export class RetrievalOrchestrator {
   readonly #rankerConfig?: RankerConfig;
   readonly #budgetConfig?: BudgetConfig;
   readonly #resolveCache: ResolveCache;
+  readonly #checkpointStore?: CheckpointStore;
 
   constructor(config: OrchestratorConfig) {
     this.#registry = config.registry;
     this.#rankerConfig = config.ranker_config;
     this.#budgetConfig = config.budget_config;
     this.#resolveCache = config.resolve_cache ?? createResolveCache();
+    this.#checkpointStore = config.checkpoint_store;
+  }
+
+  #errorResponse(
+    checkpoint_id: string,
+    reason: string,
+    profile_used: string,
+    ranker_version: string
+  ): ContextResolveResponse {
+    logger.warn("Returning retrieval error bundle", {
+      checkpoint_id,
+      reason,
+      profile_used,
+      ranker_version
+    });
+
+    return {
+      checkpoint_id,
+      bundle_digest: "error",
+      bundle: ERROR_BUNDLE,
+      sufficiency_hint: "may_need_followup",
+      profile_used,
+      ranker_version
+    };
   }
 
   resolve(request: IntentRequest): ContextResolveResponse {
@@ -91,6 +126,26 @@ export class RetrievalOrchestrator {
     const profile_used = request.intent;
     const ranker_version = resolveRankerVersion(this.#rankerConfig);
     const mode = resolveMode(request);
+    let demote_ids: ReadonlySet<string> | undefined;
+
+    if (request.intent === "followup" && this.#checkpointStore) {
+      const previousCheckpoint = this.#checkpointStore.get(request.prev_checkpoint_id!);
+
+      if (previousCheckpoint === undefined) {
+        traceLogger.warn("Previous checkpoint unavailable for followup", {
+          checkpoint_id,
+          prev_checkpoint_id: request.prev_checkpoint_id
+        });
+        return this.#errorResponse(
+          checkpoint_id,
+          "prev_checkpoint_not_found",
+          profile_used,
+          ranker_version
+        );
+      }
+
+      demote_ids = new Set(previousCheckpoint.record_ids);
+    }
 
     try {
       const profile = getProfile(request.intent);
@@ -109,7 +164,7 @@ export class RetrievalOrchestrator {
         depth: profile.default_depth
       };
       const records = this.#registry.searchMany(profile.default_sources, input);
-      const ranked = rank(records, request, this.#rankerConfig);
+      const ranked = rank(records, request, this.#rankerConfig, demote_ids);
       const budget = applyBudget(
         ranked,
         mode,
@@ -146,6 +201,40 @@ export class RetrievalOrchestrator {
         this.#resolveCache.set(request, response);
       }
 
+      if (
+        this.#checkpointStore &&
+        response.bundle_digest !== "error" &&
+        assembly.truncated_count === 0
+      ) {
+        const now = Date.now();
+        const record: CheckpointRecord = {
+          checkpoint_id,
+          bundle_digest: assembly.bundle_digest,
+          intent: request.intent,
+          surface: request.surface,
+          session_id: request.session_id,
+          project: request.project ?? null,
+          cwd: request.cwd ?? null,
+          query_hash: createQueryHash(request.query),
+          mode,
+          profile_used: profile.intent,
+          ranker_version,
+          record_ids: assembly.bundle.sections.flatMap((section) =>
+            section.records.map((record) => recordKey(section.source_kind, record.id))
+          ),
+          created_at: now,
+          ttl_expires_at: now
+        };
+
+        try {
+          this.#checkpointStore.put(record);
+        } catch (error) {
+          traceLogger.warn("CheckpointStore put failed", {
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
       return response;
     } catch (error) {
       traceLogger.error("Retrieval orchestration failed", {
@@ -157,14 +246,7 @@ export class RetrievalOrchestrator {
         error: error instanceof Error ? error.message : String(error)
       });
 
-      return {
-        checkpoint_id,
-        bundle_digest: "error",
-        bundle: ERROR_BUNDLE,
-        sufficiency_hint: "may_need_followup",
-        profile_used,
-        ranker_version
-      };
+      return this.#errorResponse(checkpoint_id, "resolve_failed", profile_used, ranker_version);
     }
   }
 }

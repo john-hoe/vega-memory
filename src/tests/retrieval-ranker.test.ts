@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { recordKey } from "../core/contracts/checkpoint-record.js";
 import { rank } from "../retrieval/ranker.js";
 import type { SourceRecord } from "../retrieval/sources/types.js";
 
@@ -67,4 +68,20 @@ test("score breakdown only exposes signals the ranker actually computes", () => 
   assert.deepEqual(Object.keys(ranked?.score_breakdown ?? {}).sort(), ["base", "source_prior"]);
   assert.equal("recency" in (ranked?.score_breakdown ?? {}), false);
   assert.equal("safety_penalty" in (ranked?.score_breakdown ?? {}), false);
+});
+
+test("demote_ids applies the 0.3x followup penalty when the composite key matches", () => {
+  const record = createRecord({ id: "wiki-1", source_kind: "wiki", raw_score: 0.8 });
+  const [baseline] = rank([record], request);
+  const [demoted] = rank([record], request, undefined, new Set([recordKey(record.source_kind, record.id)]));
+
+  assert.equal(demoted?.final_score, (baseline?.final_score ?? 0) * 0.3);
+});
+
+test("bare ids do not trigger demotion without the source-kind prefix", () => {
+  const record = createRecord({ id: "wiki-1", source_kind: "wiki", raw_score: 0.8 });
+  const [baseline] = rank([record], request);
+  const [demoted] = rank([record], request, undefined, new Set([record.id]));
+
+  assert.equal(demoted?.final_score, baseline?.final_score);
 });

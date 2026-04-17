@@ -51,11 +51,12 @@ function mergeConfig(config?: RankerConfig): RankerConfig {
 export function rank(
   records: SourceRecord[],
   request: IntentRequest,
-  config?: RankerConfig
+  config?: RankerConfig,
+  demote_ids?: ReadonlySet<string>
 ): RankedRecord[] {
   const mergedConfig = mergeConfig(config);
   const ranked = records
-    .map((record) => scoreRecord(record, mergedConfig))
+    .map((record) => scoreRecord(record, mergedConfig, demote_ids))
     .sort((left, right) => right.final_score - left.final_score);
 
   logger.debug("Ranked retrieval records", {

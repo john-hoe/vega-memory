@@ -1,7 +1,10 @@
+import { recordKey } from "../core/contracts/checkpoint-record.js";
 import type { SourceKind } from "../core/contracts/enums.js";
 import type { SourceRecord } from "./sources/types.js";
 
 import type { RankerConfig, RankedRecord } from "./ranker.js";
+
+const DEMOTION_FACTOR = 0.3;
 
 export function clampScore(score: number): number {
   if (score < 0) {
@@ -26,7 +29,11 @@ export function getSourcePrior(
   return clampScore(priors[sourceKind] ?? 0.5);
 }
 
-export function scoreRecord(record: SourceRecord, config: RankerConfig): RankedRecord {
+export function scoreRecord(
+  record: SourceRecord,
+  config: RankerConfig,
+  demote_ids?: ReadonlySet<string>
+): RankedRecord {
   const base = getBaseScore(record);
   const source_prior = getSourcePrior(record.source_kind, config.source_priors);
   // TODO(Wave 5, issue #31): re-introduce recency / access_frequency / safety_penalty signals
@@ -34,7 +41,13 @@ export function scoreRecord(record: SourceRecord, config: RankerConfig): RankedR
   // narrowed score_breakdown and formula to only use base + source_prior for now.
   // TODO(Wave 5, issue #32): restore host_memory_file-specific floor logic only after the
   // adapter can surface real records instead of staying disabled by default.
-  const final_score = clampScore(0.5 * base + 0.5 * source_prior);
+  let final_score = 0.5 * base + 0.5 * source_prior;
+
+  if (demote_ids?.has(recordKey(record.source_kind, record.id))) {
+    final_score *= DEMOTION_FACTOR;
+  }
+
+  final_score = clampScore(final_score);
 
   return {
     ...record,
