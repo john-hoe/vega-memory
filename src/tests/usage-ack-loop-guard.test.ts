@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { AckRecord, AckStore } from "../usage/index.js";
+import type { AckPutResult, AckRecord, AckStore } from "../usage/index.js";
 import { SQLiteAdapter } from "../db/sqlite-adapter.js";
 import {
   createAckStore,
@@ -90,16 +90,6 @@ test("needs_followup loop guard fires on the second and later ack within the sam
         suggested_intent: "followup"
       }
     });
-    assert.equal(
-      ackStore.countRecent({
-        session_id: "session-loop",
-        sufficiency: "needs_followup",
-        since: 0
-      }),
-      1
-    );
-    assert.equal(ackStore.get("checkpoint-2")?.sufficiency, "needs_external");
-    assert.equal(ackStore.get("checkpoint-3")?.sufficiency, "needs_external");
     assert.deepEqual(second, {
       ack: true,
       degraded: "needs_followup_loop_limit",
@@ -110,12 +100,24 @@ test("needs_followup loop guard fires on the second and later ack within the sam
       degraded: "needs_followup_loop_limit",
       forced_sufficiency: "needs_external"
     });
+    assert.equal(
+      ackStore.countRecent({
+        session_id: "session-loop",
+        sufficiency: "needs_followup",
+        since: 0
+      }),
+      1
+    );
+    assert.equal(ackStore.get("checkpoint-2")?.sufficiency, "needs_external");
+    assert.equal(ackStore.get("checkpoint-2")?.guard_overridden, true);
+    assert.equal(ackStore.get("checkpoint-3")?.sufficiency, "needs_external");
+    assert.equal(ackStore.get("checkpoint-3")?.guard_overridden, true);
   } finally {
     db.close();
   }
 });
 
-test("same-checkpoint retries remain idempotent and keep follow_up_hint", async () => {
+test("same-checkpoint retries remain idempotent and keep the original needs_followup state", async () => {
   const db = new SQLiteAdapter(":memory:");
   let now = 1_000;
 
@@ -129,27 +131,16 @@ test("same-checkpoint retries remain idempotent and keep follow_up_hint", async 
     now += 1;
     const second = await tool.invoke(createAckForCheckpoint("checkpoint-1"));
 
-    assert.deepEqual(first, {
-      ack: true,
-      follow_up_hint: {
-        suggested_intent: "followup"
-      }
-    });
     assert.deepEqual(second, first);
-    assert.equal(
-      ackStore.countRecent({
-        session_id: "session-loop",
-        sufficiency: "needs_followup",
-        since: 0
-      }),
-      1
-    );
+    assert.equal(ackStore.size(), 1);
+    assert.equal(ackStore.get("checkpoint-1")?.sufficiency, "needs_followup");
+    assert.equal(ackStore.get("checkpoint-1")?.guard_overridden, false);
   } finally {
     db.close();
   }
 });
 
-test("different checkpoint ids in the same session trigger forced needs_external on the second ack", async () => {
+test("idempotent retries do not suppress the loop guard for a later checkpoint in the same session", async () => {
   const db = new SQLiteAdapter(":memory:");
   let now = 1_000;
 
@@ -160,9 +151,19 @@ test("different checkpoint ids in the same session trigger forced needs_external
     seedCheckpoint(checkpointStore, "checkpoint-2", "session-loop");
     const tool = createUsageAckMcpTool(ackStore, checkpointStore, () => now);
 
-    const first = await tool.invoke(createAckForCheckpoint("checkpoint-1"));
+    const first = await tool.invoke(
+      createAckForCheckpoint("checkpoint-1", {
+        sufficiency: "needs_followup"
+      })
+    );
     now += 1;
-    const second = await tool.invoke(createAckForCheckpoint("checkpoint-2"));
+    const retry = await tool.invoke(
+      createAckForCheckpoint("checkpoint-1", {
+        sufficiency: "sufficient"
+      })
+    );
+    now += 1;
+    const secondCheckpoint = await tool.invoke(createAckForCheckpoint("checkpoint-2"));
 
     assert.deepEqual(first, {
       ack: true,
@@ -170,12 +171,47 @@ test("different checkpoint ids in the same session trigger forced needs_external
         suggested_intent: "followup"
       }
     });
-    assert.deepEqual(second, {
+    assert.deepEqual(retry, first);
+    assert.deepEqual(secondCheckpoint, {
       ack: true,
       degraded: "needs_followup_loop_limit",
       forced_sufficiency: "needs_external"
     });
+    assert.equal(ackStore.get("checkpoint-1")?.sufficiency, "needs_followup");
     assert.equal(ackStore.get("checkpoint-2")?.sufficiency, "needs_external");
+    assert.equal(ackStore.get("checkpoint-2")?.guard_overridden, true);
+  } finally {
+    db.close();
+  }
+});
+
+test("retry-after-override rebuilds the same degraded response from the stored ack record", async () => {
+  const db = new SQLiteAdapter(":memory:");
+  let now = 1_000;
+
+  try {
+    const ackStore = createAckStore(db, { now: () => now });
+    const checkpointStore = createCheckpointStore(db, { now: () => now });
+    seedCheckpoint(checkpointStore, "checkpoint-1", "session-loop");
+    seedCheckpoint(checkpointStore, "checkpoint-2", "session-loop");
+    const tool = createUsageAckMcpTool(ackStore, checkpointStore, () => now);
+
+    await tool.invoke(createAckForCheckpoint("checkpoint-1"));
+    now += 1;
+    const first = await tool.invoke(createAckForCheckpoint("checkpoint-2"));
+    const storedAfterOverride = ackStore.get("checkpoint-2");
+    now += 1;
+    const retry = await tool.invoke(createAckForCheckpoint("checkpoint-2"));
+
+    assert.deepEqual(first, {
+      ack: true,
+      degraded: "needs_followup_loop_limit",
+      forced_sufficiency: "needs_external"
+    });
+    assert.deepEqual(retry, first);
+    assert.equal(storedAfterOverride?.sufficiency, "needs_external");
+    assert.equal(storedAfterOverride?.guard_overridden, true);
+    assert.equal(ackStore.get("checkpoint-2")?.acked_at, storedAfterOverride?.acked_at);
   } finally {
     db.close();
   }
@@ -307,22 +343,85 @@ test("loop guard never fires when checkpointStore is omitted and session_id stay
   }
 });
 
+test("overrideSufficiency failure keeps first-answer and retry responses consistent", async () => {
+  // When guard fires but overrideSufficiency throws, stored state stays as
+  // sufficiency=needs_followup + guard_overridden=false. Retry would be
+  // idempotent and return follow_up_hint via buildResponseFromRecord.
+  // First-answer must match that — NOT return loop_limit/forced_sufficiency.
+  const saved: AckRecord[] = [];
+  const ackStore: AckStore = {
+    put(ack): AckPutResult {
+      const stored: AckRecord = {
+        ...ack,
+        evidence: ack.evidence ?? null,
+        turn_elapsed_ms: ack.turn_elapsed_ms ?? null,
+        session_id: ack.session_id ?? null,
+        acked_at: 1_000,
+        guard_overridden: false
+      };
+      saved.push(stored);
+      return { record: stored, status: "inserted" };
+    },
+    get(checkpoint_id: string) {
+      return saved.find((ack) => ack.checkpoint_id === checkpoint_id);
+    },
+    overrideSufficiency() {
+      throw new Error("override persistence failed");
+    },
+    countRecent() {
+      // Simulate an existing prior needs_followup in this session so guard would fire
+      return 1;
+    },
+    size() {
+      return saved.length;
+    }
+  };
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const checkpointStore = createCheckpointStore(db, { now: () => 1_000 });
+    seedCheckpoint(checkpointStore, "cp-fail", "session-override-fail");
+    const tool = createUsageAckMcpTool(ackStore, checkpointStore, () => 1_000);
+
+    const result = await tool.invoke(createAckForCheckpoint("cp-fail"));
+
+    assert.deepEqual(result, {
+      ack: true,
+      follow_up_hint: {
+        suggested_intent: "followup"
+      }
+    });
+    // Persisted row keeps pre-override state — this is what a retry would see.
+    assert.equal(saved[0].sufficiency, "needs_followup");
+    assert.equal(saved[0].guard_overridden, false);
+  } finally {
+    db.close();
+  }
+});
+
 test("countRecent failures do not block the host turn", async () => {
   const saved: AckRecord[] = [];
   const ackStore: AckStore = {
-    put(ack) {
+    put(ack): AckPutResult {
       const stored = {
         ...ack,
         evidence: ack.evidence ?? null,
         turn_elapsed_ms: ack.turn_elapsed_ms ?? null,
         session_id: ack.session_id ?? null,
-        acked_at: 1_000
+        acked_at: 1_000,
+        guard_overridden: false
       };
       saved.push(stored);
-      return stored;
+      return {
+        record: stored,
+        status: "inserted"
+      };
     },
     get() {
       return undefined;
+    },
+    overrideSufficiency() {
+      throw new Error("should not override when countRecent fails");
     },
     countRecent() {
       throw new Error("count failed");

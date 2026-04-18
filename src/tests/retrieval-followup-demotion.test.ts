@@ -274,7 +274,7 @@ test("followup returns an error bundle when the previous checkpoint has expired"
   }
 });
 
-test("followup without a checkpoint store skips prev lookup but still uses the followup profile", () => {
+test("followup without a checkpoint store is rejected with an error bundle", () => {
   const orchestrator = new RetrievalOrchestrator({
     registry: createFollowupRegistry({
       wiki: [createRecord("wiki", "fresh", 0.5)]
@@ -287,8 +287,29 @@ test("followup without a checkpoint store skips prev lookup but still uses the f
     })
   );
 
-  assert.notEqual(response.bundle_digest, "error");
-  assert.deepEqual(getSectionRecordIds(response, "wiki"), ["fresh"]);
+  assert.equal(response.bundle_digest, "error");
+  assert.deepEqual(response.bundle.sections, []);
+});
+
+test("followup without a checkpoint store records a checkpoint failure when the failure store is available", () => {
+  const { failures, store: failureStore } = createFailureStoreHarness();
+  const orchestrator = new RetrievalOrchestrator({
+    registry: createFollowupRegistry({
+      wiki: [createRecord("wiki", "fresh", 0.5)]
+    }),
+    checkpoint_failure_store: failureStore
+  });
+
+  const response = orchestrator.resolve(
+    createRequest("followup", {
+      prev_checkpoint_id: "missing-checkpoint"
+    })
+  );
+
+  assert.equal(response.bundle_digest, "error");
+  assert.deepEqual(response.bundle.sections, []);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0]?.reason, "followup_requires_checkpoint_store");
 });
 
 test("error responses do not write checkpoints", () => {

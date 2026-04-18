@@ -120,7 +120,7 @@ test("happy path assembles a bundle and returns a fresh UUID checkpoint", () => 
   assert.equal(response.bundle.bundle_digest, response.bundle_digest);
 });
 
-test("the same request resolved twice within the TTL reuses the cached checkpoint", () => {
+test("the same request resolved twice within the TTL reuses the cached bundle but mints a new checkpoint", () => {
   const registry = createRegistry([
     createFakeAdapter("vega_memory", [createRecord("vega_memory", "mem-1")]),
     createFakeAdapter("wiki", [createRecord("wiki", "wiki-1")]),
@@ -141,8 +141,11 @@ test("the same request resolved twice within the TTL reuses the cached checkpoin
   now = 59_999;
   const second = orchestrator.resolve(request);
 
-  assert.equal(first.checkpoint_id, second.checkpoint_id);
+  assert.notEqual(first.checkpoint_id, second.checkpoint_id);
   assert.equal(first.bundle_digest, second.bundle_digest);
+  assert.deepEqual(first.bundle, second.bundle);
+  assert.equal(first.profile_used, second.profile_used);
+  assert.equal(first.ranker_version, second.ranker_version);
   assert.equal(cache.size(), 1);
 });
 
@@ -242,7 +245,7 @@ test("the same request resolved after the TTL expires receives a new checkpoint"
   assert.notEqual(first.checkpoint_id, second.checkpoint_id);
 });
 
-test("followup requests are never cached", () => {
+test("followup requests are never cached and reject when checkpoint storage is unavailable", () => {
   const registry = createRegistry([
     createFakeAdapter("vega_memory", [createRecord("vega_memory", "mem-1")]),
     createFakeAdapter("candidate", [createRecord("candidate", "cand-1")]),
@@ -262,7 +265,8 @@ test("followup requests are never cached", () => {
   const first = orchestrator.resolve(request);
   const second = orchestrator.resolve(request);
 
-  assert.notEqual(first.bundle_digest, "error");
+  assert.equal(first.bundle_digest, "error");
+  assert.equal(second.bundle_digest, "error");
   assert.notEqual(first.checkpoint_id, second.checkpoint_id);
   assert.equal(cache.size(), 0);
 });

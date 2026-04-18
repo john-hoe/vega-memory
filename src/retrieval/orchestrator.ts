@@ -156,19 +156,76 @@ export class RetrievalOrchestrator {
   }
 
   resolve(request: IntentRequest): ContextResolveResponse {
-    if (request.intent !== "followup") {
-      const cached = this.#resolveCache.get(request);
-      if (cached !== undefined) {
-        return cached;
-      }
-    }
-
     const checkpoint_id = uuidv4();
     const traceLogger = logger.withTraceId(createTraceId());
     const profile_used = request.intent;
     const ranker_version = resolveRankerVersion(this.#rankerConfig);
     const mode = resolveMode(request);
     let demote_ids: ReadonlySet<string> | undefined;
+    const persistCheckpoint = (response: ContextResolveResponse): void => {
+      if (!this.#checkpointStore || response.bundle_digest === "error") {
+        return;
+      }
+
+      const record: Omit<CheckpointRecord, "created_at" | "ttl_expires_at"> = {
+        checkpoint_id: response.checkpoint_id,
+        bundle_digest: response.bundle_digest,
+        intent: request.intent,
+        surface: request.surface,
+        session_id: request.session_id,
+        project: request.project ?? null,
+        cwd: request.cwd ?? null,
+        query_hash: createQueryHash(request.query),
+        mode,
+        profile_used: response.profile_used,
+        ranker_version: response.ranker_version,
+        record_ids: response.bundle.sections.flatMap((section) =>
+          section.records.map((record) => recordKey(section.source_kind, record.id))
+        )
+      };
+
+      try {
+        this.#checkpointStore.put(record);
+      } catch (error) {
+        traceLogger.warn("CheckpointStore put failed", {
+          checkpoint_id: response.checkpoint_id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    };
+
+    if (request.intent === "followup" && !this.#checkpointStore) {
+      this.#recordFailure({
+        checkpoint_id,
+        reason: "followup_requires_checkpoint_store",
+        request,
+        mode,
+        profile_used,
+        ranker_version,
+        payload: {
+          prev_checkpoint_id: request.prev_checkpoint_id ?? null,
+          hint: "CheckpointStore unavailable; followup cannot be resumed. Typically happens on Postgres-backed runtimes."
+        }
+      });
+      return this.#errorResponse(
+        checkpoint_id,
+        "followup_requires_checkpoint_store",
+        profile_used,
+        ranker_version
+      );
+    }
+
+    if (request.intent !== "followup") {
+      const cached = this.#resolveCache.get(request);
+      if (cached !== undefined) {
+        const response: ContextResolveResponse = {
+          ...cached,
+          checkpoint_id
+        };
+        persistCheckpoint(response);
+        return response;
+      }
+    }
 
     try {
       if (request.intent === "followup" && this.#checkpointStore) {
@@ -281,32 +338,7 @@ export class RetrievalOrchestrator {
         this.#resolveCache.set(request, response);
       }
 
-      if (this.#checkpointStore && response.bundle_digest !== "error") {
-        const record: Omit<CheckpointRecord, "created_at" | "ttl_expires_at"> = {
-          checkpoint_id,
-          bundle_digest: assembly.bundle_digest,
-          intent: request.intent,
-          surface: request.surface,
-          session_id: request.session_id,
-          project: request.project ?? null,
-          cwd: request.cwd ?? null,
-          query_hash: createQueryHash(request.query),
-          mode,
-          profile_used: profile.intent,
-          ranker_version,
-          record_ids: assembly.bundle.sections.flatMap((section) =>
-            section.records.map((record) => recordKey(section.source_kind, record.id))
-          )
-        };
-
-        try {
-          this.#checkpointStore.put(record);
-        } catch (error) {
-          traceLogger.warn("CheckpointStore put failed", {
-            error: error instanceof Error ? error.message : String(error)
-          });
-        }
-      }
+      persistCheckpoint(response);
 
       return response;
     } catch (error) {

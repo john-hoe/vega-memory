@@ -7,12 +7,13 @@ import {
 } from "../core/contracts/usage-ack.js";
 import { createLogger } from "../core/logging/index.js";
 
-import type { AckStore } from "./ack-store.js";
+import type { AckRecord, AckStore } from "./ack-store.js";
 import type { CheckpointStore } from "./checkpoint-store.js";
 
 export type UsageAckDegradedReason =
   | "usage_ack_unavailable"
   | "bundle_digest_mismatch"
+  | "ack_already_recorded"
   | "persist_failed"
   | "needs_followup_loop_limit";
 
@@ -89,13 +90,24 @@ const formatValidationDetail = (issues: { path: PropertyKey[]; message: string }
     })
     .join("; ");
 
-function buildUsageAckResponse(ack: UsageAck): UsageAckResponse {
-  if (ack.sufficiency === "needs_followup") {
+function buildResponseFromRecord(record: {
+  sufficiency: UsageAck["sufficiency"];
+  guard_overridden: boolean;
+}): UsageAckResponse {
+  if (record.sufficiency === "needs_followup") {
     return {
       ack: true,
       follow_up_hint: {
         suggested_intent: "followup"
       }
+    };
+  }
+
+  if (record.sufficiency === "needs_external" && record.guard_overridden) {
+    return {
+      ack: true,
+      degraded: "needs_followup_loop_limit",
+      forced_sufficiency: "needs_external"
     };
   }
 
@@ -115,10 +127,8 @@ function processUsageAck(
   checkpointStore?: CheckpointStore,
   now: () => number = Date.now
 ): UsageAckResponse {
-  const response = { ...buildUsageAckResponse(ack) };
   const loopGuardWindowMs = resolveLoopGuardWindowMs();
   let session_id: string | null = null;
-  let loopGuardFired = false;
   let digestMismatch = false;
 
   if (checkpointStore !== undefined) {
@@ -149,33 +159,12 @@ function processUsageAck(
     }
   }
 
-  if (
-    ack.sufficiency === "needs_followup" &&
-    session_id !== null &&
-    ackStore !== undefined &&
-    !digestMismatch
-  ) {
-    try {
-      loopGuardFired = ackStore.countRecent({
-        session_id,
-        sufficiency: "needs_followup",
-        since: now() - loopGuardWindowMs,
-        exclude_checkpoint_id: ack.checkpoint_id
-      }) >= 1;
-    } catch (error) {
-      logger.warn("loop_guard_query_failed", {
-        session_id,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
   if (ackStore === undefined) {
     logger.warn("usage_ack_unavailable", {
       checkpoint_id: ack.checkpoint_id
     });
     return {
-      ...response,
+      ack: true,
       degraded: "usage_ack_unavailable"
     };
   }
@@ -187,21 +176,15 @@ function processUsageAck(
     };
   }
 
-  const ackToPersist = loopGuardFired
-    ? {
-        ...ack,
-        sufficiency: "needs_external" as const
-      }
-    : ack;
-
+  let putResult: ReturnType<AckStore["put"]>;
   try {
-    ackStore.put({
-      checkpoint_id: ackToPersist.checkpoint_id,
-      bundle_digest: ackToPersist.bundle_digest,
-      sufficiency: ackToPersist.sufficiency,
-      host_tier: ackToPersist.host_tier,
-      evidence: ackToPersist.evidence ?? null,
-      turn_elapsed_ms: ackToPersist.turn_elapsed_ms ?? null,
+    putResult = ackStore.put({
+      checkpoint_id: ack.checkpoint_id,
+      bundle_digest: ack.bundle_digest,
+      sufficiency: ack.sufficiency,
+      host_tier: ack.host_tier,
+      evidence: ack.evidence ?? null,
+      turn_elapsed_ms: ack.turn_elapsed_ms ?? null,
       session_id
     });
   } catch (error) {
@@ -210,20 +193,62 @@ function processUsageAck(
       error: error instanceof Error ? error.message : String(error)
     });
     return {
-      ...response,
+      ack: true,
       degraded: "persist_failed"
     };
   }
 
-  if (loopGuardFired) {
+  if (putResult.status === "conflict") {
     return {
       ack: true,
-      degraded: "needs_followup_loop_limit",
-      forced_sufficiency: "needs_external"
+      degraded: "ack_already_recorded"
     };
   }
 
-  return response;
+  if (putResult.status === "idempotent") {
+    return buildResponseFromRecord(putResult.record);
+  }
+
+  if (ack.sufficiency === "needs_followup" && session_id !== null) {
+    try {
+      const loopGuardFired =
+        ackStore.countRecent({
+          session_id,
+          sufficiency: "needs_followup",
+          since: now() - loopGuardWindowMs,
+          exclude_checkpoint_id: ack.checkpoint_id
+        }) >= 1;
+
+      if (loopGuardFired) {
+        let overrideSucceeded = false;
+        try {
+          ackStore.overrideSufficiency(ack.checkpoint_id, "needs_external");
+          overrideSucceeded = true;
+        } catch (error) {
+          logger.warn("overrideSufficiency failed", {
+            checkpoint_id: ack.checkpoint_id,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+
+        // Rebuild response from effective stored state so first-answer and retry
+        // stay consistent: if override failed, stored still has sufficiency=needs_followup
+        // and retry (idempotent) would return follow_up_hint — match that now.
+        const effectiveRecord: AckRecord = overrideSucceeded
+          ? { ...putResult.record, sufficiency: "needs_external", guard_overridden: true }
+          : putResult.record;
+
+        return buildResponseFromRecord(effectiveRecord);
+      }
+    } catch (error) {
+      logger.warn("loop_guard_query_failed", {
+        session_id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  return buildResponseFromRecord(putResult.record);
 }
 
 export function createUsageAckMcpTool(

@@ -32,67 +32,20 @@ const createAck = (
   ...overrides
 });
 
-test("put and get round-trip an ack record and stamp acked_at", () => {
+test("put inserts a record, normalizes nullable fields, and stamps acked_at once", () => {
   const db = new SQLiteAdapter(":memory:");
 
   try {
     const store = createAckStore(db, { now: () => 1_000 });
-    const saved = store.put(createAck());
-
-    assert.equal(saved.acked_at, 1_000);
-    assert.deepEqual(store.get("checkpoint-1"), saved);
-    assert.equal(store.size(), 1);
-  } finally {
-    db.close();
-  }
-});
-
-test("put overwrites the prior payload for the same checkpoint id", () => {
-  const db = new SQLiteAdapter(":memory:");
-  let now = 1_000;
-
-  try {
-    const store = createAckStore(db, { now: () => now });
-
-    store.put(createAck());
-    now = 1_010;
-    store.put(
-      createAck({
-        checkpoint_id: "checkpoint-1",
-        bundle_digest: "bundle-2",
-        sufficiency: "needs_followup"
-      })
-    );
-
-    assert.deepEqual(store.get("checkpoint-1"), {
-      checkpoint_id: "checkpoint-1",
-      bundle_digest: "bundle-2",
-      sufficiency: "needs_followup",
-      host_tier: "T2",
-      evidence: "enough evidence",
-      turn_elapsed_ms: 125,
-      session_id: "session-1",
-      acked_at: 1_010
-    });
-    assert.equal(store.size(), 1);
-  } finally {
-    db.close();
-  }
-});
-
-test("put stores nullable evidence and turn_elapsed_ms when omitted", () => {
-  const db = new SQLiteAdapter(":memory:");
-
-  try {
-    const store = createAckStore(db, { now: () => 1_000 });
-    store.put(
+    const result = store.put(
       createAck({
         evidence: undefined,
         turn_elapsed_ms: undefined
       })
     );
 
-    assert.deepEqual(store.get("checkpoint-1"), {
+    assert.equal(result.status, "inserted");
+    assert.deepEqual(result.record, {
       checkpoint_id: "checkpoint-1",
       bundle_digest: "bundle-1",
       sufficiency: "sufficient",
@@ -100,7 +53,125 @@ test("put stores nullable evidence and turn_elapsed_ms when omitted", () => {
       evidence: null,
       turn_elapsed_ms: null,
       session_id: "session-1",
-      acked_at: 1_000
+      acked_at: 1_000,
+      guard_overridden: false
+    });
+    assert.deepEqual(store.get("checkpoint-1"), result.record);
+    assert.equal(store.size(), 1);
+  } finally {
+    db.close();
+  }
+});
+
+test("put returns idempotent for the same checkpoint payload and preserves the first acked_at", () => {
+  const db = new SQLiteAdapter(":memory:");
+  let now = 1_000;
+
+  try {
+    const store = createAckStore(db, { now: () => now });
+    const first = store.put(createAck());
+
+    now = 1_010;
+    const second = store.put(createAck());
+
+    assert.equal(first.status, "inserted");
+    assert.equal(second.status, "idempotent");
+    assert.deepEqual(second.record, first.record);
+    assert.equal(store.get("checkpoint-1")?.acked_at, 1_000);
+    assert.equal(store.get("checkpoint-1")?.guard_overridden, false);
+    assert.equal(store.size(), 1);
+  } finally {
+    db.close();
+  }
+});
+
+test("put treats same bundle and tier as idempotent even when incoming sufficiency changes", () => {
+  const db = new SQLiteAdapter(":memory:");
+  let now = 1_000;
+
+  try {
+    const store = createAckStore(db, { now: () => now });
+    const first = store.put(
+      createAck({
+        sufficiency: "needs_followup"
+      })
+    );
+
+    now = 1_010;
+    const second = store.put(
+      createAck({
+        sufficiency: "sufficient"
+      })
+    );
+
+    assert.equal(second.status, "idempotent");
+    assert.deepEqual(second.record, first.record);
+    assert.equal(store.get("checkpoint-1")?.sufficiency, "needs_followup");
+    assert.equal(store.get("checkpoint-1")?.acked_at, 1_000);
+  } finally {
+    db.close();
+  }
+});
+
+test("put returns conflict when the same checkpoint id changes bundle_digest", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const store = createAckStore(db, { now: () => 1_000 });
+    const first = store.put(createAck());
+    const second = store.put(
+      createAck({
+        bundle_digest: "bundle-2"
+      })
+    );
+
+    assert.equal(second.status, "conflict");
+    assert.deepEqual(second.record, first.record);
+    assert.equal(store.get("checkpoint-1")?.bundle_digest, "bundle-1");
+    assert.equal(store.size(), 1);
+  } finally {
+    db.close();
+  }
+});
+
+test("put returns conflict when the same checkpoint id changes host_tier", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const store = createAckStore(db, { now: () => 1_000 });
+    const first = store.put(createAck());
+    const second = store.put(
+      createAck({
+        host_tier: "T3"
+      })
+    );
+
+    assert.equal(second.status, "conflict");
+    assert.deepEqual(second.record, first.record);
+    assert.equal(store.get("checkpoint-1")?.host_tier, "T2");
+    assert.equal(store.size(), 1);
+  } finally {
+    db.close();
+  }
+});
+
+test("overrideSufficiency flips guard_overridden without changing acked_at", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const store = createAckStore(db, { now: () => 1_000 });
+    const inserted = store.put(
+      createAck({
+        sufficiency: "needs_followup"
+      })
+    );
+
+    store.overrideSufficiency("checkpoint-1", "needs_external");
+
+    assert.deepEqual(store.get("checkpoint-1"), {
+      ...inserted.record,
+      sufficiency: "needs_external",
+      guard_overridden: true
     });
   } finally {
     db.close();
@@ -119,18 +190,7 @@ test("get returns undefined for unknown checkpoint ids", () => {
   }
 });
 
-test("applyAckStoreMigration is idempotent", () => {
-  const db = new SQLiteAdapter(":memory:");
-
-  try {
-    assert.doesNotThrow(() => applyAckStoreMigration(db));
-    assert.doesNotThrow(() => applyAckStoreMigration(db));
-  } finally {
-    db.close();
-  }
-});
-
-test("countRecent filters by session_id, sufficiency, and since", () => {
+test("countRecent filters by session, sufficiency, time window, and exclude_checkpoint_id", () => {
   const db = new SQLiteAdapter(":memory:");
   let now = 1_000;
 
@@ -175,32 +235,6 @@ test("countRecent filters by session_id, sufficiency, and since", () => {
       }),
       1
     );
-  } finally {
-    db.close();
-  }
-});
-
-test("countRecent counts distinct checkpoint ids and can exclude the current checkpoint", () => {
-  const db = new SQLiteAdapter(":memory:");
-  let now = 1_000;
-
-  try {
-    const store = createAckStore(db, { now: () => now });
-
-    store.put(createAck({ checkpoint_id: "checkpoint-1", sufficiency: "needs_followup" }));
-    now = 1_010;
-    store.put(createAck({ checkpoint_id: "checkpoint-1", sufficiency: "needs_followup" }));
-    now = 1_020;
-    store.put(createAck({ checkpoint_id: "checkpoint-2", sufficiency: "needs_followup" }));
-
-    assert.equal(
-      store.countRecent({
-        session_id: "session-1",
-        sufficiency: "needs_followup",
-        since: 0
-      }),
-      2
-    );
     assert.equal(
       store.countRecent({
         session_id: "session-1",
@@ -215,7 +249,7 @@ test("countRecent counts distinct checkpoint ids and can exclude the current che
   }
 });
 
-test("applyAckStoreMigration upgrades the 7b schema and remains idempotent", () => {
+test("applyAckStoreMigration upgrades an old schema with guard_overridden defaulting to 0 and stays idempotent", () => {
   const db = new SQLiteAdapter(":memory:");
 
   try {
@@ -242,6 +276,13 @@ test("applyAckStoreMigration upgrades the 7b schema and remains idempotent", () 
     );
 
     assert.ok(columnNames.has("session_id"));
+    assert.ok(columnNames.has("guard_overridden"));
+
+    const store = createAckStore(db, { now: () => 1_000 });
+    const inserted = store.put(createAck());
+
+    assert.equal(inserted.record.guard_overridden, false);
+    assert.equal(store.get("checkpoint-1")?.guard_overridden, false);
   } finally {
     db.close();
   }
