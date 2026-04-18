@@ -1,6 +1,7 @@
 import type { DatabaseAdapter } from "./adapter.js";
 
 export const CANDIDATE_MEMORIES_TABLE = "candidate_memories";
+export const DEFAULT_CANDIDATE_STATE = "pending";
 
 interface TableInfoRow {
   cid: number;
@@ -23,6 +24,7 @@ const CANDIDATE_MEMORY_DDL = `
     extraction_confidence REAL,
     promotion_score REAL NOT NULL DEFAULT 0,
     visibility_gated INTEGER NOT NULL DEFAULT 1,
+    candidate_state TEXT NOT NULL DEFAULT '${DEFAULT_CANDIDATE_STATE}',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )
@@ -35,7 +37,11 @@ const ADDITIVE_COLUMNS: ReadonlyArray<readonly [string, string]> = [
   ["metadata", "metadata TEXT"],
   ["extraction_confidence", "extraction_confidence REAL"],
   ["promotion_score", "promotion_score REAL NOT NULL DEFAULT 0"],
-  ["visibility_gated", "visibility_gated INTEGER NOT NULL DEFAULT 1"]
+  ["visibility_gated", "visibility_gated INTEGER NOT NULL DEFAULT 1"],
+  [
+    "candidate_state",
+    `candidate_state TEXT NOT NULL DEFAULT '${DEFAULT_CANDIDATE_STATE}'`
+  ]
 ];
 
 const CANDIDATE_MEMORY_INDEXES = [

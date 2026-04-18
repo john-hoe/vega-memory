@@ -35,6 +35,12 @@ import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
 import { createCandidateMemoryAdapter } from "../retrieval/sources/candidate-memory.js";
 import { SourceRegistry } from "../retrieval/sources/registry.js";
 import {
+  createDefaultPromotionPolicy,
+  createPromotionAuditStore,
+  createPromotionEvaluator,
+  createPromotionOrchestrator
+} from "../promotion/index.js";
+import {
   createAckStore,
   createCheckpointFailureStore,
   createCheckpointStore
@@ -51,15 +57,18 @@ const shouldLogApiRequest = (path: string): boolean =>
   path !== "/api/health" &&
   path !== "/api/phase8_status";
 
-function createRetrievalRegistry(deps: Parameters<typeof createDefaultRegistry>[0]): SourceRegistry {
+function createRetrievalRegistry(
+  deps: Parameters<typeof createDefaultRegistry>[0] & {
+    candidateRepository?: ReturnType<typeof createCandidateRepository>;
+  }
+): SourceRegistry {
   const baseRegistry = createDefaultRegistry(deps);
 
-  if (deps.repository === undefined || deps.repository.db.isPostgres) {
+  if (deps.repository === undefined || deps.repository.db.isPostgres || deps.candidateRepository === undefined) {
     return baseRegistry;
   }
 
   const registry = new SourceRegistry();
-  const candidateRepository = createCandidateRepository(deps.repository.db);
 
   for (const adapter of baseRegistry.list()) {
     if (adapter.kind === "candidate") {
@@ -71,7 +80,7 @@ function createRetrievalRegistry(deps: Parameters<typeof createDefaultRegistry>[
 
   registry.register(
     createCandidateMemoryAdapter({
-      repository: candidateRepository
+      repository: deps.candidateRepository
     })
   );
 
@@ -199,6 +208,27 @@ export function createAPIServer(
   const checkpointStore = !db.isPostgres ? createCheckpointStore(db) : undefined;
   const ackStore = !db.isPostgres ? createAckStore(db) : undefined;
   const checkpointFailureStore = !db.isPostgres ? createCheckpointFailureStore(db) : undefined;
+  const candidateRepository = !db.isPostgres ? createCandidateRepository(db) : undefined;
+  const promotionAuditStore = !db.isPostgres ? createPromotionAuditStore(db) : undefined;
+  const promotionPolicy = createDefaultPromotionPolicy();
+  const promotionEvaluator =
+    candidateRepository !== undefined
+      ? createPromotionEvaluator({
+          policy: promotionPolicy,
+          ackStore
+        })
+      : undefined;
+  const promotionOrchestrator =
+    candidateRepository !== undefined &&
+    promotionAuditStore !== undefined &&
+    promotionEvaluator !== undefined
+      ? createPromotionOrchestrator({
+          evaluator: promotionEvaluator,
+          candidateRepository,
+          repository: activeServices.repository,
+          auditStore: promotionAuditStore
+        })
+      : undefined;
   const phase8Status = (): ReturnType<typeof buildPhase8Status> =>
     buildPhase8Status({
       isPostgres: db.isPostgres,
@@ -215,6 +245,7 @@ export function createAPIServer(
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: createRetrievalRegistry({
       repository: activeServices.repository,
+      candidateRepository,
       wikiSearch: searchWikiPages,
       factClaimService,
       graphReportService,
@@ -223,6 +254,7 @@ export function createAPIServer(
     checkpoint_store: checkpointStore,
     checkpoint_failure_store: checkpointFailureStore
   });
+  void promotionOrchestrator;
 
   app.use(
     "/api/billing/webhook",

@@ -42,6 +42,20 @@ import { applyRawInboxMigration } from "../ingestion/raw-inbox.js";
 import { createShadowWriter } from "../ingestion/shadow-writer.js";
 import { IngestionService } from "../ingestion/service.js";
 import { publishWikiPages } from "../publishing/service.js";
+import {
+  CANDIDATE_CREATE_SCHEMA,
+  CANDIDATE_DEMOTE_SCHEMA,
+  CANDIDATE_LIST_SCHEMA,
+  CANDIDATE_PROMOTE_SCHEMA,
+  createCandidateCreateMcpTool,
+  createCandidateDemoteMcpTool,
+  createCandidateListMcpTool,
+  createCandidatePromoteMcpTool,
+  createDefaultPromotionPolicy,
+  createPromotionAuditStore,
+  createPromotionEvaluator,
+  createPromotionOrchestrator
+} from "../promotion/index.js";
 import { createContextResolveMcpTool } from "../retrieval/context-resolve-handler.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
@@ -103,15 +117,18 @@ const MEMORY_TYPES = [
 
 const MEMORY_SOURCES = ["auto", "explicit"] as const satisfies readonly MemorySource[];
 
-function createRetrievalRegistry(deps: Parameters<typeof createDefaultRegistry>[0]): SourceRegistry {
+function createRetrievalRegistry(
+  deps: Parameters<typeof createDefaultRegistry>[0] & {
+    candidateRepository?: ReturnType<typeof createCandidateRepository>;
+  }
+): SourceRegistry {
   const baseRegistry = createDefaultRegistry(deps);
 
-  if (deps.repository === undefined || deps.repository.db.isPostgres) {
+  if (deps.repository === undefined || deps.repository.db.isPostgres || deps.candidateRepository === undefined) {
     return baseRegistry;
   }
 
   const registry = new SourceRegistry();
-  const candidateRepository = createCandidateRepository(deps.repository.db);
 
   for (const adapter of baseRegistry.list()) {
     if (adapter.kind === "candidate") {
@@ -123,7 +140,7 @@ function createRetrievalRegistry(deps: Parameters<typeof createDefaultRegistry>[
 
   registry.register(
     createCandidateMemoryAdapter({
-      repository: candidateRepository
+      repository: deps.candidateRepository
     })
   );
 
@@ -662,6 +679,31 @@ export function createMCPServer({
   const checkpointFailureStore = !activeRepository.db.isPostgres
     ? createCheckpointFailureStore(activeRepository.db)
     : undefined;
+  const candidateRepository = !activeRepository.db.isPostgres
+    ? createCandidateRepository(activeRepository.db)
+    : undefined;
+  const promotionAuditStore = !activeRepository.db.isPostgres
+    ? createPromotionAuditStore(activeRepository.db)
+    : undefined;
+  const promotionPolicy = createDefaultPromotionPolicy();
+  const promotionEvaluator =
+    candidateRepository !== undefined
+      ? createPromotionEvaluator({
+          policy: promotionPolicy,
+          ackStore
+        })
+      : undefined;
+  const promotionOrchestrator =
+    candidateRepository !== undefined &&
+    promotionAuditStore !== undefined &&
+    promotionEvaluator !== undefined
+      ? createPromotionOrchestrator({
+          evaluator: promotionEvaluator,
+          candidateRepository,
+          repository: activeRepository,
+          auditStore: promotionAuditStore
+        })
+      : undefined;
 
   if (activeRepository.db.isPostgres) {
     logger.warn(
@@ -688,6 +730,7 @@ export function createMCPServer({
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: createRetrievalRegistry({
       repository: activeRepository,
+      candidateRepository,
       wikiSearch: searchWikiPages,
       factClaimService: retrievalFactClaimService,
       graphReportService,
@@ -699,6 +742,10 @@ export function createMCPServer({
   const ingestEventTool = createIngestEventMcpTool(activeRepository.db);
   const contextResolveTool = createContextResolveMcpTool(retrievalOrchestrator);
   const usageAckTool = createUsageAckMcpTool(ackStore, checkpointStore);
+  const candidateCreateTool = createCandidateCreateMcpTool(candidateRepository);
+  const candidateListTool = createCandidateListMcpTool(candidateRepository);
+  const candidatePromoteTool = createCandidatePromoteMcpTool(promotionOrchestrator);
+  const candidateDemoteTool = createCandidateDemoteMcpTool(promotionOrchestrator);
 
   server.tool(
     "memory_graph",
@@ -1955,6 +2002,56 @@ export function createMCPServer({
         };
       })
   );
+
+  const candidateToolRegistrar = server as unknown as {
+    registerTool(
+      name: string,
+      config: {
+        description: string;
+        inputSchema: unknown;
+      },
+      handler: (args: unknown) => Promise<CallToolResult>
+    ): void;
+  };
+
+  for (const tool of [
+    candidateCreateTool,
+    candidateListTool,
+    candidatePromoteTool,
+    candidateDemoteTool
+  ]) {
+    const inputSchema =
+      tool.name === "candidate_create"
+        ? CANDIDATE_CREATE_SCHEMA.shape
+        : tool.name === "candidate_list"
+          ? CANDIDATE_LIST_SCHEMA.shape
+          : tool.name === "candidate_promote"
+            ? CANDIDATE_PROMOTE_SCHEMA.shape
+            : CANDIDATE_DEMOTE_SCHEMA.shape;
+
+    candidateToolRegistrar.registerTool(
+      tool.name,
+      {
+        description: tool.description,
+        inputSchema
+      },
+      async (args: unknown) =>
+        runTool(repository, tool.name, args, observer, async () => {
+          const result = await tool.invoke(args);
+
+          return {
+            result,
+            resultCount:
+              typeof result === "object" &&
+              result !== null &&
+              "records" in result &&
+              Array.isArray((result as { records?: unknown }).records)
+                ? (result as { records: unknown[] }).records.length
+                : 1
+          };
+        })
+    );
+  }
 
   return server;
 }

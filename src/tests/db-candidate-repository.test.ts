@@ -65,6 +65,7 @@ test("create returns a full candidate record with generated id and timestamps", 
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
     );
     assert.equal(record.promotion_score, 0);
+    assert.equal(record.candidate_state, "pending");
     assert.equal(typeof record.created_at, "number");
     assert.equal(record.updated_at, record.created_at);
     assert.deepEqual(repository.findById(record.id), record);
@@ -102,12 +103,13 @@ test("list sorts by created_at desc and supports project, type, and since filter
         tags,
         metadata,
         extraction_source,
-        extraction_confidence,
-        promotion_score,
-        visibility_gated,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      extraction_confidence,
+      promotion_score,
+      visibility_gated,
+      candidate_state,
+      created_at,
+      updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       "cand-1",
       "first",
       "observation",
@@ -118,6 +120,7 @@ test("list sorts by created_at desc and supports project, type, and since filter
       0.1,
       0,
       1,
+      "held",
       1_000,
       1_000
     );
@@ -130,12 +133,13 @@ test("list sorts by created_at desc and supports project, type, and since filter
         tags,
         metadata,
         extraction_source,
-        extraction_confidence,
-        promotion_score,
-        visibility_gated,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      extraction_confidence,
+      promotion_score,
+      visibility_gated,
+      candidate_state,
+      created_at,
+      updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       "cand-2",
       "second",
       "pitfall",
@@ -146,6 +150,7 @@ test("list sorts by created_at desc and supports project, type, and since filter
       0.2,
       0,
       0,
+      "ready",
       2_000,
       2_000
     );
@@ -158,12 +163,13 @@ test("list sorts by created_at desc and supports project, type, and since filter
         tags,
         metadata,
         extraction_source,
-        extraction_confidence,
-        promotion_score,
-        visibility_gated,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      extraction_confidence,
+      promotion_score,
+      visibility_gated,
+      candidate_state,
+      created_at,
+      updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       "cand-3",
       "third",
       "observation",
@@ -174,14 +180,58 @@ test("list sorts by created_at desc and supports project, type, and since filter
       null,
       0,
       0,
+      "discarded",
       3_000,
       3_000
     );
 
-    assert.deepEqual(
-      repository.list().map((record) => record.id),
-      ["cand-3", "cand-2", "cand-1"]
-    );
+    assert.deepEqual(repository.list(), [
+      {
+        id: "cand-3",
+        content: "third",
+        type: "observation",
+        project: "other-project",
+        tags: ["c"],
+        metadata: { ordinal: 3 },
+        extraction_source: "manual",
+        extraction_confidence: null,
+        promotion_score: 0,
+        visibility_gated: false,
+        candidate_state: "discarded",
+        created_at: 3_000,
+        updated_at: 3_000
+      },
+      {
+        id: "cand-2",
+        content: "second",
+        type: "pitfall",
+        project: "vega-memory",
+        tags: ["b"],
+        metadata: { ordinal: 2 },
+        extraction_source: "manual",
+        extraction_confidence: 0.2,
+        promotion_score: 0,
+        visibility_gated: false,
+        candidate_state: "ready",
+        created_at: 2_000,
+        updated_at: 2_000
+      },
+      {
+        id: "cand-1",
+        content: "first",
+        type: "observation",
+        project: "vega-memory",
+        tags: ["a"],
+        metadata: { ordinal: 1 },
+        extraction_source: "manual",
+        extraction_confidence: 0.1,
+        promotion_score: 0,
+        visibility_gated: true,
+        candidate_state: "held",
+        created_at: 1_000,
+        updated_at: 1_000
+      }
+    ]);
     assert.deepEqual(
       repository.list({ project: "vega-memory" }).map((record) => record.id),
       ["cand-2", "cand-1"]
@@ -210,6 +260,31 @@ test("delete returns true on success and false for unknown ids", () => {
     assert.equal(repository.findById(record.id), undefined);
     assert.equal(repository.delete(record.id), false);
     assert.equal(repository.size(), 0);
+  } finally {
+    db.close();
+  }
+});
+
+test("updateState supports pending to held/ready/discarded transitions and idempotent writes", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const repository = createCandidateRepository(db);
+    const record = repository.create(createCandidateInput());
+
+    assert.equal(repository.updateState(record.id, "pending"), true);
+    assert.equal(repository.findById(record.id)?.candidate_state, "pending");
+
+    assert.equal(repository.updateState(record.id, "held"), true);
+    assert.equal(repository.findById(record.id)?.candidate_state, "held");
+
+    assert.equal(repository.updateState(record.id, "ready"), true);
+    assert.equal(repository.findById(record.id)?.candidate_state, "ready");
+
+    assert.equal(repository.updateState(record.id, "discarded"), true);
+    assert.equal(repository.findById(record.id)?.candidate_state, "discarded");
+
+    assert.equal(repository.updateState("missing-candidate", "held"), false);
   } finally {
     db.close();
   }
@@ -355,6 +430,40 @@ test("candidate list pushes visibility_gated filter into SQL so LIMIT applies af
   }
 });
 
+test("candidate list can filter by state without changing the default unfiltered result", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const repository = createCandidateRepository(db);
+    const pending = repository.create(createCandidateInput({ content: "pending" }));
+    const ready = repository.create(createCandidateInput({ content: "ready" }));
+    const discarded = repository.create(createCandidateInput({ content: "discarded" }));
+
+    repository.updateState(ready.id, "ready");
+    repository.updateState(discarded.id, "discarded");
+
+    assert.equal(repository.list().length, 3);
+    assert.deepEqual(
+      repository.list({ state: "ready" }).map((record) => record.id),
+      [ready.id]
+    );
+    assert.equal(repository.list({ state: "ready" })[0]?.candidate_state, "ready");
+    assert.deepEqual(
+      repository.list({ state: "discarded" }).map((record) => record.id),
+      [discarded.id]
+    );
+    assert.equal(repository.list({ state: "discarded" })[0]?.candidate_state, "discarded");
+    assert.equal(repository.list({ state: "held" }).length, 0);
+    assert.deepEqual(
+      repository.list({ state: "pending" }).map((record) => record.id),
+      [pending.id]
+    );
+    assert.equal(repository.list({ state: "pending" })[0]?.candidate_state, "pending");
+  } finally {
+    db.close();
+  }
+});
+
 test("candidate migration adds missing columns on a pre-existing partial schema", () => {
   // Regression for round-6 #4: the prior migration created the promotion_score
   // index unconditionally. If an older deployment had candidate_memories
@@ -363,7 +472,8 @@ test("candidate migration adds missing columns on a pre-existing partial schema"
   const db = new SQLiteAdapter(":memory:");
 
   try {
-    // Pre-seed a partial old-shape table that predates promotion_score + visibility_gated.
+    // Pre-seed a partial old-shape table that predates promotion_score +
+    // visibility_gated + candidate_state.
     db.exec(`
       CREATE TABLE ${CANDIDATE_MEMORIES_TABLE} (
         id TEXT PRIMARY KEY,
@@ -387,12 +497,17 @@ test("candidate migration adds missing columns on a pre-existing partial schema"
     assert.doesNotThrow(() => applyCandidateMemoryMigration(db));
 
     // Legacy rows get defaults for the added columns.
-    const row = db.get<{ promotion_score: number; visibility_gated: number }>(
-      `SELECT promotion_score, visibility_gated FROM ${CANDIDATE_MEMORIES_TABLE} WHERE id = ?`,
+    const row = db.get<{
+      promotion_score: number;
+      visibility_gated: number;
+      candidate_state: string;
+    }>(
+      `SELECT promotion_score, visibility_gated, candidate_state FROM ${CANDIDATE_MEMORIES_TABLE} WHERE id = ?`,
       "legacy-1"
     );
     assert.equal(row?.promotion_score, 0);
     assert.equal(row?.visibility_gated, 1);
+    assert.equal(row?.candidate_state, "pending");
 
     // New inserts still work after migration.
     const repository = createCandidateRepository(db);

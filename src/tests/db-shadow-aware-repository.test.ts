@@ -133,6 +133,50 @@ test("flag on writes a shadow envelope into raw_inbox after createMemory succeed
   });
 });
 
+test("flag on writes a shadow envelope into raw_inbox after createFromCandidate succeeds", () => {
+  withFeatureFlag("true", () => {
+    const repository = new Repository(":memory:");
+    const candidateId = "66666666-6666-4666-8666-666666666666";
+
+    try {
+      applyRawInboxMigration(repository.db);
+      const wrapped = createShadowAwareRepository(
+        repository,
+        createShadowWriter({ db: repository.db })
+      );
+
+      wrapped.createFromCandidate(
+        candidateId,
+        {
+          content: "Promoted from candidate",
+          type: "decision",
+          project: "vega-memory",
+          tags: ["wave-4"]
+        },
+        {
+          surface: "vega_internal",
+          session_id: null,
+          actor: "tester",
+          trigger: "manual"
+        }
+      );
+
+      const rows = queryRawInbox(repository.db);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.event_id, candidateId);
+      assert.equal(rows[0]?.surface, "api");
+      assert.equal(rows[0]?.event_type, "state_change");
+      assert.equal(rows[0]?.session_id.startsWith("legacy-"), false);
+      const stored = wrapped.getMemory(candidateId);
+      assert.equal(stored?.source_context?.actor, "tester");
+      assert.equal(stored?.source_context?.channel, "vega_internal");
+      assert.equal(stored?.source_context?.client_info, "manual");
+    } finally {
+      repository.close();
+    }
+  });
+});
+
 test("repeated createMemory calls can dedupe the shadow write without throwing", () => {
   withFeatureFlag("true", () => {
     const repository = new Repository(":memory:");

@@ -785,6 +785,44 @@ function timestamp(): string {
   return new Date().toISOString();
 }
 
+const DEFAULT_PROMOTED_IMPORTANCE: Record<Memory["type"], number> = {
+  preference: 0.95,
+  project_context: 0.85,
+  task_state: 0.9,
+  pitfall: 0.7,
+  decision: 0.5,
+  insight: 0.75
+};
+
+function buildPromotionTitle(content: string): string {
+  const firstLine = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+
+  if (!firstLine) {
+    return "Untitled Memory";
+  }
+
+  return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
+}
+
+function mapCandidateProject(project: string | null): Pick<Memory, "project" | "scope" | "accessed_projects"> {
+  if (project === null) {
+    return {
+      project: "global",
+      scope: "global",
+      accessed_projects: []
+    };
+  }
+
+  return {
+    project,
+    scope: "project",
+    accessed_projects: [project]
+  };
+}
+
 const FACT_CLAIM_TRANSITIONS = new Set<string>([
   "active->expired:system",
   "active->expired:user",
@@ -831,6 +869,54 @@ function normalizeNonNegativeInteger(value: number): number {
 }
 
 const GRAPH_PATH_DELIMITER = "\u0000";
+
+export const MEMORY_TYPES = [
+  "task_state",
+  "preference",
+  "project_context",
+  "decision",
+  "pitfall",
+  "insight"
+] as const satisfies readonly Memory["type"][];
+
+const MEMORY_TYPE_SET = new Set<Memory["type"]>(MEMORY_TYPES);
+
+export class InvalidCandidateTypeError extends Error {
+  constructor(type: string) {
+    super(`InvalidCandidateType: ${type}`);
+    this.name = "InvalidCandidateTypeError";
+  }
+}
+
+export interface CandidatePromotionContext {
+  surface: string;
+  session_id: string | null;
+  actor?: string | null;
+  trigger?: string;
+}
+
+function buildCandidatePromotionSourceContext(
+  promotionContext?: CandidatePromotionContext
+): MemorySourceContext | null {
+  if (promotionContext === undefined) {
+    return null;
+  }
+
+  return {
+    actor: promotionContext.actor ?? "system",
+    channel: promotionContext.surface,
+    device_id: "vega-memory",
+    device_name: "Vega Memory",
+    platform: "server",
+    session_id: promotionContext.session_id ?? "vega-promotion",
+    client_info: promotionContext.trigger,
+    integration: "candidate_promotion"
+  };
+}
+
+function isMemoryType(type: string): type is Memory["type"] {
+  return MEMORY_TYPE_SET.has(type as Memory["type"]);
+}
 
 export class Repository {
   readonly db: DatabaseAdapter & { loadExtension(path: string): void; name: string };
@@ -924,6 +1010,45 @@ export class Repository {
         ip: resolvedAuditContext.ip,
         tenant_id: memory.tenant_id ?? resolvedAuditContext.tenant_id ?? null
       });
+    });
+  }
+
+  createFromCandidate(
+    id: string,
+    input: {
+      content: string;
+      type: string;
+      project: string | null;
+      tags: string[];
+    },
+    promotionContext?: CandidatePromotionContext
+  ): void {
+    const createdAt = timestamp();
+    const mappedProject = mapCandidateProject(input.project);
+    if (!isMemoryType(input.type)) {
+      throw new InvalidCandidateTypeError(input.type);
+    }
+
+    this.createMemory({
+      id,
+      tenant_id: null,
+      type: input.type,
+      project: mappedProject.project,
+      title: buildPromotionTitle(input.content),
+      content: input.content,
+      summary: null,
+      embedding: null,
+      importance: DEFAULT_PROMOTED_IMPORTANCE[input.type] ?? 0.5,
+      source: "auto",
+      tags: input.tags,
+      created_at: createdAt,
+      updated_at: createdAt,
+      accessed_at: createdAt,
+      status: "active",
+      verified: "unverified",
+      scope: mappedProject.scope,
+      accessed_projects: mappedProject.accessed_projects,
+      source_context: buildCandidatePromotionSourceContext(promotionContext)
     });
   }
 
@@ -1106,6 +1231,34 @@ export class Repository {
         tenant_id: existing.tenant_id ?? resolvedAuditContext.tenant_id ?? null
       });
     });
+  }
+
+  demoteToCandidate(id: string): boolean {
+    const existing = this.getMemory(id);
+    const rowid = this.db
+      .prepare<[string], { rowid: number }>("SELECT rowid FROM memories WHERE id = ?")
+      .get(id);
+
+    if (!existing || !rowid) {
+      return false;
+    }
+
+    const deleteMemoryStatement = this.db.prepare<[string]>("DELETE FROM memories WHERE id = ?");
+    const deleteFts = this.db.prepare<[number, string, string, string]>(
+      "INSERT INTO memories_fts(memories_fts, rowid, title, content, tags) VALUES ('delete', ?, ?, ?, ?)"
+    );
+
+    this.db.transaction(() => {
+      deleteFts.run(
+        rowid.rowid,
+        existing.title,
+        existing.content,
+        serializeJsonArray(existing.tags)
+      );
+      deleteMemoryStatement.run(id);
+    });
+
+    return true;
   }
 
   listMemories(filters: MemoryListFilters): Memory[] {

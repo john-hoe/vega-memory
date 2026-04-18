@@ -4,8 +4,11 @@ import { createLogger } from "../core/logging/index.js";
 import type { DatabaseAdapter } from "./adapter.js";
 import {
   applyCandidateMemoryMigration,
-  CANDIDATE_MEMORIES_TABLE
+  CANDIDATE_MEMORIES_TABLE,
+  DEFAULT_CANDIDATE_STATE
 } from "./candidate-memory-migration.js";
+
+export type CandidateState = "pending" | "held" | "ready" | "discarded";
 
 export interface CandidateMemoryRecord {
   id: string;
@@ -18,11 +21,13 @@ export interface CandidateMemoryRecord {
   extraction_confidence: number | null;
   promotion_score: number;
   visibility_gated: boolean;
+  candidate_state: CandidateState;
   created_at: number;
   updated_at: number;
 }
 
 export interface CandidateMemoryCreateInput {
+  id?: string;
   content: string;
   type: string;
   project?: string | null;
@@ -31,6 +36,7 @@ export interface CandidateMemoryCreateInput {
   extraction_source: string;
   extraction_confidence?: number | null;
   visibility_gated?: boolean;
+  candidate_state?: CandidateState;
 }
 
 export interface CandidateQuery {
@@ -39,6 +45,7 @@ export interface CandidateQuery {
   limit?: number;
   since?: number;
   visibility_gated?: boolean;    // When set, filter to rows matching this flag BEFORE LIMIT.
+  state?: CandidateState;
 }
 
 export interface CandidateRepository {
@@ -46,6 +53,7 @@ export interface CandidateRepository {
   findById(id: string): CandidateMemoryRecord | undefined;
   list(query?: CandidateQuery): CandidateMemoryRecord[];
   delete(id: string): boolean;
+  updateState(id: string, state: CandidateState): boolean;
   size(): number;
 }
 
@@ -64,6 +72,7 @@ interface CandidateMemoryRow {
   extraction_confidence: number | null;
   promotion_score: number;
   visibility_gated: number;
+  candidate_state: CandidateState;
   created_at: number;
   updated_at: number;
 }
@@ -110,6 +119,7 @@ function toRecord(row: CandidateMemoryRow): CandidateMemoryRecord | undefined {
       extraction_confidence: row.extraction_confidence,
       promotion_score: row.promotion_score ?? 0,
       visibility_gated: row.visibility_gated === 1,
+      candidate_state: row.candidate_state ?? DEFAULT_CANDIDATE_STATE,
       created_at: row.created_at,
       updated_at: row.updated_at
     };
@@ -135,7 +145,7 @@ export function createCandidateRepository(
   const now = options.now ?? (() => Date.now());
 
   const insertStatement = db.prepare<
-    [string, string, string, string | null, string, string, string, number | null, number, number, number, number],
+    [string, string, string, string | null, string, string, string, number | null, number, number, CandidateState, number, number],
     never
   >(
     `INSERT INTO ${CANDIDATE_MEMORIES_TABLE} (
@@ -149,9 +159,10 @@ export function createCandidateRepository(
       extraction_confidence,
       promotion_score,
       visibility_gated,
+      candidate_state,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const findStatement = db.prepare<[string], CandidateMemoryRow>(
     `SELECT
@@ -165,15 +176,21 @@ export function createCandidateRepository(
       extraction_confidence,
       promotion_score,
       visibility_gated,
+      candidate_state,
       created_at,
       updated_at
     FROM ${CANDIDATE_MEMORIES_TABLE}
     WHERE id = ?`
   );
+  const updateStateStatement = db.prepare<[CandidateState, number, string], never>(
+    `UPDATE ${CANDIDATE_MEMORIES_TABLE}
+    SET candidate_state = ?, updated_at = ?
+    WHERE id = ?`
+  );
 
   return {
     create(input): CandidateMemoryRecord {
-      const id = uuidv4();
+      const id = input.id ?? uuidv4();
       const created_at = now();
       const record: CandidateMemoryRecord = {
         id,
@@ -186,6 +203,7 @@ export function createCandidateRepository(
         extraction_confidence: input.extraction_confidence ?? null,
         promotion_score: 0,
         visibility_gated: input.visibility_gated ?? true,
+        candidate_state: input.candidate_state ?? DEFAULT_CANDIDATE_STATE,
         created_at,
         updated_at: created_at
       };
@@ -201,6 +219,7 @@ export function createCandidateRepository(
         record.extraction_confidence,
         record.promotion_score,
         record.visibility_gated ? 1 : 0,
+        record.candidate_state,
         record.created_at,
         record.updated_at
       );
@@ -239,6 +258,11 @@ export function createCandidateRepository(
         params.push(query.visibility_gated ? 1 : 0);
       }
 
+      if (query.state !== undefined) {
+        clauses.push("candidate_state = ?");
+        params.push(query.state);
+      }
+
       const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
       const rows = db.all<CandidateMemoryRow>(
         `SELECT
@@ -252,6 +276,7 @@ export function createCandidateRepository(
           extraction_confidence,
           promotion_score,
           visibility_gated,
+          candidate_state,
           created_at,
           updated_at
         FROM ${CANDIDATE_MEMORIES_TABLE}
@@ -279,6 +304,16 @@ export function createCandidateRepository(
       }
 
       db.run(`DELETE FROM ${CANDIDATE_MEMORIES_TABLE} WHERE id = ?`, id);
+      return true;
+    },
+    updateState(id, state): boolean {
+      const existing = findStatement.get(id);
+
+      if (existing === undefined) {
+        return false;
+      }
+
+      updateStateStatement.run(state, now(), id);
       return true;
     },
     size(): number {
