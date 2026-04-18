@@ -10,6 +10,7 @@ import { GraphReportService } from "../core/graph-report.js";
 import type { Memory } from "../core/types.js";
 import { MemoryService } from "../core/memory.js";
 import { SessionService } from "../core/session.js";
+import { createCandidateRepository } from "../db/candidate-repository.js";
 import { createShadowAwareRepository } from "../db/shadow-aware-repository.js";
 import {
   createAuthMiddleware,
@@ -31,6 +32,8 @@ import { SentryStub } from "../monitoring/sentry.js";
 import { createContextResolveHttpHandler } from "../retrieval/context-resolve-handler.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
+import { createCandidateMemoryAdapter } from "../retrieval/sources/candidate-memory.js";
+import { SourceRegistry } from "../retrieval/sources/registry.js";
 import {
   createAckStore,
   createCheckpointFailureStore,
@@ -47,6 +50,33 @@ const shouldLogApiRequest = (path: string): boolean =>
   path.startsWith("/api") &&
   path !== "/api/health" &&
   path !== "/api/phase8_status";
+
+function createRetrievalRegistry(deps: Parameters<typeof createDefaultRegistry>[0]): SourceRegistry {
+  const baseRegistry = createDefaultRegistry(deps);
+
+  if (deps.repository === undefined || deps.repository.db.isPostgres) {
+    return baseRegistry;
+  }
+
+  const registry = new SourceRegistry();
+  const candidateRepository = createCandidateRepository(deps.repository.db);
+
+  for (const adapter of baseRegistry.list()) {
+    if (adapter.kind === "candidate") {
+      continue;
+    }
+
+    registry.register(adapter);
+  }
+
+  registry.register(
+    createCandidateMemoryAdapter({
+      repository: candidateRepository
+    })
+  );
+
+  return registry;
+}
 
 const UUID_SEGMENT_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -183,7 +213,7 @@ export function createAPIServer(
     );
   }
   const retrievalOrchestrator = new RetrievalOrchestrator({
-    registry: createDefaultRegistry({
+    registry: createRetrievalRegistry({
       repository: activeServices.repository,
       wikiSearch: searchWikiPages,
       factClaimService,

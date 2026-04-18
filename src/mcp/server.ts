@@ -31,6 +31,7 @@ import { MemoryService } from "../core/memory.js";
 import { RecallService } from "../core/recall.js";
 import { SessionService } from "../core/session.js";
 import { TopicService } from "../core/topic-service.js";
+import { createCandidateRepository } from "../db/candidate-repository.js";
 import { createShadowAwareRepository } from "../db/shadow-aware-repository.js";
 import { Repository } from "../db/repository.js";
 import { ContentDistiller } from "../ingestion/distiller.js";
@@ -44,6 +45,8 @@ import { publishWikiPages } from "../publishing/service.js";
 import { createContextResolveMcpTool } from "../retrieval/context-resolve-handler.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
+import { createCandidateMemoryAdapter } from "../retrieval/sources/candidate-memory.js";
+import { SourceRegistry } from "../retrieval/sources/registry.js";
 import {
   createAckStore,
   createCheckpointFailureStore,
@@ -99,6 +102,33 @@ const MEMORY_TYPES = [
 ] as const satisfies readonly MemoryType[];
 
 const MEMORY_SOURCES = ["auto", "explicit"] as const satisfies readonly MemorySource[];
+
+function createRetrievalRegistry(deps: Parameters<typeof createDefaultRegistry>[0]): SourceRegistry {
+  const baseRegistry = createDefaultRegistry(deps);
+
+  if (deps.repository === undefined || deps.repository.db.isPostgres) {
+    return baseRegistry;
+  }
+
+  const registry = new SourceRegistry();
+  const candidateRepository = createCandidateRepository(deps.repository.db);
+
+  for (const adapter of baseRegistry.list()) {
+    if (adapter.kind === "candidate") {
+      continue;
+    }
+
+    registry.register(adapter);
+  }
+
+  registry.register(
+    createCandidateMemoryAdapter({
+      repository: candidateRepository
+    })
+  );
+
+  return registry;
+}
 const SESSION_START_MODES = SESSION_START_MODE_VALUES;
 const FACT_CLAIM_STATUSES = [
   "active",
@@ -656,7 +686,7 @@ export function createMCPServer({
     config
   );
   const retrievalOrchestrator = new RetrievalOrchestrator({
-    registry: createDefaultRegistry({
+    registry: createRetrievalRegistry({
       repository: activeRepository,
       wikiSearch: searchWikiPages,
       factClaimService: retrievalFactClaimService,
