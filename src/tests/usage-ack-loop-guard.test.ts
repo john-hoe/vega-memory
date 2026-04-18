@@ -28,6 +28,22 @@ const createAck = (
   ...overrides
 });
 
+const createAckForCheckpoint = (
+  checkpoint_id: string,
+  overrides: Partial<{
+    bundle_digest: string;
+    sufficiency: "sufficient" | "needs_followup" | "needs_external";
+    host_tier: "T1" | "T2" | "T3";
+    evidence?: string;
+    turn_elapsed_ms?: number;
+  }> = {}
+) =>
+  createAck({
+    checkpoint_id,
+    bundle_digest: `bundle-${checkpoint_id}`,
+    ...overrides
+  });
+
 function seedCheckpoint(
   store: ReturnType<typeof createCheckpointStore>,
   checkpoint_id: string,
@@ -62,11 +78,11 @@ test("needs_followup loop guard fires on the second and later ack within the sam
 
     const tool = createUsageAckMcpTool(ackStore, checkpointStore, () => now);
 
-    const first = await tool.invoke(createAck({ checkpoint_id: "checkpoint-1" }));
+    const first = await tool.invoke(createAckForCheckpoint("checkpoint-1"));
     now += 1;
-    const second = await tool.invoke(createAck({ checkpoint_id: "checkpoint-2" }));
+    const second = await tool.invoke(createAckForCheckpoint("checkpoint-2"));
     now += 1;
-    const third = await tool.invoke(createAck({ checkpoint_id: "checkpoint-3" }));
+    const third = await tool.invoke(createAckForCheckpoint("checkpoint-3"));
 
     assert.deepEqual(first, {
       ack: true,
@@ -80,16 +96,86 @@ test("needs_followup loop guard fires on the second and later ack within the sam
         sufficiency: "needs_followup",
         since: 0
       }),
-      3
+      1
     );
+    assert.equal(ackStore.get("checkpoint-2")?.sufficiency, "needs_external");
+    assert.equal(ackStore.get("checkpoint-3")?.sufficiency, "needs_external");
     assert.deepEqual(second, {
       ack: true,
-      degraded: "needs_followup_loop_limit"
+      degraded: "needs_followup_loop_limit",
+      forced_sufficiency: "needs_external"
     });
     assert.deepEqual(third, {
       ack: true,
-      degraded: "needs_followup_loop_limit"
+      degraded: "needs_followup_loop_limit",
+      forced_sufficiency: "needs_external"
     });
+  } finally {
+    db.close();
+  }
+});
+
+test("same-checkpoint retries remain idempotent and keep follow_up_hint", async () => {
+  const db = new SQLiteAdapter(":memory:");
+  let now = 1_000;
+
+  try {
+    const ackStore = createAckStore(db, { now: () => now });
+    const checkpointStore = createCheckpointStore(db, { now: () => now });
+    seedCheckpoint(checkpointStore, "checkpoint-1", "session-loop");
+    const tool = createUsageAckMcpTool(ackStore, checkpointStore, () => now);
+
+    const first = await tool.invoke(createAckForCheckpoint("checkpoint-1"));
+    now += 1;
+    const second = await tool.invoke(createAckForCheckpoint("checkpoint-1"));
+
+    assert.deepEqual(first, {
+      ack: true,
+      follow_up_hint: {
+        suggested_intent: "followup"
+      }
+    });
+    assert.deepEqual(second, first);
+    assert.equal(
+      ackStore.countRecent({
+        session_id: "session-loop",
+        sufficiency: "needs_followup",
+        since: 0
+      }),
+      1
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("different checkpoint ids in the same session trigger forced needs_external on the second ack", async () => {
+  const db = new SQLiteAdapter(":memory:");
+  let now = 1_000;
+
+  try {
+    const ackStore = createAckStore(db, { now: () => now });
+    const checkpointStore = createCheckpointStore(db, { now: () => now });
+    seedCheckpoint(checkpointStore, "checkpoint-1", "session-loop");
+    seedCheckpoint(checkpointStore, "checkpoint-2", "session-loop");
+    const tool = createUsageAckMcpTool(ackStore, checkpointStore, () => now);
+
+    const first = await tool.invoke(createAckForCheckpoint("checkpoint-1"));
+    now += 1;
+    const second = await tool.invoke(createAckForCheckpoint("checkpoint-2"));
+
+    assert.deepEqual(first, {
+      ack: true,
+      follow_up_hint: {
+        suggested_intent: "followup"
+      }
+    });
+    assert.deepEqual(second, {
+      ack: true,
+      degraded: "needs_followup_loop_limit",
+      forced_sufficiency: "needs_external"
+    });
+    assert.equal(ackStore.get("checkpoint-2")?.sufficiency, "needs_external");
   } finally {
     db.close();
   }
@@ -108,11 +194,11 @@ test("needs_followup loop guard counts sessions independently", async () => {
 
     const tool = createUsageAckMcpTool(ackStore, checkpointStore, () => now);
 
-    await tool.invoke(createAck({ checkpoint_id: "checkpoint-a1" }));
+    await tool.invoke(createAckForCheckpoint("checkpoint-a1"));
     now += 1;
-    await tool.invoke(createAck({ checkpoint_id: "checkpoint-a2" }));
+    await tool.invoke(createAckForCheckpoint("checkpoint-a2"));
     now += 1;
-    const result = await tool.invoke(createAck({ checkpoint_id: "checkpoint-b1" }));
+    const result = await tool.invoke(createAckForCheckpoint("checkpoint-b1"));
 
     assert.deepEqual(result, {
       ack: true,
@@ -140,6 +226,7 @@ test("loop guard ignores non-needs_followup acknowledgements", async () => {
     await tool.invoke(
       createAck({
         checkpoint_id: "checkpoint-1",
+        bundle_digest: "bundle-checkpoint-1",
         sufficiency: "sufficient"
       })
     );
@@ -147,6 +234,7 @@ test("loop guard ignores non-needs_followup acknowledgements", async () => {
     const result = await tool.invoke(
       createAck({
         checkpoint_id: "checkpoint-2",
+        bundle_digest: "bundle-checkpoint-2",
         sufficiency: "needs_external"
       })
     );
@@ -172,9 +260,9 @@ test("loop guard only counts acknowledgements inside the configured window", asy
 
     const tool = createUsageAckMcpTool(ackStore, checkpointStore, () => now);
 
-    await tool.invoke(createAck({ checkpoint_id: "checkpoint-1" }));
+    await tool.invoke(createAckForCheckpoint("checkpoint-1"));
     now += 11;
-    const result = await tool.invoke(createAck({ checkpoint_id: "checkpoint-2" }));
+    const result = await tool.invoke(createAckForCheckpoint("checkpoint-2"));
 
     assert.deepEqual(result, {
       ack: true,
@@ -250,7 +338,7 @@ test("countRecent failures do not block the host turn", async () => {
     seedCheckpoint(checkpointStore, "checkpoint-1", "session-throw");
     const tool = createUsageAckMcpTool(ackStore, checkpointStore, () => 1_000);
 
-    const result = await tool.invoke(createAck({ checkpoint_id: "checkpoint-1" }));
+    const result = await tool.invoke(createAckForCheckpoint("checkpoint-1"));
 
     assert.deepEqual(result, {
       ack: true,

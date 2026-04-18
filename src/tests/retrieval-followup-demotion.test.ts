@@ -12,6 +12,8 @@ import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
 import { SourceRegistry, type SourceAdapter, type SourceRecord } from "../retrieval/index.js";
 import type { Intent, SourceKind } from "../core/contracts/enums.js";
 import {
+  type CheckpointFailureRecord,
+  type CheckpointFailureStore,
   createCheckpointStore,
   type CheckpointStore
 } from "../usage/index.js";
@@ -102,6 +104,34 @@ function getSectionRecordIds(
     response.bundle.sections.find((section) => section.source_kind === source_kind)?.records.map((record) => record.id) ??
     []
   );
+}
+
+function createFailureStoreHarness(): {
+  failures: CheckpointFailureRecord[];
+  store: CheckpointFailureStore;
+} {
+  const failures: CheckpointFailureRecord[] = [];
+
+  return {
+    failures,
+    store: {
+      put(record) {
+        const stored = {
+          ...record,
+          id: `failure-${failures.length + 1}`,
+          occurred_at: failures.length + 1
+        };
+        failures.push(stored);
+        return stored;
+      },
+      listRecent() {
+        return [...failures];
+      },
+      size() {
+        return failures.length;
+      }
+    }
+  };
 }
 
 test("lookup persists a checkpoint whose record_ids use source-prefixed composite keys", () => {
@@ -261,7 +291,7 @@ test("followup without a checkpoint store skips prev lookup but still uses the f
   assert.deepEqual(getSectionRecordIds(response, "wiki"), ["fresh"]);
 });
 
-test("error and truncated responses do not write checkpoints", () => {
+test("error responses do not write checkpoints", () => {
   const puts: PendingCheckpointRecord[] = [];
   const checkpointStore: CheckpointStore = {
     put(record: PendingCheckpointRecord): void {
@@ -289,22 +319,52 @@ test("error and truncated responses do not write checkpoints", () => {
     checkpoint_store: checkpointStore
   }).resolve(createRequest("lookup"));
 
-  const truncatedResponse = new RetrievalOrchestrator({
-    registry: createRegistry([
-      createFakeAdapter("vega_memory", [createRecord("vega_memory", "vm-1", 0.8, "x".repeat(320))]),
-      createFakeAdapter("wiki", [createRecord("wiki", "wiki-1", 0.8, "x".repeat(320))]),
-      createFakeAdapter("fact_claim", [createRecord("fact_claim", "fact-1", 0.8, "x".repeat(320))])
-    ]),
+  assert.equal(errorResponse.bundle_digest, "error");
+  assert.equal(puts.length, 0);
+});
+
+test("truncated responses write checkpoints to enable followup", () => {
+  const db = new SQLiteAdapter(":memory:");
+  let now = 1_000;
+
+  try {
+    const checkpointStore = createCheckpointStore(db, {
+      ttl_ms: 1_800_000,
+      now: () => now
+    });
+    const initial = new RetrievalOrchestrator({
+      registry: createRegistry([
+        createFakeAdapter("vega_memory", [createRecord("vega_memory", "vm-1", 0.8, "x".repeat(320))]),
+        createFakeAdapter("wiki", [createRecord("wiki", "wiki-1", 0.8, "x".repeat(320))]),
+        createFakeAdapter("fact_claim", [createRecord("fact_claim", "fact-1", 0.8, "x".repeat(320))])
+      ]),
     checkpoint_store: checkpointStore,
     budget_config: {
-      max_tokens_by_mode: { L0: 1, L1: 1, L2: 1, L3: 1 },
-      host_memory_file_reserved: 0
-    }
-  }).resolve(createRequest("lookup", { session_id: "session-truncated" }));
+        max_tokens_by_mode: { L0: 1, L1: 1, L2: 1, L3: 1 },
+        host_memory_file_reserved: 0
+      }
+    }).resolve(createRequest("lookup", { session_id: "session-truncated" }));
 
-  assert.equal(errorResponse.bundle_digest, "error");
-  assert.equal(truncatedResponse.sufficiency_hint, "may_need_followup");
-  assert.equal(puts.length, 0);
+    now += 1;
+    const followup = new RetrievalOrchestrator({
+      registry: createFollowupRegistry({
+        wiki: [createRecord("wiki", "fresh", 0.5)]
+      }),
+      checkpoint_store: checkpointStore
+    }).resolve(
+      createRequest("followup", {
+        session_id: "session-truncated",
+        prev_checkpoint_id: initial.checkpoint_id
+      })
+    );
+
+    assert.equal(initial.sufficiency_hint, "may_need_followup");
+    assert.ok(checkpointStore.get(initial.checkpoint_id));
+    assert.notEqual(followup.bundle_digest, "error");
+    assert.notDeepEqual(followup.bundle.sections, []);
+  } finally {
+    db.close();
+  }
 });
 
 test("demotion keys remain isolated across source kinds even when ids collide", () => {
@@ -358,3 +418,76 @@ test("demotion keys remain isolated across source kinds even when ids collide", 
     db.close();
   }
 });
+
+for (const mismatchCase of [
+  {
+    name: "cross-session mismatches are downgraded to prev_checkpoint_not_found",
+    overrides: { session_id: "session-other" },
+    mismatch_field: "session_id"
+  },
+  {
+    name: "cross-project mismatches are downgraded to prev_checkpoint_not_found",
+    overrides: { project: "other-project" },
+    mismatch_field: "project"
+  },
+  {
+    name: "cross-cwd mismatches are downgraded to prev_checkpoint_not_found",
+    overrides: { cwd: "/tmp/other-project" },
+    mismatch_field: "cwd"
+  },
+  {
+    name: "cross-surface mismatches are downgraded to prev_checkpoint_not_found",
+    overrides: { surface: "api" as const },
+    mismatch_field: "surface"
+  }
+] as const) {
+  test(mismatchCase.name, () => {
+    const db = new SQLiteAdapter(":memory:");
+    const { failures, store: failureStore } = createFailureStoreHarness();
+
+    try {
+      const checkpointStore = createCheckpointStore(db, {
+        ttl_ms: 1_800_000,
+        now: () => 1_000
+      });
+      checkpointStore.put({
+        checkpoint_id: "prev-checkpoint",
+        bundle_digest: "bundle-prev",
+        intent: "lookup",
+        surface: "codex",
+        session_id: "session-followup",
+        project: "vega-memory",
+        cwd: "/Users/johnmacmini/workspace/vega-memory",
+        query_hash: "query-hash-prev",
+        mode: "L1",
+        profile_used: "lookup",
+        ranker_version: "v1.0",
+        record_ids: [recordKey("wiki", "repeat")]
+      });
+
+      const response = new RetrievalOrchestrator({
+        registry: createFollowupRegistry({
+          wiki: [createRecord("wiki", "fresh", 0.5)]
+        }),
+        checkpoint_store: checkpointStore,
+        checkpoint_failure_store: failureStore
+      }).resolve(
+        createRequest("followup", {
+          prev_checkpoint_id: "prev-checkpoint",
+          ...mismatchCase.overrides
+        })
+      );
+
+      assert.equal(response.bundle_digest, "error");
+      assert.deepEqual(response.bundle.sections, []);
+      assert.equal(failures.length, 1);
+      assert.equal(failures[0]?.reason, "prev_checkpoint_context_mismatch");
+      assert.equal(
+        JSON.parse(failures[0]?.payload ?? "{}").mismatch_fields.includes(mismatchCase.mismatch_field),
+        true
+      );
+    } finally {
+      db.close();
+    }
+  });
+}

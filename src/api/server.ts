@@ -36,13 +36,17 @@ import {
   createCheckpointFailureStore,
   createCheckpointStore
 } from "../usage/index.js";
+import { buildPhase8Status } from "../usage/phase8-status.js";
 import { createUsageAckHttpHandler } from "../usage/usage-ack-handler.js";
 import { searchWikiPages } from "../wiki/search.js";
 
 const isAddressInfo = (value: string | AddressInfo | null): value is AddressInfo =>
   typeof value === "object" && value !== null;
 
-const shouldLogApiRequest = (path: string): boolean => path.startsWith("/api") && path !== "/api/health";
+const shouldLogApiRequest = (path: string): boolean =>
+  path.startsWith("/api") &&
+  path !== "/api/health" &&
+  path !== "/api/phase8_status";
 
 const UUID_SEGMENT_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -165,6 +169,19 @@ export function createAPIServer(
   const checkpointStore = !db.isPostgres ? createCheckpointStore(db) : undefined;
   const ackStore = !db.isPostgres ? createAckStore(db) : undefined;
   const checkpointFailureStore = !db.isPostgres ? createCheckpointFailureStore(db) : undefined;
+  const phase8Status = (): ReturnType<typeof buildPhase8Status> =>
+    buildPhase8Status({
+      isPostgres: db.isPostgres,
+      checkpointStore,
+      ackStore,
+      checkpointFailureStore
+    });
+
+  if (db.isPostgres) {
+    logger.warn(
+      "Phase 8 persistence disabled: CheckpointStore, AckStore, CheckpointFailureStore require SQLite backend. context.resolve/usage.ack still accept traffic but responses carry degraded flags."
+    );
+  }
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: createDefaultRegistry({
       repository: activeServices.repository,
@@ -242,6 +259,9 @@ export function createAPIServer(
     }
 
     res.type("text/plain").send(await metrics.getMetrics());
+  });
+  app.get("/api/phase8_status", (_req, res) => {
+    res.status(200).json(phase8Status());
   });
   app.use(createOidcRouter(config, activeServices.repository));
   app.use(createAuthMiddleware(config, activeServices.repository));

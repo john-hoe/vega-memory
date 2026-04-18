@@ -180,6 +180,41 @@ test("countRecent filters by session_id, sufficiency, and since", () => {
   }
 });
 
+test("countRecent counts distinct checkpoint ids and can exclude the current checkpoint", () => {
+  const db = new SQLiteAdapter(":memory:");
+  let now = 1_000;
+
+  try {
+    const store = createAckStore(db, { now: () => now });
+
+    store.put(createAck({ checkpoint_id: "checkpoint-1", sufficiency: "needs_followup" }));
+    now = 1_010;
+    store.put(createAck({ checkpoint_id: "checkpoint-1", sufficiency: "needs_followup" }));
+    now = 1_020;
+    store.put(createAck({ checkpoint_id: "checkpoint-2", sufficiency: "needs_followup" }));
+
+    assert.equal(
+      store.countRecent({
+        session_id: "session-1",
+        sufficiency: "needs_followup",
+        since: 0
+      }),
+      2
+    );
+    assert.equal(
+      store.countRecent({
+        session_id: "session-1",
+        sufficiency: "needs_followup",
+        since: 0,
+        exclude_checkpoint_id: "checkpoint-2"
+      }),
+      1
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test("applyAckStoreMigration upgrades the 7b schema and remains idempotent", () => {
   const db = new SQLiteAdapter(":memory:");
 

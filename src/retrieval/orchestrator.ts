@@ -170,37 +170,55 @@ export class RetrievalOrchestrator {
     const mode = resolveMode(request);
     let demote_ids: ReadonlySet<string> | undefined;
 
-    if (request.intent === "followup" && this.#checkpointStore) {
-      const previousCheckpoint = this.#checkpointStore.get(request.prev_checkpoint_id!);
+    try {
+      if (request.intent === "followup" && this.#checkpointStore) {
+        const previousCheckpoint = this.#checkpointStore.get(request.prev_checkpoint_id!);
+        const mismatch_fields = previousCheckpoint === undefined
+          ? []
+          : [
+              ...(previousCheckpoint.session_id !== request.session_id ? ["session_id"] : []),
+              ...(previousCheckpoint.surface !== request.surface ? ["surface"] : []),
+              ...(previousCheckpoint.project !== (request.project ?? null) ? ["project"] : []),
+              ...(previousCheckpoint.cwd !== (request.cwd ?? null) ? ["cwd"] : [])
+            ];
 
-      if (previousCheckpoint === undefined) {
-        traceLogger.warn("Previous checkpoint unavailable for followup", {
-          checkpoint_id,
-          prev_checkpoint_id: request.prev_checkpoint_id
-        });
-        this.#recordFailure({
-          checkpoint_id,
-          reason: "prev_checkpoint_not_found",
-          request,
-          mode,
-          profile_used,
-          ranker_version,
-          payload: {
-            prev_checkpoint_id: request.prev_checkpoint_id ?? null
-          }
-        });
-        return this.#errorResponse(
-          checkpoint_id,
-          "prev_checkpoint_not_found",
-          profile_used,
-          ranker_version
-        );
+        if (previousCheckpoint === undefined || mismatch_fields.length > 0) {
+          traceLogger.warn("Previous checkpoint unavailable for followup", {
+            checkpoint_id,
+            prev_checkpoint_id: request.prev_checkpoint_id,
+            ...(mismatch_fields.length > 0 ? { mismatch_fields } : {})
+          });
+          this.#recordFailure({
+            checkpoint_id,
+            reason:
+              previousCheckpoint === undefined
+                ? "prev_checkpoint_not_found"
+                : "prev_checkpoint_context_mismatch",
+            request,
+            mode,
+            profile_used,
+            ranker_version,
+            payload:
+              previousCheckpoint === undefined
+                ? {
+                    prev_checkpoint_id: request.prev_checkpoint_id ?? null
+                  }
+                : {
+                    prev_checkpoint_id: request.prev_checkpoint_id ?? null,
+                    mismatch_fields
+                  }
+          });
+          return this.#errorResponse(
+            checkpoint_id,
+            "prev_checkpoint_not_found",
+            profile_used,
+            ranker_version
+          );
+        }
+
+        demote_ids = new Set(previousCheckpoint.record_ids);
       }
 
-      demote_ids = new Set(previousCheckpoint.record_ids);
-    }
-
-    try {
       const profile = getProfile(request.intent);
 
       traceLogger.info("Starting retrieval orchestration", {
@@ -263,11 +281,7 @@ export class RetrievalOrchestrator {
         this.#resolveCache.set(request, response);
       }
 
-      if (
-        this.#checkpointStore &&
-        response.bundle_digest !== "error" &&
-        assembly.truncated_count === 0
-      ) {
+      if (this.#checkpointStore && response.bundle_digest !== "error") {
         const record: Omit<CheckpointRecord, "created_at" | "ttl_expires_at"> = {
           checkpoint_id,
           bundle_digest: assembly.bundle_digest,

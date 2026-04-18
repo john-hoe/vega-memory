@@ -632,6 +632,12 @@ export function createMCPServer({
   const checkpointFailureStore = !activeRepository.db.isPostgres
     ? createCheckpointFailureStore(activeRepository.db)
     : undefined;
+
+  if (activeRepository.db.isPostgres) {
+    logger.warn(
+      "Phase 8 persistence disabled: CheckpointStore, AckStore, CheckpointFailureStore require SQLite backend. context.resolve/usage.ack still accept traffic but responses carry degraded flags."
+    );
+  }
   const observer = {
     enabled: config.observerEnabled,
     service: observerService

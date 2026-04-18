@@ -16,6 +16,7 @@ export interface AckCountFilter {
   session_id: string;
   sufficiency: Sufficiency;
   since: number;
+  exclude_checkpoint_id?: string;
 }
 
 export interface AckStore {
@@ -117,12 +118,16 @@ export function createAckStore(
     FROM ${USAGE_ACKS_TABLE}
     WHERE checkpoint_id = ?`
   );
-  const countRecentStatement = db.prepare<[string, Sufficiency, number], { count: number }>(
-    `SELECT COUNT(*) as count
+  const countRecentStatement = db.prepare<
+    [string, Sufficiency, number, string | null, string | null],
+    { count: number }
+  >(
+    `SELECT COUNT(DISTINCT checkpoint_id) as count
     FROM ${USAGE_ACKS_TABLE}
     WHERE session_id = ?
       AND sufficiency = ?
-      AND acked_at >= ?`
+      AND acked_at >= ?
+      AND (? IS NULL OR checkpoint_id != ?)`
   );
 
   return {
@@ -152,10 +157,13 @@ export function createAckStore(
       return getStatement.get(checkpoint_id);
     },
     countRecent(filter: AckCountFilter): number {
+      const exclude_checkpoint_id = filter.exclude_checkpoint_id ?? null;
       return countRecentStatement.get(
         filter.session_id,
         filter.sufficiency,
-        filter.since
+        filter.since,
+        exclude_checkpoint_id,
+        exclude_checkpoint_id
       )?.count ?? 0;
     },
     size(): number {

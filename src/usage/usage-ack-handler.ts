@@ -12,6 +12,7 @@ import type { CheckpointStore } from "./checkpoint-store.js";
 
 export type UsageAckDegradedReason =
   | "usage_ack_unavailable"
+  | "bundle_digest_mismatch"
   | "persist_failed"
   | "needs_followup_loop_limit";
 
@@ -21,6 +22,7 @@ export interface UsageAckResponse {
     suggested_intent: "followup";
   };
   degraded?: UsageAckDegradedReason;
+  forced_sufficiency?: "needs_external";
 }
 
 export interface UsageAckMcpTool {
@@ -117,6 +119,7 @@ function processUsageAck(
   const loopGuardWindowMs = resolveLoopGuardWindowMs();
   let session_id: string | null = null;
   let loopGuardFired = false;
+  let digestMismatch = false;
 
   if (checkpointStore !== undefined) {
     try {
@@ -128,6 +131,15 @@ function processUsageAck(
         });
       } else {
         session_id = checkpoint.session_id;
+
+        if (checkpoint.bundle_digest !== ack.bundle_digest) {
+          digestMismatch = true;
+          logger.warn("ack_bundle_digest_mismatch", {
+            checkpoint_id: ack.checkpoint_id,
+            expected: checkpoint.bundle_digest,
+            received: ack.bundle_digest
+          });
+        }
       }
     } catch (error) {
       logger.warn("ack_checkpoint_lookup_failed", {
@@ -140,13 +152,15 @@ function processUsageAck(
   if (
     ack.sufficiency === "needs_followup" &&
     session_id !== null &&
-    ackStore !== undefined
+    ackStore !== undefined &&
+    !digestMismatch
   ) {
     try {
       loopGuardFired = ackStore.countRecent({
         session_id,
         sufficiency: "needs_followup",
-        since: now() - loopGuardWindowMs
+        since: now() - loopGuardWindowMs,
+        exclude_checkpoint_id: ack.checkpoint_id
       }) >= 1;
     } catch (error) {
       logger.warn("loop_guard_query_failed", {
@@ -166,14 +180,28 @@ function processUsageAck(
     };
   }
 
+  if (digestMismatch) {
+    return {
+      ack: true,
+      degraded: "bundle_digest_mismatch"
+    };
+  }
+
+  const ackToPersist = loopGuardFired
+    ? {
+        ...ack,
+        sufficiency: "needs_external" as const
+      }
+    : ack;
+
   try {
     ackStore.put({
-      checkpoint_id: ack.checkpoint_id,
-      bundle_digest: ack.bundle_digest,
-      sufficiency: ack.sufficiency,
-      host_tier: ack.host_tier,
-      evidence: ack.evidence ?? null,
-      turn_elapsed_ms: ack.turn_elapsed_ms ?? null,
+      checkpoint_id: ackToPersist.checkpoint_id,
+      bundle_digest: ackToPersist.bundle_digest,
+      sufficiency: ackToPersist.sufficiency,
+      host_tier: ackToPersist.host_tier,
+      evidence: ackToPersist.evidence ?? null,
+      turn_elapsed_ms: ackToPersist.turn_elapsed_ms ?? null,
       session_id
     });
   } catch (error) {
@@ -188,8 +216,11 @@ function processUsageAck(
   }
 
   if (loopGuardFired) {
-    delete response.follow_up_hint;
-    response.degraded = "needs_followup_loop_limit";
+    return {
+      ack: true,
+      degraded: "needs_followup_loop_limit",
+      forced_sufficiency: "needs_external"
+    };
   }
 
   return response;

@@ -1,5 +1,6 @@
 import type { CheckpointRecord } from "../core/contracts/checkpoint-record.js";
 import { CHECKPOINT_RECORD_SCHEMA } from "../core/contracts/checkpoint-record.js";
+import { createLogger } from "../core/logging/index.js";
 import type { DatabaseAdapter } from "../db/adapter.js";
 
 export interface CheckpointStore {
@@ -33,6 +34,7 @@ interface CheckpointRow {
 
 export const RESOLVED_CHECKPOINTS_TABLE = "resolved_checkpoints";
 export const DEFAULT_CHECKPOINT_TTL_MS = 1_800_000;
+const logger = createLogger({ name: "checkpoint-store" });
 
 const CHECKPOINT_STORE_DDL = `
   CREATE TABLE IF NOT EXISTS ${RESOLVED_CHECKPOINTS_TABLE} (
@@ -181,12 +183,20 @@ export function createCheckpointStore(
       );
     },
     get(checkpoint_id: string, currentNow = now()): CheckpointRecord | undefined {
-      const row = getStatement.get(checkpoint_id);
-      if (row === undefined || row.ttl_expires_at <= currentNow) {
+      try {
+        const row = getStatement.get(checkpoint_id);
+        if (row === undefined || row.ttl_expires_at <= currentNow) {
+          return undefined;
+        }
+
+        return toCheckpointRecord(row);
+      } catch (error) {
+        logger.warn("CheckpointStore.get failed to parse row", {
+          checkpoint_id,
+          error: error instanceof Error ? error.message : String(error)
+        });
         return undefined;
       }
-
-      return toCheckpointRecord(row);
     },
     evictExpired(currentNow = now()): number {
       const before = db.get<{ count: number }>(

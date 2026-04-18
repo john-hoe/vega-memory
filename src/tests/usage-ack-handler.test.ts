@@ -222,6 +222,81 @@ test("HTTP handler still stores the ack when checkpoint_store is omitted", async
   }
 });
 
+test("HTTP handler degrades to bundle_digest_mismatch and skips persistence when checkpoint digest differs", async () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const ackStore = createAckStore(db);
+    const checkpointStore = createCheckpointStore(db);
+    checkpointStore.put({
+      checkpoint_id: "checkpoint-1",
+      bundle_digest: "bundle-expected",
+      intent: "lookup",
+      surface: "codex",
+      session_id: "session-1",
+      project: "vega-memory",
+      cwd: "/Users/johnmacmini/workspace/vega-memory",
+      query_hash: "query-1",
+      mode: "L1",
+      profile_used: "lookup",
+      ranker_version: "v1.0",
+      record_ids: ["wiki:wiki-1"]
+    });
+    const handler = createUsageAckHttpHandler(ackStore, checkpointStore);
+    const response = createResponse();
+
+    await handler(
+      {
+        body: createAck({
+          bundle_digest: "bundle-received",
+          sufficiency: "needs_followup"
+        })
+      } as never,
+      response as never
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body, {
+      ack: true,
+      degraded: "bundle_digest_mismatch"
+    });
+    assert.equal(ackStore.size(), 0);
+  } finally {
+    db.close();
+  }
+});
+
+test("checkpoint_store omission skips digest validation and preserves existing ack behavior", async () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const ackStore = createAckStore(db);
+    const handler = createUsageAckHttpHandler(ackStore);
+    const response = createResponse();
+
+    await handler(
+      {
+        body: createAck({
+          bundle_digest: "bundle-received",
+          sufficiency: "needs_followup"
+        })
+      } as never,
+      response as never
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body, {
+      ack: true,
+      follow_up_hint: {
+        suggested_intent: "followup"
+      }
+    });
+    assert.equal(ackStore.size(), 1);
+  } finally {
+    db.close();
+  }
+});
+
 test("HTTP handler degrades to usage_ack_unavailable when no ack store is configured", async () => {
   const handler = createUsageAckHttpHandler(undefined);
   const response = createResponse();

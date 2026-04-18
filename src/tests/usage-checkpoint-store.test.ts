@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { CheckpointRecord } from "../core/contracts/index.js";
 import { SQLiteAdapter } from "../db/sqlite-adapter.js";
+import { RESOLVED_CHECKPOINTS_TABLE } from "../usage/checkpoint-store.js";
 import {
   applyCheckpointStoreMigration,
   createCheckpointStore
@@ -154,6 +155,85 @@ test("applyCheckpointStoreMigration is idempotent", () => {
   try {
     assert.doesNotThrow(() => applyCheckpointStoreMigration(db));
     assert.doesNotThrow(() => applyCheckpointStoreMigration(db));
+  } finally {
+    db.close();
+  }
+});
+
+test("get returns undefined instead of throwing for corrupt checkpoint rows", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const store = createCheckpointStore(db, { now: () => 1_000 });
+
+    db.run(
+      `INSERT INTO ${RESOLVED_CHECKPOINTS_TABLE} (
+        checkpoint_id,
+        bundle_digest,
+        intent,
+        surface,
+        session_id,
+        project,
+        cwd,
+        query_hash,
+        mode,
+        profile_used,
+        ranker_version,
+        record_ids,
+        created_at,
+        ttl_expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      "bad-json",
+      "bundle-1",
+      "lookup",
+      "codex",
+      "session-1",
+      "vega-memory",
+      "/Users/johnmacmini/workspace/vega-memory",
+      "query-1",
+      "L1",
+      "lookup",
+      "v1.0",
+      "{not-json",
+      1_000,
+      2_000
+    );
+    db.run(
+      `INSERT INTO ${RESOLVED_CHECKPOINTS_TABLE} (
+        checkpoint_id,
+        bundle_digest,
+        intent,
+        surface,
+        session_id,
+        project,
+        cwd,
+        query_hash,
+        mode,
+        profile_used,
+        ranker_version,
+        record_ids,
+        created_at,
+        ttl_expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      "bad-ttl",
+      "bundle-2",
+      "lookup",
+      "codex",
+      "session-1",
+      "vega-memory",
+      "/Users/johnmacmini/workspace/vega-memory",
+      "query-2",
+      "L1",
+      "lookup",
+      "v1.0",
+      "[\"wiki:wiki-1\"]",
+      1_000,
+      "oops"
+    );
+
+    assert.doesNotThrow(() => store.get("bad-json"));
+    assert.equal(store.get("bad-json"), undefined);
+    assert.equal(store.get("bad-ttl"), undefined);
   } finally {
     db.close();
   }
