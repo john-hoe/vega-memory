@@ -30,6 +30,7 @@ import { StructuredLogger } from "../monitoring/logger.js";
 import { MetricsCollector } from "../monitoring/metrics.js";
 import { SentryStub } from "../monitoring/sentry.js";
 import { createContextResolveHttpHandler } from "../retrieval/context-resolve-handler.js";
+import { createCircuitBreaker } from "../retrieval/circuit-breaker.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
 import { createCandidateMemoryAdapter } from "../retrieval/sources/candidate-memory.js";
@@ -208,6 +209,10 @@ export function createAPIServer(
   const checkpointStore = !db.isPostgres ? createCheckpointStore(db) : undefined;
   const ackStore = !db.isPostgres ? createAckStore(db) : undefined;
   const checkpointFailureStore = !db.isPostgres ? createCheckpointFailureStore(db) : undefined;
+  const circuitBreaker =
+    !db.isPostgres && checkpointStore && ackStore
+      ? createCircuitBreaker()
+      : undefined;
   const candidateRepository = !db.isPostgres ? createCandidateRepository(db) : undefined;
   const promotionAuditStore = !db.isPostgres ? createPromotionAuditStore(db) : undefined;
   const promotionPolicy = createDefaultPromotionPolicy();
@@ -252,7 +257,8 @@ export function createAPIServer(
       archiveService
     }),
     checkpoint_store: checkpointStore,
-    checkpoint_failure_store: checkpointFailureStore
+    checkpoint_failure_store: checkpointFailureStore,
+    circuit_breaker: circuitBreaker
   });
   void promotionOrchestrator;
 
@@ -333,7 +339,7 @@ export function createAPIServer(
   app.use(["/ingest_event", "/context_resolve", "/usage_ack"], requireAuthorizedHttpRoute);
   app.post("/ingest_event", createIngestEventHttpHandler(db));
   app.post("/context_resolve", createContextResolveHttpHandler(retrievalOrchestrator));
-  app.post("/usage_ack", createUsageAckHttpHandler(ackStore, checkpointStore));
+  app.post("/usage_ack", createUsageAckHttpHandler(ackStore, checkpointStore, undefined, circuitBreaker));
   app.use(
     createRouter({
       ...activeServices,

@@ -56,6 +56,13 @@ import {
   createPromotionEvaluator,
   createPromotionOrchestrator
 } from "../promotion/index.js";
+import {
+  CIRCUIT_BREAKER_RESET_INPUT_SCHEMA,
+  CIRCUIT_BREAKER_STATUS_INPUT_SCHEMA,
+  createCircuitBreakerResetMcpTool,
+  createCircuitBreakerStatusMcpTool
+} from "../retrieval/circuit-breaker-mcp-tools.js";
+import { createCircuitBreaker } from "../retrieval/circuit-breaker.js";
 import { createContextResolveMcpTool } from "../retrieval/context-resolve-handler.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
@@ -679,6 +686,10 @@ export function createMCPServer({
   const checkpointFailureStore = !activeRepository.db.isPostgres
     ? createCheckpointFailureStore(activeRepository.db)
     : undefined;
+  const circuitBreaker =
+    !activeRepository.db.isPostgres && checkpointStore && ackStore
+      ? createCircuitBreaker()
+      : undefined;
   const candidateRepository = !activeRepository.db.isPostgres
     ? createCandidateRepository(activeRepository.db)
     : undefined;
@@ -737,11 +748,14 @@ export function createMCPServer({
       archiveService: retrievalArchiveService
     }),
     checkpoint_store: checkpointStore,
-    checkpoint_failure_store: checkpointFailureStore
+    checkpoint_failure_store: checkpointFailureStore,
+    circuit_breaker: circuitBreaker
   });
   const ingestEventTool = createIngestEventMcpTool(activeRepository.db);
   const contextResolveTool = createContextResolveMcpTool(retrievalOrchestrator);
-  const usageAckTool = createUsageAckMcpTool(ackStore, checkpointStore);
+  const usageAckTool = createUsageAckMcpTool(ackStore, checkpointStore, undefined, circuitBreaker);
+  const circuitBreakerStatusTool = createCircuitBreakerStatusMcpTool(circuitBreaker);
+  const circuitBreakerResetTool = createCircuitBreakerResetMcpTool(circuitBreaker);
   const candidateCreateTool = createCandidateCreateMcpTool(candidateRepository);
   const candidateListTool = createCandidateListMcpTool(candidateRepository);
   const candidatePromoteTool = createCandidatePromoteMcpTool(promotionOrchestrator);
@@ -2002,6 +2016,30 @@ export function createMCPServer({
         };
       })
   );
+
+  for (const tool of [circuitBreakerStatusTool, circuitBreakerResetTool]) {
+    const inputSchema =
+      tool.name === "circuit_breaker_status"
+        ? CIRCUIT_BREAKER_STATUS_INPUT_SCHEMA.shape
+        : CIRCUIT_BREAKER_RESET_INPUT_SCHEMA.shape;
+
+    server.registerTool(
+      tool.name,
+      {
+        description: tool.description,
+        inputSchema
+      },
+      async (args: unknown) =>
+        runTool(repository, tool.name, args, observer, async () => {
+          const result = await tool.invoke(args);
+
+          return {
+            result,
+            resultCount: 1
+          };
+        })
+    );
+  }
 
   const candidateToolRegistrar = server as unknown as {
     registerTool(

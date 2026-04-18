@@ -14,12 +14,22 @@ import type { CheckpointStore } from "../usage/checkpoint-store.js";
 
 import { applyBudget, type BudgetConfig, DEFAULT_BUDGET_CONFIG } from "./budget.js";
 import { assembleBundle } from "./bundler.js";
+import type {
+  CircuitBreaker,
+  CircuitBreakerTripReason
+} from "./circuit-breaker.js";
 import { getProfile } from "./profiles.js";
 import { rank, type RankerConfig, DEFAULT_RANKER_CONFIG } from "./ranker.js";
 import { createResolveCache, type ResolveCache } from "./resolve-cache.js";
 import { classifySufficiency } from "./sufficiency-classifier.js";
 import type { SourceRegistry } from "./sources/registry.js";
 import type { SourceSearchInput } from "./sources/types.js";
+
+export interface CircuitBreakerSignal {
+  open: true;
+  tripped_at: number;
+  reasons: CircuitBreakerTripReason[];
+}
 
 export interface ContextResolveResponse {
   checkpoint_id: string;
@@ -28,6 +38,7 @@ export interface ContextResolveResponse {
   sufficiency_hint?: "likely_sufficient" | "may_need_followup";
   profile_used: string;
   ranker_version: string;
+  circuit_breaker?: CircuitBreakerSignal;
 }
 
 export interface OrchestratorConfig {
@@ -37,6 +48,7 @@ export interface OrchestratorConfig {
   resolve_cache?: ResolveCache;
   checkpoint_store?: CheckpointStore;
   checkpoint_failure_store?: CheckpointFailureStore;
+  circuit_breaker?: CircuitBreaker;
 }
 
 const logger = createLogger({ name: "retrieval-orchestrator" });
@@ -78,6 +90,30 @@ function resolveBudgetConfig(
   };
 }
 
+function applyBudgetReduction(
+  config: BudgetConfig | undefined,
+  factor: number
+): BudgetConfig {
+  const base = {
+    max_tokens_by_mode: {
+      ...DEFAULT_BUDGET_CONFIG.max_tokens_by_mode,
+      ...(config?.max_tokens_by_mode ?? {})
+    },
+    host_memory_file_reserved:
+      config?.host_memory_file_reserved ?? DEFAULT_BUDGET_CONFIG.host_memory_file_reserved
+  };
+
+  return {
+    ...base,
+    max_tokens_by_mode: {
+      L0: Math.round(base.max_tokens_by_mode.L0 * factor),
+      L1: Math.round(base.max_tokens_by_mode.L1 * factor),
+      L2: Math.round(base.max_tokens_by_mode.L2 * factor),
+      L3: Math.round(base.max_tokens_by_mode.L3 * factor)
+    }
+  };
+}
+
 export class RetrievalOrchestrator {
   readonly #registry: SourceRegistry;
   readonly #rankerConfig?: RankerConfig;
@@ -85,6 +121,7 @@ export class RetrievalOrchestrator {
   readonly #resolveCache: ResolveCache;
   readonly #checkpointStore?: CheckpointStore;
   readonly #checkpointFailureStore?: CheckpointFailureStore;
+  readonly #circuitBreaker?: CircuitBreaker;
 
   constructor(config: OrchestratorConfig) {
     this.#registry = config.registry;
@@ -93,6 +130,7 @@ export class RetrievalOrchestrator {
     this.#resolveCache = config.resolve_cache ?? createResolveCache();
     this.#checkpointStore = config.checkpoint_store;
     this.#checkpointFailureStore = config.checkpoint_failure_store;
+    this.#circuitBreaker = config.circuit_breaker;
   }
 
   #errorResponse(
@@ -161,10 +199,20 @@ export class RetrievalOrchestrator {
     const profile_used = request.intent;
     const ranker_version = resolveRankerVersion(this.#rankerConfig);
     const mode = resolveMode(request);
+    const breakerStatus = this.#circuitBreaker?.getStatus(request.surface);
+    const breakerOpen = breakerStatus?.state === "open";
+    const circuitBreakerSignal =
+      breakerOpen && breakerStatus?.tripped_at !== null
+        ? {
+            open: true as const,
+            tripped_at: breakerStatus.tripped_at,
+            reasons: [...breakerStatus.reasons]
+          }
+        : undefined;
     let demote_ids: ReadonlySet<string> | undefined;
-    const persistCheckpoint = (response: ContextResolveResponse): void => {
+    const persistCheckpoint = (response: ContextResolveResponse): boolean => {
       if (!this.#checkpointStore || response.bundle_digest === "error") {
-        return;
+        return false;
       }
 
       const record: Omit<CheckpointRecord, "created_at" | "ttl_expires_at"> = {
@@ -186,11 +234,13 @@ export class RetrievalOrchestrator {
 
       try {
         this.#checkpointStore.put(record);
+        return true;
       } catch (error) {
         traceLogger.warn("CheckpointStore put failed", {
           checkpoint_id: response.checkpoint_id,
           error: error instanceof Error ? error.message : String(error)
         });
+        return false;
       }
     };
 
@@ -215,14 +265,21 @@ export class RetrievalOrchestrator {
       );
     }
 
-    if (request.intent !== "followup") {
-      const cached = this.#resolveCache.get(request);
+      if (request.intent !== "followup") {
+        const cached = this.#resolveCache.get(request);
       if (cached !== undefined) {
         const response: ContextResolveResponse = {
           ...cached,
-          checkpoint_id
+          checkpoint_id,
+          ...(circuitBreakerSignal !== undefined
+            ? {
+                circuit_breaker: circuitBreakerSignal
+              }
+            : {})
         };
-        persistCheckpoint(response);
+        if (persistCheckpoint(response)) {
+          this.#circuitBreaker?.recordCheckpoint(request.surface);
+        }
         return response;
       }
     }
@@ -296,7 +353,12 @@ export class RetrievalOrchestrator {
       const budget = applyBudget(
         ranked,
         mode,
-        resolveBudgetConfig(mode, this.#budgetConfig, request.budget_override?.tokens)
+        breakerOpen && this.#circuitBreaker
+          ? applyBudgetReduction(
+              resolveBudgetConfig(mode, this.#budgetConfig, request.budget_override?.tokens),
+              this.#circuitBreaker.budget_reduction_factor
+            )
+          : resolveBudgetConfig(mode, this.#budgetConfig, request.budget_override?.tokens)
       );
       const assembly = assembleBundle(
         budget.budgeted,
@@ -331,14 +393,21 @@ export class RetrievalOrchestrator {
         bundle: assembly.bundle,
         sufficiency_hint,
         profile_used: profile.intent,
-        ranker_version
+        ranker_version,
+        ...(circuitBreakerSignal !== undefined
+          ? {
+              circuit_breaker: circuitBreakerSignal
+            }
+          : {})
       };
 
       if (request.intent !== "followup" && response.bundle_digest !== "error") {
         this.#resolveCache.set(request, response);
       }
 
-      persistCheckpoint(response);
+      if (persistCheckpoint(response)) {
+        this.#circuitBreaker?.recordCheckpoint(request.surface);
+      }
 
       return response;
     } catch (error) {

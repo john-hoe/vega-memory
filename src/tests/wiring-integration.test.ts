@@ -25,6 +25,11 @@ import {
   createCandidateListMcpTool,
   createCandidatePromoteMcpTool
 } from "../promotion/candidate-mcp-tools.js";
+import {
+  createCircuitBreakerResetMcpTool,
+  createCircuitBreakerStatusMcpTool
+} from "../retrieval/circuit-breaker-mcp-tools.js";
+import { createCircuitBreaker } from "../retrieval/circuit-breaker.js";
 import { RAW_INBOX_TABLE, applyRawInboxMigration } from "../ingestion/raw-inbox.js";
 import { SearchEngine } from "../search/engine.js";
 import { createUsageAckHttpHandler, createUsageAckMcpTool } from "../usage/usage-ack-handler.js";
@@ -220,6 +225,9 @@ test("ingest_event, context.resolve, usage.ack, and candidate MCP factories expo
       }
     } as never);
     const usageAckTool = createUsageAckMcpTool(createAckStore(db));
+    const circuitBreaker = createCircuitBreaker();
+    const circuitBreakerStatusTool = createCircuitBreakerStatusMcpTool(circuitBreaker);
+    const circuitBreakerResetTool = createCircuitBreakerResetMcpTool(circuitBreaker);
     const candidateCreateTool = createCandidateCreateMcpTool(undefined);
     const candidateListTool = createCandidateListMcpTool(undefined);
     const candidatePromoteTool = createCandidatePromoteMcpTool(undefined);
@@ -228,6 +236,8 @@ test("ingest_event, context.resolve, usage.ack, and candidate MCP factories expo
     assert.equal(ingestEventTool.name, "ingest_event");
     assert.equal(contextResolveTool.name, "context.resolve");
     assert.equal(usageAckTool.name, "usage.ack");
+    assert.equal(circuitBreakerStatusTool.name, "circuit_breaker_status");
+    assert.equal(circuitBreakerResetTool.name, "circuit_breaker_reset");
     assert.equal(candidateCreateTool.name, "candidate_create");
     assert.equal(candidateListTool.name, "candidate_list");
     assert.equal(candidatePromoteTool.name, "candidate_promote");
@@ -549,6 +559,19 @@ test("MCP server registers candidate promotion tools", async () => {
     assert.equal(typeof tools["candidate_list"]?.handler, "function");
     assert.equal(typeof tools["candidate_promote"]?.handler, "function");
     assert.equal(typeof tools["candidate_demote"]?.handler, "function");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("MCP server registers circuit breaker tools", async () => {
+  const harness = createMcpHarness();
+
+  try {
+    const tools = getRegisteredTools(harness.server);
+
+    assert.equal(typeof tools["circuit_breaker_status"]?.handler, "function");
+    assert.equal(typeof tools["circuit_breaker_reset"]?.handler, "function");
   } finally {
     await harness.cleanup();
   }

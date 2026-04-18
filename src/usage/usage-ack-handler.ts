@@ -6,6 +6,7 @@ import {
   type UsageAck
 } from "../core/contracts/usage-ack.js";
 import { createLogger } from "../core/logging/index.js";
+import type { CircuitBreaker } from "../retrieval/circuit-breaker.js";
 
 import type { AckRecord, AckStore } from "./ack-store.js";
 import type { CheckpointStore } from "./checkpoint-store.js";
@@ -125,15 +126,18 @@ function processUsageAck(
   ack: UsageAck,
   ackStore: AckStore | undefined,
   checkpointStore?: CheckpointStore,
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  circuitBreaker?: CircuitBreaker
 ): UsageAckResponse {
   const loopGuardWindowMs = resolveLoopGuardWindowMs();
   let session_id: string | null = null;
   let digestMismatch = false;
+  let previousCheckpoint;
 
   if (checkpointStore !== undefined) {
     try {
-      const checkpoint = checkpointStore.get(ack.checkpoint_id);
+      previousCheckpoint = checkpointStore.get(ack.checkpoint_id);
+      const checkpoint = previousCheckpoint;
 
       if (checkpoint === undefined) {
         logger.warn("ack_for_unknown_checkpoint", {
@@ -209,6 +213,10 @@ function processUsageAck(
     return buildResponseFromRecord(putResult.record);
   }
 
+  if (circuitBreaker !== undefined && checkpointStore !== undefined && previousCheckpoint !== undefined) {
+    circuitBreaker.recordAck(previousCheckpoint.surface, ack.sufficiency);
+  }
+
   if (ack.sufficiency === "needs_followup" && session_id !== null) {
     try {
       const loopGuardFired =
@@ -254,7 +262,8 @@ function processUsageAck(
 export function createUsageAckMcpTool(
   ackStore: AckStore | undefined,
   checkpointStore?: CheckpointStore,
-  now?: () => number
+  now?: () => number,
+  circuitBreaker?: CircuitBreaker
 ): UsageAckMcpTool {
   return {
     name: "usage.ack",
@@ -262,7 +271,7 @@ export function createUsageAckMcpTool(
     inputSchema: USAGE_ACK_INPUT_SCHEMA,
     async invoke(request: unknown): Promise<UsageAckResponse> {
       const parsed = USAGE_ACK_SCHEMA.parse(request);
-      return processUsageAck(parsed, ackStore, checkpointStore, now);
+      return processUsageAck(parsed, ackStore, checkpointStore, now, circuitBreaker);
     }
   };
 }
@@ -270,7 +279,8 @@ export function createUsageAckMcpTool(
 export function createUsageAckHttpHandler(
   ackStore: AckStore | undefined,
   checkpointStore?: CheckpointStore,
-  now?: () => number
+  now?: () => number,
+  circuitBreaker?: CircuitBreaker
 ): (req: Request, res: Response) => Promise<void> {
   return async (req: Request, res: Response): Promise<void> => {
     const parsed = USAGE_ACK_SCHEMA.safeParse(req.body);
@@ -283,6 +293,8 @@ export function createUsageAckHttpHandler(
       return;
     }
 
-    res.status(200).json(processUsageAck(parsed.data, ackStore, checkpointStore, now));
+    res
+      .status(200)
+      .json(processUsageAck(parsed.data, ackStore, checkpointStore, now, circuitBreaker));
   };
 }
