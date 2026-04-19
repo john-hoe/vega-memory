@@ -1,8 +1,11 @@
 import type { Sufficiency, Surface } from "../core/contracts/enums.js";
 import type { VegaMetricsRegistry } from "../monitoring/vega-metrics.js";
 
-export type CircuitBreakerTripReason = "low_ack_rate" | "high_followup_rate";
-export type CircuitBreakerState = "closed" | "open" | "cooldown";
+export const CIRCUIT_BREAKER_STATES = ["closed", "open", "cooldown"] as const;
+export const CIRCUIT_BREAKER_TRIP_REASONS = ["low_ack_rate", "high_followup_rate"] as const;
+
+export type CircuitBreakerTripReason = (typeof CIRCUIT_BREAKER_TRIP_REASONS)[number];
+export type CircuitBreakerState = (typeof CIRCUIT_BREAKER_STATES)[number];
 
 export interface SurfaceBreakerStatus {
   surface: Surface;

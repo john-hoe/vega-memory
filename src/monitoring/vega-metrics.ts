@@ -1,6 +1,11 @@
 import type { DatabaseAdapter, PreparedStatement } from "../db/adapter.js";
 import { SURFACES, type Surface } from "../core/contracts/enums.js";
-import type { CircuitBreakerState, CircuitBreakerTripReason } from "../retrieval/circuit-breaker.js";
+import {
+  CIRCUIT_BREAKER_STATES,
+  CIRCUIT_BREAKER_TRIP_REASONS,
+  type CircuitBreakerState,
+  type CircuitBreakerTripReason
+} from "../retrieval/circuit-breaker.js";
 
 import type { CounterMetric, GaugeMetric, MetricsCollector } from "./metrics.js";
 
@@ -30,8 +35,6 @@ export const RETRIEVAL_INTENTS = ["bootstrap", "lookup", "followup", "evidence"]
 export const SUFFICIENCY = ["sufficient", "needs_followup", "needs_external"] as const;
 export const HOST_TIER = ["T1", "T2", "T3"] as const;
 
-const CIRCUIT_BREAKER_STATES = ["closed", "open", "cooldown"] as const;
-const CIRCUIT_BREAKER_TRIP_REASONS = ["low_ack_rate", "high_followup_rate"] as const;
 const UNKNOWN_LABEL = "unknown";
 
 type RetrievalIntent = (typeof RETRIEVAL_INTENTS)[number];
@@ -171,7 +174,7 @@ export function createVegaMetrics(
 
     try {
       rawInboxAgeStatement ??= db.prepare<[], RawInboxAgeRow>(
-        "SELECT event_type, (julianday('now') - julianday(MIN(received_at))) * 86400.0 AS oldest_age_seconds FROM raw_inbox GROUP BY event_type HAVING COUNT(*) > 0 AND MIN(received_at) IS NOT NULL"
+        "SELECT event_type, (julianday('now') - julianday(MIN(received_at))) * 86400.0 AS oldest_age_seconds FROM raw_inbox GROUP BY event_type -- received_at is NOT NULL per raw_inbox schema; HAVING COUNT(*) > 0 is sufficient\nHAVING COUNT(*) > 0"
       );
       return rawInboxAgeStatement.all();
     } catch {

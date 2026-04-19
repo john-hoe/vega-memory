@@ -195,6 +195,10 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
   const dbPath = join(dataDir, "memory.db");
   const backupDir = join(dataDir, "backups");
   const restoreFetch = installEmbeddingMock([0.25, 0.75]);
+  const originalKey =
+    process.platform === "darwin"
+      ? await getKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT)
+      : null;
   const config: VegaConfig = {
     dbPath,
     ollamaBaseUrl: "http://localhost:11434",
@@ -218,6 +222,10 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
   const memoryService = new MemoryService(repository, config);
 
   try {
+    if (process.platform === "darwin") {
+      await deleteKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT);
+    }
+
     repository.createMemory(createMemory());
     mkdirSync(backupDir, { recursive: true });
     writeFileSync(join(backupDir, "memory-2000-01-01.db"), "stale", "utf8");
@@ -233,9 +241,16 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
     assert.notEqual(stored.embedding, null);
     assert.equal(existsSync(snapshotPath), true);
     assert.equal(backups.includes("memory-2000-01-01.db"), false);
-    assert.ok(backups.some((entry) => /^memory-\d{4}-\d{2}-\d{2}\.db(?:\.enc)?$/.test(entry)));
+    assert.ok(backups.some((entry) => /^memory-\d{4}-\d{2}-\d{2}\.db$/.test(entry)));
   } finally {
     restoreFetch();
+    if (process.platform === "darwin") {
+      if (originalKey === null) {
+        await deleteKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT);
+      } else {
+        await setKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT, originalKey);
+      }
+    }
     repository.close();
     rmSync(tempDir, { recursive: true, force: true });
   }
