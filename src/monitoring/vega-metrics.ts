@@ -156,7 +156,7 @@ export function createVegaMetrics(
 
     try {
       rawInboxRowsStatement ??= db.prepare<[], RawInboxCountRow>(
-        "SELECT event_type, COUNT(*) AS row_count FROM raw_inbox GROUP BY event_type"
+        "SELECT event_type, COUNT(*) AS row_count FROM raw_inbox GROUP BY event_type HAVING COUNT(*) > 0"
       );
       return rawInboxRowsStatement.all();
     } catch {
@@ -171,7 +171,7 @@ export function createVegaMetrics(
 
     try {
       rawInboxAgeStatement ??= db.prepare<[], RawInboxAgeRow>(
-        "SELECT event_type, (julianday('now') - julianday(MIN(received_at))) * 86400.0 AS oldest_age_seconds FROM raw_inbox GROUP BY event_type"
+        "SELECT event_type, (julianday('now') - julianday(MIN(received_at))) * 86400.0 AS oldest_age_seconds FROM raw_inbox GROUP BY event_type HAVING COUNT(*) > 0 AND MIN(received_at) IS NOT NULL"
       );
       return rawInboxAgeStatement.all();
     } catch {

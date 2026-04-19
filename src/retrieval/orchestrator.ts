@@ -204,6 +204,17 @@ export class RetrievalOrchestrator {
     }
   }
 
+  #finalizeResponse(
+    request: Pick<IntentRequest, "intent" | "surface">,
+    response: ContextResolveResponse
+  ): ContextResolveResponse {
+    if (isNonemptyBundle(response)) {
+      this.#metrics?.recordRetrievalNonempty(request.surface, request.intent);
+    }
+
+    return response;
+  }
+
   resolve(request: IntentRequest): ContextResolveResponse {
     this.#metrics?.recordRetrievalCall(request.surface, request.intent);
 
@@ -270,11 +281,14 @@ export class RetrievalOrchestrator {
           hint: "CheckpointStore unavailable; followup cannot be resumed. Typically happens on Postgres-backed runtimes."
         }
       });
-      return this.#errorResponse(
-        checkpoint_id,
-        "followup_requires_checkpoint_store",
-        profile_used,
-        ranker_version
+      return this.#finalizeResponse(
+        request,
+        this.#errorResponse(
+          checkpoint_id,
+          "followup_requires_checkpoint_store",
+          profile_used,
+          ranker_version
+        )
       );
     }
 
@@ -293,10 +307,7 @@ export class RetrievalOrchestrator {
         if (persistCheckpoint(response)) {
           this.#circuitBreaker?.recordCheckpoint(request.surface);
         }
-        if (isNonemptyBundle(response)) {
-          this.#metrics?.recordRetrievalNonempty(request.surface, request.intent);
-        }
-        return response;
+        return this.#finalizeResponse(request, response);
       }
     }
 
@@ -338,11 +349,14 @@ export class RetrievalOrchestrator {
                     mismatch_fields
                   }
           });
-          return this.#errorResponse(
-            checkpoint_id,
-            "prev_checkpoint_not_found",
-            profile_used,
-            ranker_version
+          return this.#finalizeResponse(
+            request,
+            this.#errorResponse(
+              checkpoint_id,
+              "prev_checkpoint_not_found",
+              profile_used,
+              ranker_version
+            )
           );
         }
 
@@ -424,11 +438,7 @@ export class RetrievalOrchestrator {
       if (persistCheckpoint(response)) {
         this.#circuitBreaker?.recordCheckpoint(request.surface);
       }
-      if (isNonemptyBundle(response)) {
-        this.#metrics?.recordRetrievalNonempty(request.surface, request.intent);
-      }
-
-      return response;
+      return this.#finalizeResponse(request, response);
     } catch (error) {
       traceLogger.error("Retrieval orchestration failed", {
         intent: request.intent,
@@ -450,7 +460,10 @@ export class RetrievalOrchestrator {
         }
       });
 
-      return this.#errorResponse(checkpoint_id, "resolve_failed", profile_used, ranker_version);
+      return this.#finalizeResponse(
+        request,
+        this.#errorResponse(checkpoint_id, "resolve_failed", profile_used, ranker_version)
+      );
     }
   }
 }

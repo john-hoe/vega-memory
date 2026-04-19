@@ -126,7 +126,8 @@ test("doctor --json reports a healthy onboarding setup when core checks pass", a
   try {
     const result = await runCli(["doctor", "--json"], homeDirectory, {
       OLLAMA_BASE_URL: ollama.baseUrl,
-      VEGA_API_KEY: "doctor-secret"
+      VEGA_API_KEY: "doctor-secret",
+      VEGA_DB_PATH: join(homeDirectory, "doctor.db")
     });
     const report = JSON.parse(result.stdout) as {
       status: string;

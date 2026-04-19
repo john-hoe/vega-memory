@@ -1,6 +1,4 @@
 import { Command } from "commander";
-import { homedir, userInfo } from "node:os";
-import { resolve } from "node:path";
 
 import {
   KNOWN_INSECURE_API_KEYS,
@@ -30,16 +28,6 @@ export interface DoctorReport {
   suggestions: string[];
   surfaces: IntegrationSurfaceStatus[];
 }
-
-const isHomeOverrideActive = (): boolean => {
-  const homeOverride = process.env.HOME;
-
-  if (!homeOverride) {
-    return false;
-  }
-
-  return resolve(homeOverride) !== resolve(userInfo().homedir ?? homedir());
-};
 
 const buildModeCheck = (config: VegaConfig): DoctorCheck => {
   if (config.mode === "client") {
@@ -173,14 +161,10 @@ export async function runDoctor(config: VegaConfig): Promise<DoctorReport> {
   checks.push(buildApiKeyCheck(config));
   checks.push(await buildOllamaCheck(config));
 
-  const surfaces = await buildIntegrationSurfaceStatuses(
-    isHomeOverrideActive()
-      ? { config }
-      : {
-          config,
-          repository
-        }
-  );
+  const surfaces = await buildIntegrationSurfaceStatuses({
+    config,
+    repository
+  });
   checks.push({
     name: "integration_surfaces",
     status: surfaces.some((surface) => surface.runtime_health_status === "fail")

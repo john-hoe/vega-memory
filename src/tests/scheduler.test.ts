@@ -233,7 +233,7 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
     assert.notEqual(stored.embedding, null);
     assert.equal(existsSync(snapshotPath), true);
     assert.equal(backups.includes("memory-2000-01-01.db"), false);
-    assert.ok(backups.some((entry) => /^memory-\d{4}-\d{2}-\d{2}\.db$/.test(entry)));
+    assert.ok(backups.some((entry) => /^memory-\d{4}-\d{2}-\d{2}\.db(?:\.enc)?$/.test(entry)));
   } finally {
     restoreFetch();
     repository.close();

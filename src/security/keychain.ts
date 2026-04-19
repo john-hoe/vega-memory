@@ -5,9 +5,6 @@ import type { VegaConfig } from "../config.js";
 import { normalizeEncryptionKey } from "./encryption.js";
 
 const execFileAsync = promisify(execFile);
-const isNodeTestEnvironment = (): boolean =>
-  process.execArgv.some((argument) => argument === "--test" || argument.startsWith("--test-"));
-let keychainTouchedInProcess = false;
 
 export const VEGA_KEYCHAIN_SERVICE = "dev.vega-memory";
 export const VEGA_ENCRYPTION_ACCOUNT = "encryption-key";
@@ -63,10 +60,6 @@ export async function resolveConfiguredEncryptionKey(
     return undefined;
   }
 
-  if (isNodeTestEnvironment() && !keychainTouchedInProcess) {
-    return undefined;
-  }
-
   return (await getKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT)) ?? undefined;
 }
 
@@ -85,7 +78,6 @@ export async function requireConfiguredEncryptionKey(
 }
 
 export async function setKey(service: string, account: string, key: string): Promise<void> {
-  keychainTouchedInProcess = true;
   await execFileAsync("security", [
     "add-generic-password",
     "-s",
@@ -99,7 +91,6 @@ export async function setKey(service: string, account: string, key: string): Pro
 }
 
 export async function deleteKey(service: string, account: string): Promise<void> {
-  keychainTouchedInProcess = true;
   try {
     await execFileAsync("security", [
       "delete-generic-password",
