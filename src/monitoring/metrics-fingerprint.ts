@@ -1,3 +1,12 @@
+// HELP fragments must describe WHAT the metric counts (semantic),
+// not HOW the code detects it (implementation details / symbols).
+//
+// GOOD:   stable semantic phrases
+// BAD:    code-level comparisons, method calls, or symbolic arrows
+//
+// Rule: a harmless HELP rephrase MUST NOT trip the drift test unless
+// the metric's semantic contract changed.
+
 export type MetricType = "counter" | "gauge" | "histogram";
 
 export interface MetricFingerprint {
@@ -18,13 +27,13 @@ export const METRICS_FINGERPRINT = [
     name: "vega_retrieval_nonempty_total",
     type: "counter",
     labelKeys: ["surface", "intent"],
-    helpFragment: "records.length > 0"
+    helpFragment: "non-empty retrieval bundle"
   },
   {
     name: "vega_usage_ack_total",
     type: "counter",
     labelKeys: ["surface", "sufficiency", "host_tier"],
-    helpFragment: "putResult.status === inserted"
+    helpFragment: "first-time usage ack"
   },
   {
     name: "vega_usage_followup_loop_override_total",
@@ -36,13 +45,13 @@ export const METRICS_FINGERPRINT = [
     name: "vega_circuit_breaker_state",
     type: "gauge",
     labelKeys: ["surface"],
-    helpFragment: "state transitions"
+    helpFragment: "current per-surface circuit breaker state"
   },
   {
     name: "vega_circuit_breaker_trips_total",
     type: "counter",
     labelKeys: ["surface", "reason"],
-    helpFragment: "closed -> open transitions"
+    helpFragment: "circuit breaker trips"
   },
   {
     name: "vega_raw_inbox_rows",

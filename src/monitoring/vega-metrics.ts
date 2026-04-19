@@ -115,12 +115,12 @@ export function createVegaMetrics(
   );
   const retrievalNonempty = collector.counter(
     "retrieval_nonempty_total",
-    "Triggered at retrieval orchestrator return when bundle.sections.some(section => section.records.length > 0) and bundle_digest !== error; per-process counter.",
+    "Counts context.resolve calls that returned a non-empty retrieval bundle (error bundles excluded). Per-process counter.",
     ["surface", "intent"]
   );
   const usageAck = collector.counter(
     "usage_ack_total",
-    "Triggered at usage-ack-handler when putResult.status === inserted; per-process counter without intent label because usage_acks cannot reliably recover intent.",
+    "Counts first-time usage ack inserts. Per-process counter; intent is not labeled because usage_acks cannot reliably recover it.",
     ["surface", "sufficiency", "host_tier"]
   );
   const usageLoopOverride = collector.counter(
@@ -130,12 +130,12 @@ export function createVegaMetrics(
   );
   const circuitState = collector.gauge(
     "circuit_breaker_state",
-    "Triggered by circuit-breaker initialization and state transitions; per-process, resets on restart; gauge values are 0=closed, 1=open, 2=cooldown.",
+    "Reports current per-surface circuit breaker state. Gauge values are 0=closed, 1=open, 2=cooldown; per-process, resets on restart.",
     ["surface"]
   );
   const circuitTrips = collector.counter(
     "circuit_breaker_trips_total",
-    "Triggered by circuit-breaker closed -> open transitions, incremented once per trip reason; per-process counter.",
+    "Counts circuit breaker trips (breaker opening events); one increment per trip reason. Per-process counter.",
     ["surface", "reason"]
   );
   const rawInboxRows = collector.gauge(
