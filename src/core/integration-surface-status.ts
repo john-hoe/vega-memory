@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { homedir, userInfo } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -64,6 +64,16 @@ const getVegaDirectory = (): string => join(homedir(), CONFIG_DIRECTORY);
 const getCursorDirectory = (): string => join(homedir(), CURSOR_DIRECTORY);
 const getCodexDirectory = (): string => join(homedir(), CODEX_DIRECTORY);
 const getClaudeDirectory = (): string => join(homedir(), CLAUDE_DIRECTORY);
+
+const isHomeOverrideActive = (): boolean => {
+  const homeOverride = process.env.HOME;
+
+  if (!homeOverride) {
+    return false;
+  }
+
+  return resolve(homeOverride) !== resolve(userInfo().homedir);
+};
 
 const parseNodeMajorVersion = (value: string): number => {
   const normalized = value.trim().replace(/^v/i, "");
@@ -489,7 +499,10 @@ export const buildIntegrationSurfaceStatuses = async (options: {
   config: VegaConfig;
   repository?: Repository | null;
 }): Promise<IntegrationSurfaceStatus[]> => {
-  const records = collectActivityRecords(options.repository ?? undefined);
+  const records =
+    options.repository === undefined && isHomeOverrideActive()
+      ? []
+      : collectActivityRecords(options.repository ?? undefined);
 
   return Promise.all(
     SUPPORTED_SURFACES.map(async (surface) => {

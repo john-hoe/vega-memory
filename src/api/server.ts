@@ -28,6 +28,7 @@ import { createOidcRouter } from "./oidc.js";
 import { createRouter, type APIRouterServices } from "./routes.js";
 import { StructuredLogger } from "../monitoring/logger.js";
 import { MetricsCollector } from "../monitoring/metrics.js";
+import { createVegaMetrics } from "../monitoring/vega-metrics.js";
 import { SentryStub } from "../monitoring/sentry.js";
 import { createContextResolveHttpHandler } from "../retrieval/context-resolve-handler.js";
 import { createCircuitBreaker } from "../retrieval/circuit-breaker.js";
@@ -209,9 +210,10 @@ export function createAPIServer(
   const checkpointStore = !db.isPostgres ? createCheckpointStore(db) : undefined;
   const ackStore = !db.isPostgres ? createAckStore(db) : undefined;
   const checkpointFailureStore = !db.isPostgres ? createCheckpointFailureStore(db) : undefined;
+  const vegaMetrics = createVegaMetrics(metrics, db);
   const circuitBreaker =
     !db.isPostgres && checkpointStore && ackStore
-      ? createCircuitBreaker()
+      ? createCircuitBreaker({ metrics: vegaMetrics })
       : undefined;
   const candidateRepository = !db.isPostgres ? createCandidateRepository(db) : undefined;
   const promotionAuditStore = !db.isPostgres ? createPromotionAuditStore(db) : undefined;
@@ -258,7 +260,8 @@ export function createAPIServer(
     }),
     checkpoint_store: checkpointStore,
     checkpoint_failure_store: checkpointFailureStore,
-    circuit_breaker: circuitBreaker
+    circuit_breaker: circuitBreaker,
+    metrics: vegaMetrics
   });
   void promotionOrchestrator;
 
@@ -339,7 +342,10 @@ export function createAPIServer(
   app.use(["/ingest_event", "/context_resolve", "/usage_ack"], requireAuthorizedHttpRoute);
   app.post("/ingest_event", createIngestEventHttpHandler(db));
   app.post("/context_resolve", createContextResolveHttpHandler(retrievalOrchestrator));
-  app.post("/usage_ack", createUsageAckHttpHandler(ackStore, checkpointStore, undefined, circuitBreaker));
+  app.post(
+    "/usage_ack",
+    createUsageAckHttpHandler(ackStore, checkpointStore, undefined, circuitBreaker, vegaMetrics)
+  );
   app.use(
     createRouter({
       ...activeServices,

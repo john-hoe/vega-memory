@@ -1,4 +1,5 @@
 import type { Sufficiency, Surface } from "../core/contracts/enums.js";
+import type { VegaMetricsRegistry } from "../monitoring/vega-metrics.js";
 
 export type CircuitBreakerTripReason = "low_ack_rate" | "high_followup_rate";
 export type CircuitBreakerState = "closed" | "open" | "cooldown";
@@ -25,6 +26,7 @@ export interface CircuitBreakerConfig {
   healthy_close_count?: number;
   now?: () => number;
   budget_reduction_factor?: number;
+  metrics?: VegaMetricsRegistry;
 }
 
 export interface CircuitBreaker {
@@ -220,7 +222,8 @@ function pruneWindow(entry: SurfaceState, minTimestamp: number): void {
   maybeCompactSamples(entry);
 }
 
-function closeSurfaceState(entry: SurfaceState, clearSamples = false): void {
+function closeSurfaceState(entry: SurfaceState, clearSamples = false): boolean {
+  const changed = entry.state !== "closed";
   entry.state = "closed";
   entry.tripped_at = null;
   entry.reasons = [];
@@ -233,20 +236,25 @@ function closeSurfaceState(entry: SurfaceState, clearSamples = false): void {
     entry.window_sufficient_ack_count = 0;
     entry.window_needs_followup_ack_count = 0;
   }
+
+  return changed;
 }
 
 function maybeAdvanceToCooldown(
   entry: SurfaceState,
   config: ResolvedCircuitBreakerConfig,
   now: number
-): void {
+): boolean {
   if (
     entry.state === "open" &&
     entry.tripped_at !== null &&
     now - entry.tripped_at >= config.cooldown_ms
   ) {
     entry.state = "cooldown";
+    return true;
   }
+
+  return false;
 }
 
 function maybeTripSurface(
@@ -254,9 +262,9 @@ function maybeTripSurface(
   counters: ReturnType<typeof getCounters>,
   config: ResolvedCircuitBreakerConfig,
   now: number
-): void {
+): CircuitBreakerTripReason[] {
   if (entry.state !== "closed") {
-    return;
+    return [];
   }
 
   const reasons: CircuitBreakerTripReason[] = [];
@@ -284,39 +292,43 @@ function maybeTripSurface(
   }
 
   if (reasons.length === 0) {
-    return;
+    return reasons;
   }
 
   entry.state = "open";
   entry.tripped_at = now;
   entry.reasons = reasons;
   entry.consecutive_healthy_samples = 0;
+  return reasons;
 }
 
 function maybeCloseFromCooldown(
   entry: SurfaceState,
   sufficiency: Sufficiency,
   config: ResolvedCircuitBreakerConfig
-): void {
+): boolean {
   if (entry.state !== "cooldown") {
-    return;
+    return false;
   }
 
   if (sufficiency === "needs_followup") {
     entry.consecutive_healthy_samples = 0;
-    return;
+    return false;
   }
 
   entry.consecutive_healthy_samples += 1;
 
   if (entry.consecutive_healthy_samples >= config.healthy_close_count) {
-    closeSurfaceState(entry, true);
+    return closeSurfaceState(entry, true);
   }
+
+  return false;
 }
 
 export function createCircuitBreaker(config: CircuitBreakerConfig = {}): CircuitBreaker {
   const resolved = resolveConfig(config);
   const surfaces = new Map<Surface, SurfaceState>();
+  const metrics = config.metrics;
 
   const getOrCreateEntry = (surface: Surface): SurfaceState => {
     const existing = surfaces.get(surface);
@@ -326,13 +338,16 @@ export function createCircuitBreaker(config: CircuitBreakerConfig = {}): Circuit
 
     const created = createDefaultSurfaceState();
     surfaces.set(surface, created);
+    metrics?.setCircuitState(surface, created.state);
     return created;
   };
 
   const syncEntry = (surface: Surface, now = resolved.now()): SurfaceState => {
     const entry = getOrCreateEntry(surface);
     pruneWindow(entry, now - resolved.window_ms);
-    maybeAdvanceToCooldown(entry, resolved, now);
+    if (maybeAdvanceToCooldown(entry, resolved, now)) {
+      metrics?.setCircuitState(surface, entry.state);
+    }
     return entry;
   };
 
@@ -340,7 +355,13 @@ export function createCircuitBreaker(config: CircuitBreakerConfig = {}): Circuit
     const counters = getCounters(entry);
 
     if (entry.state === "closed") {
-      maybeTripSurface(entry, counters, resolved, resolved.now());
+      const reasons = maybeTripSurface(entry, counters, resolved, resolved.now());
+      if (reasons.length > 0) {
+        metrics?.setCircuitState(surface, entry.state);
+        for (const reason of reasons) {
+          metrics?.recordCircuitTrip(surface, reason);
+        }
+      }
     }
 
     return {
@@ -371,8 +392,12 @@ export function createCircuitBreaker(config: CircuitBreakerConfig = {}): Circuit
         sufficiency,
         timestamp: now
       });
-      maybeAdvanceToCooldown(entry, resolved, now);
-      maybeCloseFromCooldown(entry, sufficiency, resolved);
+      if (maybeAdvanceToCooldown(entry, resolved, now)) {
+        metrics?.setCircuitState(surface, entry.state);
+      }
+      if (maybeCloseFromCooldown(entry, sufficiency, resolved)) {
+        metrics?.setCircuitState(surface, entry.state);
+      }
     },
     getStatus(surface: Surface): SurfaceBreakerStatus {
       return toStatus(surface, syncEntry(surface));
@@ -383,7 +408,10 @@ export function createCircuitBreaker(config: CircuitBreakerConfig = {}): Circuit
     },
     reset(surface: Surface): void {
       const entry = getOrCreateEntry(surface);
-      closeSurfaceState(entry, true);
+      const changed = closeSurfaceState(entry, true);
+      if (changed) {
+        metrics?.setCircuitState(surface, entry.state);
+      }
     }
   };
 }

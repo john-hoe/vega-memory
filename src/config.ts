@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 
 import type { RedactionPattern } from "./core/types.js";
@@ -441,6 +441,19 @@ const parseFeatureFlags = (): VegaFeatureFlags => ({
   )
 });
 
+const isNodeTestEnvironment = (): boolean =>
+  process.execArgv.some((argument) => argument === "--test" || argument.startsWith("--test-"));
+
+const isHomeOverrideActive = (): boolean => {
+  const homeOverride = process.env.HOME;
+
+  if (!homeOverride) {
+    return false;
+  }
+
+  return resolve(homeOverride) !== resolve(userInfo().homedir);
+};
+
 const getConfigFilePath = (): string => join(homedir(), ".vega", "config.json");
 
 const loadFileConfig = (): Partial<
@@ -449,6 +462,10 @@ const loadFileConfig = (): Partial<
     "mode" | "serverUrl" | "apiKey" | "cacheDbPath" | "dbEncryption" | "customRedactionPatterns"
   >
 > => {
+  if (isNodeTestEnvironment() && !isHomeOverrideActive()) {
+    return {};
+  }
+
   try {
     const parsed = JSON.parse(readFileSync(getConfigFilePath(), "utf8")) as unknown;
 

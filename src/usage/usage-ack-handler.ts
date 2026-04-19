@@ -6,6 +6,7 @@ import {
   type UsageAck
 } from "../core/contracts/usage-ack.js";
 import { createLogger } from "../core/logging/index.js";
+import type { VegaMetricsRegistry } from "../monitoring/vega-metrics.js";
 import type { CircuitBreaker } from "../retrieval/circuit-breaker.js";
 
 import type { AckRecord, AckStore } from "./ack-store.js";
@@ -127,7 +128,8 @@ function processUsageAck(
   ackStore: AckStore | undefined,
   checkpointStore?: CheckpointStore,
   now: () => number = Date.now,
-  circuitBreaker?: CircuitBreaker
+  circuitBreaker?: CircuitBreaker,
+  metrics?: VegaMetricsRegistry
 ): UsageAckResponse {
   const loopGuardWindowMs = resolveLoopGuardWindowMs();
   let session_id: string | null = null;
@@ -213,6 +215,10 @@ function processUsageAck(
     return buildResponseFromRecord(putResult.record);
   }
 
+  if (previousCheckpoint !== undefined) {
+    metrics?.recordUsageAck(previousCheckpoint.surface, ack.sufficiency, ack.host_tier);
+  }
+
   if (circuitBreaker !== undefined && checkpointStore !== undefined && previousCheckpoint !== undefined) {
     circuitBreaker.recordAck(previousCheckpoint.surface, ack.sufficiency);
   }
@@ -232,6 +238,9 @@ function processUsageAck(
         try {
           ackStore.overrideSufficiency(ack.checkpoint_id, "needs_external");
           overrideSucceeded = true;
+          if (previousCheckpoint !== undefined) {
+            metrics?.recordLoopOverride(previousCheckpoint.surface);
+          }
         } catch (error) {
           logger.warn("overrideSufficiency failed", {
             checkpoint_id: ack.checkpoint_id,
@@ -263,7 +272,8 @@ export function createUsageAckMcpTool(
   ackStore: AckStore | undefined,
   checkpointStore?: CheckpointStore,
   now?: () => number,
-  circuitBreaker?: CircuitBreaker
+  circuitBreaker?: CircuitBreaker,
+  metrics?: VegaMetricsRegistry
 ): UsageAckMcpTool {
   return {
     name: "usage.ack",
@@ -271,7 +281,7 @@ export function createUsageAckMcpTool(
     inputSchema: USAGE_ACK_INPUT_SCHEMA,
     async invoke(request: unknown): Promise<UsageAckResponse> {
       const parsed = USAGE_ACK_SCHEMA.parse(request);
-      return processUsageAck(parsed, ackStore, checkpointStore, now, circuitBreaker);
+      return processUsageAck(parsed, ackStore, checkpointStore, now, circuitBreaker, metrics);
     }
   };
 }
@@ -280,7 +290,8 @@ export function createUsageAckHttpHandler(
   ackStore: AckStore | undefined,
   checkpointStore?: CheckpointStore,
   now?: () => number,
-  circuitBreaker?: CircuitBreaker
+  circuitBreaker?: CircuitBreaker,
+  metrics?: VegaMetricsRegistry
 ): (req: Request, res: Response) => Promise<void> {
   return async (req: Request, res: Response): Promise<void> => {
     const parsed = USAGE_ACK_SCHEMA.safeParse(req.body);
@@ -295,6 +306,6 @@ export function createUsageAckHttpHandler(
 
     res
       .status(200)
-      .json(processUsageAck(parsed.data, ackStore, checkpointStore, now, circuitBreaker));
+      .json(processUsageAck(parsed.data, ackStore, checkpointStore, now, circuitBreaker, metrics));
   };
 }

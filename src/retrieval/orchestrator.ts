@@ -11,6 +11,7 @@ import type { Mode } from "../core/contracts/enums.js";
 import { createLogger, createTraceId } from "../core/logging/index.js";
 import type { CheckpointFailureStore } from "../usage/checkpoint-failure-store.js";
 import type { CheckpointStore } from "../usage/checkpoint-store.js";
+import type { VegaMetricsRegistry } from "../monitoring/vega-metrics.js";
 
 import { applyBudget, type BudgetConfig, DEFAULT_BUDGET_CONFIG } from "./budget.js";
 import { assembleBundle } from "./bundler.js";
@@ -49,6 +50,7 @@ export interface OrchestratorConfig {
   checkpoint_store?: CheckpointStore;
   checkpoint_failure_store?: CheckpointFailureStore;
   circuit_breaker?: CircuitBreaker;
+  metrics?: VegaMetricsRegistry;
 }
 
 const logger = createLogger({ name: "retrieval-orchestrator" });
@@ -64,6 +66,13 @@ function resolveMode(request: IntentRequest): Mode {
 
 function createQueryHash(query: string): string {
   return createHash("sha256").update(query).digest("hex");
+}
+
+function isNonemptyBundle(response: ContextResolveResponse): boolean {
+  return (
+    response.bundle_digest !== "error" &&
+    response.bundle.sections.some((section) => section.records.length > 0)
+  );
 }
 
 function resolveRankerVersion(config?: RankerConfig): string {
@@ -122,6 +131,7 @@ export class RetrievalOrchestrator {
   readonly #checkpointStore?: CheckpointStore;
   readonly #checkpointFailureStore?: CheckpointFailureStore;
   readonly #circuitBreaker?: CircuitBreaker;
+  readonly #metrics?: VegaMetricsRegistry;
 
   constructor(config: OrchestratorConfig) {
     this.#registry = config.registry;
@@ -131,6 +141,7 @@ export class RetrievalOrchestrator {
     this.#checkpointStore = config.checkpoint_store;
     this.#checkpointFailureStore = config.checkpoint_failure_store;
     this.#circuitBreaker = config.circuit_breaker;
+    this.#metrics = config.metrics;
   }
 
   #errorResponse(
@@ -194,6 +205,8 @@ export class RetrievalOrchestrator {
   }
 
   resolve(request: IntentRequest): ContextResolveResponse {
+    this.#metrics?.recordRetrievalCall(request.surface, request.intent);
+
     const checkpoint_id = uuidv4();
     const traceLogger = logger.withTraceId(createTraceId());
     const profile_used = request.intent;
@@ -279,6 +292,9 @@ export class RetrievalOrchestrator {
         };
         if (persistCheckpoint(response)) {
           this.#circuitBreaker?.recordCheckpoint(request.surface);
+        }
+        if (isNonemptyBundle(response)) {
+          this.#metrics?.recordRetrievalNonempty(request.surface, request.intent);
         }
         return response;
       }
@@ -407,6 +423,9 @@ export class RetrievalOrchestrator {
 
       if (persistCheckpoint(response)) {
         this.#circuitBreaker?.recordCheckpoint(request.surface);
+      }
+      if (isNonemptyBundle(response)) {
+        this.#metrics?.recordRetrievalNonempty(request.surface, request.intent);
       }
 
       return response;

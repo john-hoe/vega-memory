@@ -12,6 +12,7 @@ export interface GaugeMetric {
   set(value: number, labels?: MetricLabels): void;
   inc(labels?: MetricLabels, value?: number): void;
   dec(labels?: MetricLabels, value?: number): void;
+  reset(labels?: MetricLabels): void;
 }
 
 interface MetricsCollectorConfig {
@@ -97,6 +98,7 @@ const assertFiniteNumber = (value: number, field: string): void => {
 
 export class MetricsCollector {
   private readonly metrics = new Map<string, MetricDefinition>();
+  private readonly gaugeCollectors = new Map<string, () => void | Promise<void>>();
 
   constructor(private readonly config: MetricsCollectorConfig) {}
 
@@ -175,13 +177,16 @@ export class MetricsCollector {
     const metricName = this.resolveMetricName(name);
     const definition = this.getOrCreateGauge(metricName, help, labels);
 
-    const getSeries = (seriesLabels?: MetricLabels): GaugeState => {
+    const getSeries = (seriesLabels?: MetricLabels): { signature: string; state: GaugeState } => {
       const normalizedLabels = normalizeLabels(definition.labels, seriesLabels);
       const signature = labelSignature(definition.labels, normalizedLabels);
       const current = definition.values.get(signature);
 
       if (current) {
-        return current;
+        return {
+          signature,
+          state: current
+        };
       }
 
       const created: GaugeState = {
@@ -189,7 +194,10 @@ export class MetricsCollector {
         value: 0
       };
       definition.values.set(signature, created);
-      return created;
+      return {
+        signature,
+        state: created
+      };
     };
 
     return {
@@ -199,7 +207,7 @@ export class MetricsCollector {
         }
 
         assertFiniteNumber(value, "gauge value");
-        getSeries(seriesLabels).value = value;
+        getSeries(seriesLabels).state.value = value;
       },
       inc: (seriesLabels?: MetricLabels, value = 1): void => {
         if (!this.config.enabled) {
@@ -207,7 +215,7 @@ export class MetricsCollector {
         }
 
         assertFiniteNumber(value, "gauge increment");
-        getSeries(seriesLabels).value += value;
+        getSeries(seriesLabels).state.value += value;
       },
       dec: (seriesLabels?: MetricLabels, value = 1): void => {
         if (!this.config.enabled) {
@@ -215,14 +223,41 @@ export class MetricsCollector {
         }
 
         assertFiniteNumber(value, "gauge decrement");
-        getSeries(seriesLabels).value -= value;
+        getSeries(seriesLabels).state.value -= value;
+      },
+      reset: (seriesLabels?: MetricLabels): void => {
+        if (!this.config.enabled) {
+          return;
+        }
+
+        if (seriesLabels === undefined) {
+          definition.values.clear();
+          return;
+        }
+
+        definition.values.delete(getSeries(seriesLabels).signature);
       }
     };
+  }
+
+  registerGaugeCollector(name: string, collect: () => void | Promise<void>): void {
+    const metricName = this.resolveMetricName(name);
+    const definition = this.metrics.get(metricName);
+
+    if (definition === undefined || definition.type !== "gauge") {
+      throw new Error(`Gauge metric ${metricName} must be registered before adding a collector`);
+    }
+
+    this.gaugeCollectors.set(metricName, collect);
   }
 
   async getMetrics(): Promise<string> {
     if (!this.config.enabled) {
       return "";
+    }
+
+    for (const collect of this.gaugeCollectors.values()) {
+      await collect();
     }
 
     const sections = Array.from(this.metrics.values(), (definition) => this.renderMetric(definition))
