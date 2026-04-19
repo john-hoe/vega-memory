@@ -52,6 +52,7 @@ export interface DailyMaintenanceOptions {
   synthesisEngine?: SynthesisEngine;
   crossReferenceService?: CrossReferenceService;
   stalenessService?: StalenessService;
+  resolveEncryptionKey?: (config: VegaConfig) => Promise<string | undefined>;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -255,6 +256,9 @@ export async function dailyMaintenance(
   const errors: string[] = [];
   let preserveAlert = false;
   const notificationManager = options.notificationManager;
+  const resolveEncryptionKey =
+    options.resolveEncryptionKey ??
+    (async (config: VegaConfig) => resolveConfiguredEncryptionKey(config));
   const recordError = (message: string): void => {
     errors.push(message);
     logError(message);
@@ -271,7 +275,7 @@ export async function dailyMaintenance(
         config.dbPath,
         backupDir,
         undefined,
-        await resolveConfiguredEncryptionKey(config)
+        await resolveEncryptionKey(config)
       );
       log(`Backup created in ${backupDir}`);
     } else {

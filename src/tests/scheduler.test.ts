@@ -24,13 +24,6 @@ import { embeddingCache } from "../embedding/cache.js";
 import { SearchEngine } from "../search/engine.js";
 import { shouldRunDaily, shouldRunWeekly, startSchedulerApiServer } from "../scheduler/index.js";
 import { dailyMaintenance, refreshWikiProjection, weeklyHealthReport } from "../scheduler/tasks.js";
-import {
-  VEGA_ENCRYPTION_ACCOUNT,
-  VEGA_KEYCHAIN_SERVICE,
-  deleteKey,
-  getKey,
-  setKey
-} from "../security/keychain.js";
 import { PageManager } from "../wiki/page-manager.js";
 
 const createMemory = (overrides: Partial<Memory> = {}): Memory => {
@@ -195,10 +188,6 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
   const dbPath = join(dataDir, "memory.db");
   const backupDir = join(dataDir, "backups");
   const restoreFetch = installEmbeddingMock([0.25, 0.75]);
-  const originalKey =
-    process.platform === "darwin"
-      ? await getKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT)
-      : null;
   const config: VegaConfig = {
     dbPath,
     ollamaBaseUrl: "http://localhost:11434",
@@ -222,16 +211,14 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
   const memoryService = new MemoryService(repository, config);
 
   try {
-    if (process.platform === "darwin") {
-      await deleteKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT);
-    }
-
     repository.createMemory(createMemory());
     mkdirSync(backupDir, { recursive: true });
     writeFileSync(join(backupDir, "memory-2000-01-01.db"), "stale", "utf8");
     utimesSync(join(backupDir, "memory-2000-01-01.db"), new Date("2000-01-01"), new Date("2000-01-01"));
 
-    await dailyMaintenance(repository, compactService, memoryService, config);
+    await dailyMaintenance(repository, compactService, memoryService, config, {
+      resolveEncryptionKey: async () => undefined
+    });
 
     const stored = repository.getMemory("memory-1");
     const snapshotPath = join(dataDir, "snapshots", `snapshot-${new Date().toISOString().slice(0, 10)}.md`);
@@ -244,13 +231,6 @@ test("dailyMaintenance creates backups, rebuilds embeddings, and exports a snaps
     assert.ok(backups.some((entry) => /^memory-\d{4}-\d{2}-\d{2}\.db$/.test(entry)));
   } finally {
     restoreFetch();
-    if (process.platform === "darwin") {
-      if (originalKey === null) {
-        await deleteKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT);
-      } else {
-        await setKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT, originalKey);
-      }
-    }
     repository.close();
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -436,62 +416,51 @@ test("refreshWikiProjection backfills legacy pages without spaces before synthes
   }
 });
 
-test(
-  "dailyMaintenance encrypts backups with the keychain key when env config is unset",
-  {
-    skip: process.platform !== "darwin"
-  },
-  async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "vega-scheduler-daily-encrypted-"));
-    const dataDir = join(tempDir, "data");
-    const dbPath = join(dataDir, "memory.db");
-    const backupDir = join(dataDir, "backups");
-    const restoreFetch = installEmbeddingMock([0.25, 0.75]);
-    const config: VegaConfig = {
-      dbPath,
-      ollamaBaseUrl: "http://localhost:11434",
-      ollamaModel: "bge-m3",
-      tokenBudget: 2000,
-      similarityThreshold: 0.85,
-      shardingEnabled: false,
-      backupRetentionDays: 7,
-      apiPort: 3271,
-      apiKey: undefined,
-      mode: "server",
-      serverUrl: undefined,
-      cacheDbPath: "./data/cache.db",
-      telegramBotToken: undefined,
-      telegramChatId: undefined,
-      observerEnabled: false,
-      dbEncryption: false
+test("dailyMaintenance encrypts backups when resolveEncryptionKey provides a key", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-scheduler-daily-encrypted-"));
+  const dataDir = join(tempDir, "data");
+  const dbPath = join(dataDir, "memory.db");
+  const backupDir = join(dataDir, "backups");
+  const restoreFetch = installEmbeddingMock([0.25, 0.75]);
+  const config: VegaConfig = {
+    dbPath,
+    ollamaBaseUrl: "http://localhost:11434",
+    ollamaModel: "bge-m3",
+    tokenBudget: 2000,
+    similarityThreshold: 0.85,
+    shardingEnabled: false,
+    backupRetentionDays: 7,
+    apiPort: 3271,
+    apiKey: undefined,
+    mode: "server",
+    serverUrl: undefined,
+    cacheDbPath: "./data/cache.db",
+    telegramBotToken: undefined,
+    telegramChatId: undefined,
+    observerEnabled: false,
+    dbEncryption: false
   };
   const repository = new Repository(dbPath);
   const compactService = new CompactService(repository, config);
   const memoryService = new MemoryService(repository, config);
   const encryptionKey =
-      "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
-    const originalKey = await getKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT);
+    "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 
-    try {
-      await setKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT, encryptionKey);
-      repository.createMemory(createMemory());
-      mkdirSync(backupDir, { recursive: true });
+  try {
+    repository.createMemory(createMemory());
+    mkdirSync(backupDir, { recursive: true });
 
-      await dailyMaintenance(repository, compactService, memoryService, config);
+    await dailyMaintenance(repository, compactService, memoryService, config, {
+      resolveEncryptionKey: async () => encryptionKey
+    });
 
-      assert.ok(readdirSync(backupDir).some((entry) => entry.endsWith(".db.enc")));
-    } finally {
-      restoreFetch();
-      if (originalKey === null) {
-        await deleteKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT);
-      } else {
-        await setKey(VEGA_KEYCHAIN_SERVICE, VEGA_ENCRYPTION_ACCOUNT, originalKey);
-      }
-      repository.close();
-      rmSync(tempDir, { recursive: true, force: true });
-    }
+    assert.ok(readdirSync(backupDir).some((entry) => entry.endsWith(".db.enc")));
+  } finally {
+    restoreFetch();
+    repository.close();
+    rmSync(tempDir, { recursive: true, force: true });
   }
-);
+});
 
 test("weeklyHealthReport writes integrity and memory count details", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "vega-scheduler-weekly-"));
