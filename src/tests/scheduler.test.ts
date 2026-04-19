@@ -283,6 +283,7 @@ test("dailyMaintenance polls RSS feeds, synthesizes wiki pages, and marks stale 
 
   try {
     await dailyMaintenance(repository, compactService, memoryService, config, {
+      resolveEncryptionKey: async () => undefined,
       rssService: {
         listFeeds: () => [
           {
