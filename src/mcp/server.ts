@@ -18,6 +18,16 @@ import {
   type AlertEvaluation
 } from "../alert/index.js";
 import {
+  applyRestoreAuditMigration,
+  BackupScheduler,
+  createBackup,
+  DEFAULT_BACKUP_CONFIG_PATH,
+  loadBackupConfig,
+  recordRestoreAudit,
+  restoreBackup,
+  runRestoreDrill
+} from "../backup/index.js";
+import {
   isConsolidationReportEnabled,
   isDeepRecallAvailable,
   isFactClaimsEnabled,
@@ -236,6 +246,32 @@ interface AlertFireResult {
   fired_at: string;
   dispatch_status: Record<string, string>;
   degraded?: "rules_missing" | "channels_missing" | "parse_error" | "rule_not_found";
+}
+
+interface BackupCreateResult {
+  schema_version: "1.0";
+  backup_id: string;
+  path: string;
+  file_count: number;
+  total_bytes: number;
+  manifest_sha256: string;
+  degraded?: "file_read_error";
+}
+
+interface BackupRestoreResult {
+  schema_version: "1.0";
+  restored_at: string;
+  files_restored: number;
+  verified: boolean;
+  mismatches: string[];
+  degraded?: "backup_missing" | "manifest_parse_error" | "file_read_error";
+}
+
+interface BackupRestoreDrillResult {
+  schema_version: "1.0";
+  verified: boolean;
+  mismatches: string[];
+  degraded?: "backup_missing" | "manifest_parse_error" | "file_read_error";
 }
 
 const toTextResult = (result: unknown, isError = false): CallToolResult => ({
@@ -791,6 +827,8 @@ export function createMCPServer({
     logger.warn(
       "Phase 8 persistence disabled: CheckpointStore, AckStore, CheckpointFailureStore require SQLite backend. context.resolve/usage.ack still accept traffic but responses carry degraded flags."
     );
+  } else {
+    applyRestoreAuditMigration(activeRepository.db);
   }
   const observer = {
     enabled: config.observerEnabled,
@@ -843,12 +881,27 @@ export function createMCPServer({
         now: () => new Date()
       })
   });
+  const backupHomeDir = homeDir ?? process.env.HOME ?? process.cwd();
+  const backupConfig = loadBackupConfig(DEFAULT_BACKUP_CONFIG_PATH, {
+    env: {
+      ...process.env,
+      HOME: backupHomeDir
+    }
+  });
+  const backupScheduler = new BackupScheduler({
+    config: backupConfig,
+    homeDir: backupHomeDir,
+    db: activeRepository.db
+  });
 
   if (process.env.VEGA_SUNSET_SCHEDULER_ENABLED !== "false") {
     sunsetScheduler.start();
   }
   if (process.env.VEGA_ALERT_SCHEDULER_ENABLED !== "false") {
     alertScheduler.start();
+  }
+  if (process.env.VEGA_BACKUP_SCHEDULER_ENABLED !== "false") {
+    backupScheduler.start();
   }
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: retrievalRegistry,
@@ -2197,6 +2250,153 @@ export function createMCPServer({
   );
 
   server.registerTool(
+    "backup.create",
+    {
+      description: "Create a local filesystem backup and emit a manifest evidence chain.",
+      inputSchema: {
+        label: z.string().trim().min(1).optional(),
+        targets: z.array(z.string().trim().min(1)).optional()
+      }
+    },
+    async (args: unknown) =>
+      runTool<BackupCreateResult>(repository, "backup.create", args, observer, async () => {
+        const parsedArgs = z
+          .object({
+            label: z.string().trim().min(1).optional(),
+            targets: z.array(z.string().trim().min(1)).optional()
+          })
+          .safeParse(args);
+        const configForRun =
+          parsedArgs.success && parsedArgs.data.targets !== undefined
+            ? {
+                ...backupConfig,
+                targets: parsedArgs.data.targets
+              }
+            : backupConfig;
+        const result = await createBackup({
+          config: configForRun,
+          homeDir: backupHomeDir,
+          label: parsedArgs.success ? parsedArgs.data.label : undefined
+        });
+
+        return {
+          result: {
+            schema_version: "1.0",
+            ...result
+          },
+          resultCount: result.file_count
+        };
+      })
+  );
+
+  server.registerTool(
+    "backup.restore",
+    {
+      description: "Restore a backup after manifest verification, with optional selective paths.",
+      inputSchema: {
+        backup_id: z.string().trim().min(1),
+        mode: z.enum(["full", "selective"]),
+        selective: z
+          .object({
+            files: z.array(z.string().trim().min(1)).min(1)
+          })
+          .optional(),
+        dry_run: z.boolean().default(false),
+        operator: z.string().trim().min(1).optional()
+      }
+    },
+    async (args: unknown) =>
+      runTool<BackupRestoreResult>(repository, "backup.restore", args, observer, async () => {
+        const parsedArgs = z
+          .object({
+            backup_id: z.string().trim().min(1),
+            mode: z.enum(["full", "selective"]),
+            selective: z
+              .object({
+                files: z.array(z.string().trim().min(1)).min(1)
+              })
+              .optional(),
+            dry_run: z.boolean().default(false),
+            operator: z.string().trim().min(1).optional()
+          })
+          .parse(args);
+        const result = await restoreBackup({
+          backup_id: parsedArgs.backup_id,
+          mode: parsedArgs.mode,
+          selective: parsedArgs.selective,
+          dryRun: parsedArgs.dry_run,
+          homeDir: backupHomeDir
+        });
+
+        recordRestoreAudit(activeRepository.db, {
+          backup_id: parsedArgs.backup_id,
+          mode: parsedArgs.dry_run ? "drill" : parsedArgs.mode,
+          operator: parsedArgs.operator ?? "system",
+          before_state_sha256: result.before_state_sha256 ?? null,
+          after_state_sha256: result.after_state_sha256 ?? null,
+          restored_at: Date.parse(result.restored_at),
+          verified: result.verified,
+          mismatches: result.mismatches
+        });
+
+        return {
+          result: {
+            schema_version: "1.0",
+            restored_at: result.restored_at,
+            files_restored: result.files_restored,
+            verified: result.verified,
+            mismatches: result.mismatches,
+            ...(result.degraded === undefined ? {} : { degraded: result.degraded })
+          },
+          resultCount: result.files_restored
+        };
+      })
+  );
+
+  server.registerTool(
+    "backup.restore_drill",
+    {
+      description: "Verify backup manifest integrity without writing restored files.",
+      inputSchema: {
+        backup_id: z.string().trim().min(1)
+      }
+    },
+    async (args: unknown) =>
+      runTool<BackupRestoreDrillResult>(repository, "backup.restore_drill", args, observer, async () => {
+        const parsedArgs = z
+          .object({
+            backup_id: z.string().trim().min(1)
+          })
+          .parse(args);
+        const result = await runRestoreDrill({
+          backup_id: parsedArgs.backup_id,
+          homeDir: backupHomeDir
+        });
+
+        recordRestoreAudit(activeRepository.db, {
+          backup_id: parsedArgs.backup_id,
+          mode: "drill",
+          operator: "system",
+          before_state_sha256: null,
+          after_state_sha256: null,
+          restored_at: Date.now(),
+          verified: result.verified,
+          mismatches: result.mismatches
+        });
+
+        return {
+          result: {
+            schema_version: "1.0",
+            verified: result.verified,
+            mismatches: result.mismatches,
+            ...(result.degraded === undefined ? {} : { degraded: result.degraded })
+          },
+          resultCount: result.mismatches.length
+        };
+      })
+  );
+
+  server.registerTool(
     "sunset.check",
     {
       description: "Evaluate sunset candidates from the checked-in registry.",
@@ -2475,6 +2675,7 @@ export function createMCPServer({
   closableServer.close = async (): Promise<void> => {
     sunsetScheduler.stop();
     alertScheduler.stop();
+    backupScheduler.stop();
     refreshableHostMemoryFileAdapter?.dispose();
     await originalClose();
   };

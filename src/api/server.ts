@@ -12,6 +12,12 @@ import {
   loadAlertChannels,
   loadAlertRules
 } from "../alert/index.js";
+import {
+  applyRestoreAuditMigration,
+  BackupScheduler,
+  DEFAULT_BACKUP_CONFIG_PATH,
+  loadBackupConfig
+} from "../backup/index.js";
 import type { VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
@@ -220,6 +226,7 @@ export function createAPIServer(
   const factClaimService = new FactClaimService(activeServices.repository, config);
   const graphReportService = new GraphReportService(activeServices.repository);
   const archiveService = new ArchiveService(activeServices.repository, config);
+  const backupHomeDir = runtimeOptions.homeDir ?? process.env.HOME ?? process.cwd();
   const requireAuthorizedHttpRoute: express.RequestHandler = (req, res, next) => {
     if (isAuthorizedRequest(req, res, config, activeServices.repository)) {
       next();
@@ -271,6 +278,8 @@ export function createAPIServer(
     logger.warn(
       "Phase 8 persistence disabled: CheckpointStore, AckStore, CheckpointFailureStore require SQLite backend. context.resolve/usage.ack still accept traffic but responses carry degraded flags."
     );
+  } else {
+    applyRestoreAuditMigration(db);
   }
   const retrievalRegistry = createRetrievalRegistry({
     repository: activeServices.repository,
@@ -306,12 +315,26 @@ export function createAPIServer(
         now: () => new Date()
       })
   });
+  const backupConfig = loadBackupConfig(DEFAULT_BACKUP_CONFIG_PATH, {
+    env: {
+      ...process.env,
+      HOME: backupHomeDir
+    }
+  });
+  const backupScheduler = new BackupScheduler({
+    config: backupConfig,
+    homeDir: backupHomeDir,
+    db
+  });
 
   if (process.env.VEGA_SUNSET_SCHEDULER_ENABLED !== "false") {
     sunsetScheduler.start();
   }
   if (process.env.VEGA_ALERT_SCHEDULER_ENABLED !== "false") {
     alertScheduler.start();
+  }
+  if (process.env.VEGA_BACKUP_SCHEDULER_ENABLED !== "false") {
+    backupScheduler.start();
   }
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: retrievalRegistry,
@@ -456,6 +479,7 @@ export function createAPIServer(
     async stop(): Promise<void> {
       sunsetScheduler.stop();
       alertScheduler.stop();
+      backupScheduler.stop();
       refreshableHostMemoryFileAdapter?.dispose();
 
       if (server === null) {
