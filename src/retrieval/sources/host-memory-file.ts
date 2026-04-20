@@ -46,7 +46,7 @@ export interface HostMemoryFileAdapterOptions {
 }
 
 const truncateContent = (content: string): string =>
-  content.length > MAX_CONTENT_CHARS ? `${content.slice(0, MAX_CONTENT_CHARS)}…` : content;
+  content.length > MAX_CONTENT_CHARS ? `${content.slice(0, MAX_CONTENT_CHARS - 1)}…` : content;
 
 const toContentSha256 = (content: string): string =>
   createHash("sha256").update(content).digest("hex");

@@ -30,6 +30,8 @@ const HOST_MEMORY_FILE_ENTRIES_INDEXES = [
 ] as const;
 
 export function applyHostMemoryFileFtsMigration(db: DatabaseAdapter): void {
+  if (db.isPostgres) return;
+
   db.exec(HOST_MEMORY_FILE_FTS_DDL);
   db.exec(HOST_MEMORY_FILE_ENTRIES_DDL);
 

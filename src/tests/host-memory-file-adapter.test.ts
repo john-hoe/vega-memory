@@ -16,6 +16,7 @@ import {
   parsePlainText
 } from "../retrieval/sources/host-memory-file-parser.js";
 import { enumeratePaths } from "../retrieval/sources/host-memory-file-paths.js";
+import type { DatabaseAdapter } from "../db/adapter.js";
 import type { SourceSearchInput } from "../retrieval/sources/types.js";
 
 interface EntryRow {
@@ -240,6 +241,57 @@ test("HostMemoryFileAdapter removes stale FTS rows when a discovered file disapp
 
     assert.deepEqual(readEntries(harness.db), []);
     assert.equal(adapter.search(createSearchInput("cleanup")).length, 0);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("applyHostMemoryFileFtsMigration skips DDL execution for Postgres adapters", () => {
+  const postgresDb: DatabaseAdapter = {
+    isPostgres: true,
+    run(): void {},
+    get(): undefined {
+      return undefined;
+    },
+    all(): [] {
+      return [];
+    },
+    exec(): void {
+      throw new Error("exec should not be called for Postgres FTS migration");
+    },
+    prepare() {
+      throw new Error("prepare should not be called for Postgres FTS migration");
+    },
+    transaction<T>(fn: () => T): T {
+      return fn();
+    },
+    close(): void {}
+  };
+
+  assert.doesNotThrow(() => applyHostMemoryFileFtsMigration(postgresDb));
+});
+
+test("HostMemoryFileAdapter truncates long indexed content to 4096 chars including ellipsis", () => {
+  const harness = createHarness("vega-host-memory-truncate-");
+  const maxContentChars = 4096;
+
+  try {
+    const longBody = `truncate ${"a".repeat(9991)}`;
+    writeHomeFile(
+      harness.homeDir,
+      ".cursor/rules/memory.mdc",
+      `---\ntitle: Cursor Memory\n---\n${longBody}`
+    );
+
+    const adapter = new HostMemoryFileAdapter({
+      db: harness.db,
+      homeDir: harness.homeDir
+    });
+    const [result] = adapter.search(createSearchInput("truncate"));
+
+    assert.ok(result);
+    assert.equal(result.content.length, maxContentChars);
+    assert.equal(result.content.at(-1), "…");
   } finally {
     harness.cleanup();
   }
