@@ -74,6 +74,10 @@ import {
   inspectSunsetRegistry,
   SunsetScheduler
 } from "../sunset/index.js";
+import {
+  resolveTimeoutSweepConfig,
+  TimeoutSweepScheduler
+} from "../timeout/index.js";
 
 const isAddressInfo = (value: string | AddressInfo | null): value is AddressInfo =>
   typeof value === "object" && value !== null;
@@ -326,6 +330,11 @@ export function createAPIServer(
     homeDir: backupHomeDir,
     db
   });
+  const timeoutSweepConfig = resolveTimeoutSweepConfig(process.env);
+  const timeoutSweepScheduler = new TimeoutSweepScheduler({
+    db,
+    config: timeoutSweepConfig
+  });
 
   if (process.env.VEGA_SUNSET_SCHEDULER_ENABLED !== "false") {
     sunsetScheduler.start();
@@ -335,6 +344,9 @@ export function createAPIServer(
   }
   if (process.env.VEGA_BACKUP_SCHEDULER_ENABLED !== "false") {
     backupScheduler.start();
+  }
+  if (timeoutSweepConfig.enabled) {
+    timeoutSweepScheduler.start();
   }
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: retrievalRegistry,
@@ -480,6 +492,7 @@ export function createAPIServer(
       sunsetScheduler.stop();
       alertScheduler.stop();
       backupScheduler.stop();
+      timeoutSweepScheduler.stop();
       refreshableHostMemoryFileAdapter?.dispose();
 
       if (server === null) {

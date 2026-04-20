@@ -115,6 +115,11 @@ import {
   SunsetScheduler,
   type SunsetEvaluationResult
 } from "../sunset/index.js";
+import {
+  resolveTimeoutSweepConfig,
+  sweepCheckpointTimeouts,
+  TimeoutSweepScheduler
+} from "../timeout/index.js";
 import { SESSION_START_MODE_VALUES } from "../core/types.js";
 import type {
   ApprovalItem,
@@ -893,6 +898,11 @@ export function createMCPServer({
     homeDir: backupHomeDir,
     db: activeRepository.db
   });
+  const timeoutSweepConfig = resolveTimeoutSweepConfig(process.env);
+  const timeoutSweepScheduler = new TimeoutSweepScheduler({
+    db: activeRepository.db,
+    config: timeoutSweepConfig
+  });
 
   if (process.env.VEGA_SUNSET_SCHEDULER_ENABLED !== "false") {
     sunsetScheduler.start();
@@ -902,6 +912,9 @@ export function createMCPServer({
   }
   if (process.env.VEGA_BACKUP_SCHEDULER_ENABLED !== "false") {
     backupScheduler.start();
+  }
+  if (timeoutSweepConfig.enabled) {
+    timeoutSweepScheduler.start();
   }
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: retrievalRegistry,
@@ -2250,6 +2263,32 @@ export function createMCPServer({
   );
 
   server.registerTool(
+    "checkpoint.timeout_sweep",
+    {
+      description: "Sweep expired L1 checkpoints and classify timeout outcomes without throwing.",
+      inputSchema: {
+        max_per_run: z.number().int().positive().optional()
+      }
+    },
+    async (args: unknown) =>
+      runTool(repository, "checkpoint.timeout_sweep", args, observer, async () => {
+        const parsedArgs = z
+          .object({
+            max_per_run: z.number().int().positive().optional()
+          })
+          .safeParse(args);
+        const result = await sweepCheckpointTimeouts(activeRepository.db, {
+          maxPerRun: parsedArgs.success ? parsedArgs.data.max_per_run : undefined
+        });
+
+        return {
+          result,
+          resultCount: result.records.length
+        };
+      })
+  );
+
+  server.registerTool(
     "backup.create",
     {
       description: "Create a local filesystem backup and emit a manifest evidence chain.",
@@ -2676,6 +2715,7 @@ export function createMCPServer({
     sunsetScheduler.stop();
     alertScheduler.stop();
     backupScheduler.stop();
+    timeoutSweepScheduler.stop();
     refreshableHostMemoryFileAdapter?.dispose();
     await originalClose();
   };
