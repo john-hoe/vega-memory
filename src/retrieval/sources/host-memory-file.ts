@@ -11,14 +11,13 @@ import {
 } from "./host-memory-file-fts.js";
 import {
   enumeratePaths,
-  type HostMemoryFileParser,
   type HostMemorySurface
 } from "./host-memory-file-paths.js";
 import {
-  parseJson,
-  parseMarkdownFrontmatter,
-  parsePlainText
-} from "./host-memory-file-parser.js";
+  createDefaultSchemaRouter,
+  type HostMemoryFileSchemaRouter
+} from "./host-memory-file-schema-router.js";
+import type { DetectedFormatVersion } from "./host-memory-file-parser.js";
 import type { SourceAdapter, SourceRecord, SourceSearchInput } from "./types.js";
 
 const MAX_CONTENT_CHARS = 4096;
@@ -44,6 +43,7 @@ export interface HostMemoryFileAdapterOptions {
   db: DatabaseAdapter;
   homeDir: string;
   logger?: Logger;
+  schemaRouter?: HostMemoryFileSchemaRouter;
 }
 
 export interface HostMemoryFileReader {
@@ -66,20 +66,6 @@ const resolvePollIntervalMs = (): number => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_POLL_INTERVAL_MS;
 };
 
-function parseContent(
-  parser: HostMemoryFileParser,
-  content: string
-): { title?: string; body: string } {
-  switch (parser) {
-    case "markdown_frontmatter":
-      return parseMarkdownFrontmatter(content);
-    case "plain_text":
-      return parsePlainText(content);
-    case "json":
-      return parseJson(content);
-  }
-}
-
 export class HostMemoryFileAdapter implements SourceAdapter, HostMemoryFileReader {
   readonly kind = "host_memory_file";
   readonly name = "host-memory-file";
@@ -87,6 +73,8 @@ export class HostMemoryFileAdapter implements SourceAdapter, HostMemoryFileReade
   readonly #homeDir: string;
   readonly #logger: Logger;
   readonly #pollIntervalMs: number;
+  readonly #schemaRouter: HostMemoryFileSchemaRouter;
+  readonly #schemaVersions = new Map<string, DetectedFormatVersion>();
   #pollTimer: NodeJS.Timeout | null = null;
   #refreshInFlight = false;
 
@@ -96,6 +84,7 @@ export class HostMemoryFileAdapter implements SourceAdapter, HostMemoryFileReade
     this.#logger =
       options.logger ?? createLogger({ name: "retrieval-source-host-memory-file" });
     this.#pollIntervalMs = resolvePollIntervalMs();
+    this.#schemaRouter = options.schemaRouter ?? createDefaultSchemaRouter();
 
     if (!this.#db.isPostgres) {
       applyHostMemoryFileFtsMigration(this.#db);
@@ -145,8 +134,9 @@ export class HostMemoryFileAdapter implements SourceAdapter, HostMemoryFileReade
       content: truncateContent(row.content.trim()),
       provenance: {
         origin: row.path,
-        retrieved_at: new Date(row.indexed_at).toISOString()
-      },
+        retrieved_at: new Date(row.indexed_at).toISOString(),
+        schema_version: this.#schemaVersions.get(row.path) ?? "unknown"
+      } as SourceRecord["provenance"],
       raw_score: toRawScore(row.bm25_score),
       metadata: {
         surface: row.surface,
@@ -193,14 +183,25 @@ export class HostMemoryFileAdapter implements SourceAdapter, HostMemoryFileReade
 
           const mtimeMs = Math.floor(fileStats.mtimeMs);
           const existingEntry = existingByPath.get(discovered.path);
+          const schemaVersionKnown = this.#schemaVersions.has(discovered.path);
 
-          if (existingEntry?.mtime_ms === mtimeMs) {
+          if (existingEntry?.mtime_ms === mtimeMs && schemaVersionKnown) {
             continue;
           }
 
           try {
             const rawContent = readFileSync(discovered.path, "utf8");
-            const parsed = parseContent(discovered.parser, rawContent);
+            const parser = this.#schemaRouter.selectParser({
+              surface: discovered.surface,
+              contentSample: rawContent.slice(0, 2048)
+            });
+            const parsed = parser(rawContent);
+            this.#schemaVersions.set(discovered.path, parsed.detected_format_version);
+
+            if (existingEntry?.mtime_ms === mtimeMs) {
+              continue;
+            }
+
             const indexedAt = Math.max(Date.now(), (existingEntry?.indexed_at ?? 0) + 1);
 
             this.#db.run(
@@ -236,7 +237,6 @@ export class HostMemoryFileAdapter implements SourceAdapter, HostMemoryFileReade
           } catch (error) {
             this.#logger.warn("Host memory file refresh failed; skipping file", {
               path: discovered.path,
-              parser: discovered.parser,
               surface: discovered.surface,
               error: error instanceof Error ? error.message : String(error)
             });
@@ -248,6 +248,7 @@ export class HostMemoryFileAdapter implements SourceAdapter, HostMemoryFileReade
             continue;
           }
 
+          this.#schemaVersions.delete(entry.path);
           this.#db.run(`DELETE FROM ${HOST_MEMORY_FILE_FTS_TABLE} WHERE path = ?`, entry.path);
           this.#db.run(`DELETE FROM ${HOST_MEMORY_FILE_ENTRIES_TABLE} WHERE path = ?`, entry.path);
         }
