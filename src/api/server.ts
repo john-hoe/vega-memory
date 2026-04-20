@@ -30,6 +30,7 @@ import { StructuredLogger } from "../monitoring/logger.js";
 import { MetricsCollector } from "../monitoring/metrics.js";
 import { createVegaMetrics } from "../monitoring/vega-metrics.js";
 import { SentryStub } from "../monitoring/sentry.js";
+import { applyReconciliationFindingsMigration } from "../reconciliation/index.js";
 import { createContextResolveHttpHandler } from "../retrieval/context-resolve-handler.js";
 import { createCircuitBreaker } from "../retrieval/circuit-breaker.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
@@ -146,6 +147,7 @@ export function createAPIServer(
 
   if (!db.isPostgres) {
     applyRawInboxMigration(db);
+    applyReconciliationFindingsMigration(db);
     const shadowWrite = createShadowWriter({ db });
     const activeRepository = createShadowAwareRepository(activeServices.repository, shadowWrite);
     const shadowWriteForMemoryService = (memory: Memory): void => {

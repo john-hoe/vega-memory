@@ -69,6 +69,11 @@ import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
 import { createCandidateMemoryAdapter } from "../retrieval/sources/candidate-memory.js";
 import { SourceRegistry } from "../retrieval/sources/registry.js";
 import {
+  applyReconciliationFindingsMigration,
+  createReconciliationRunMcpTool,
+  ReconciliationOrchestrator
+} from "../reconciliation/index.js";
+import {
   createAckStore,
   createCheckpointFailureStore,
   createCheckpointStore
@@ -611,6 +616,7 @@ export function createMCPServer({
 
   if (!repository.db.isPostgres) {
     applyRawInboxMigration(repository.db);
+    applyReconciliationFindingsMigration(repository.db);
     const shadowWrite = createShadowWriter({ db: repository.db });
     const shadowWriteForMemoryService = (memory: Memory): void => {
       try {
@@ -760,6 +766,13 @@ export function createMCPServer({
   const candidateListTool = createCandidateListMcpTool(candidateRepository);
   const candidatePromoteTool = createCandidatePromoteMcpTool(promotionOrchestrator);
   const candidateDemoteTool = createCandidateDemoteMcpTool(promotionOrchestrator);
+  const reconciliationRunTool = createReconciliationRunMcpTool(
+    !activeRepository.db.isPostgres
+      ? new ReconciliationOrchestrator({
+          db: activeRepository.db
+        })
+      : undefined
+  );
 
   server.tool(
     "memory_graph",
@@ -2009,6 +2022,23 @@ export function createMCPServer({
     async (args: unknown) =>
       runTool(repository, usageAckTool.name, args, observer, async () => {
         const result = await usageAckTool.invoke(args);
+
+        return {
+          result,
+          resultCount: 1
+        };
+      })
+  );
+
+  server.registerTool(
+    reconciliationRunTool.name,
+    {
+      description: reconciliationRunTool.description,
+      inputSchema: reconciliationRunTool.inputSchema
+    },
+    async (args: unknown) =>
+      runTool(repository, reconciliationRunTool.name, args, observer, async () => {
+        const result = await reconciliationRunTool.invoke(args);
 
         return {
           result,
