@@ -1,5 +1,6 @@
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { resolve } from "node:path";
 
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 
@@ -53,6 +54,12 @@ import {
 import { buildPhase8Status } from "../usage/phase8-status.js";
 import { createUsageAckHttpHandler } from "../usage/usage-ack-handler.js";
 import { searchWikiPages } from "../wiki/search.js";
+import {
+  createChangelogNotifier,
+  evaluateSunsetCandidates,
+  inspectSunsetRegistry,
+  SunsetScheduler
+} from "../sunset/index.js";
 
 const isAddressInfo = (value: string | AddressInfo | null): value is AddressInfo =>
   typeof value === "object" && value !== null;
@@ -269,6 +276,20 @@ export function createAPIServer(
   const hostMemoryFileAdapter = retrievalRegistry.get("host_memory_file");
   const refreshableHostMemoryFileAdapter =
     hostMemoryFileAdapter instanceof HostMemoryFileAdapter ? hostMemoryFileAdapter : undefined;
+  const sunsetScheduler = new SunsetScheduler({
+    registry: async () => inspectSunsetRegistry().candidates,
+    evaluator: async (candidates) =>
+      evaluateSunsetCandidates(candidates, {
+        db,
+        now: new Date(),
+        metricsQuery: async () => null
+      }),
+    notifier: createChangelogNotifier(resolve(process.cwd(), "CHANGELOG.md"))
+  });
+
+  if (process.env.VEGA_SUNSET_SCHEDULER_ENABLED !== "false") {
+    sunsetScheduler.start();
+  }
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: retrievalRegistry,
     checkpoint_store: checkpointStore,
@@ -410,6 +431,7 @@ export function createAPIServer(
       return address.port;
     },
     async stop(): Promise<void> {
+      sunsetScheduler.stop();
       refreshableHostMemoryFileAdapter?.dispose();
 
       if (server === null) {

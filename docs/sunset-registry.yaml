@@ -1,0 +1,23 @@
+# Vega sunset candidate registry (P8-033).
+# Each entry declares a legacy API route / endpoint targeted for eventual sunset.
+# Evaluator fires when EITHER `usage_threshold` OR `time_based` criterion is met.
+#
+# Schema (zod-enforced in src/sunset/registry.ts):
+#   - id: kebab-case-string         # unique, stable
+#   - type: "api_route"             # initial scope (Q1a); future: enum_value / env_flag / mcp_tool
+#   - target: string                # e.g. "POST /memory_store"
+#   - deprecated_since: ISO-8601 date  # e.g. "2026-01-15"
+#   - criteria:
+#       usage_threshold:
+#         metric: string            # Prometheus metric name
+#         window_days: integer > 0
+#         max_calls: integer >= 0   # threshold below which criterion fires
+#       time_based:
+#         min_days_since_deprecated: integer > 0
+#   - notification:
+#       changelog: boolean          # append Changelog entry when ready
+#       log_level: "info" | "warn" | "error"
+#
+# Both usage_threshold and time_based are OPTIONAL but at least ONE must be present.
+# Evaluator status per candidate: "ready" (met ≥1 criterion) | "pending" | "skipped" (schema invalid).
+sunsets: []

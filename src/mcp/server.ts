@@ -87,6 +87,13 @@ import { PageManager } from "../wiki/page-manager.js";
 import { reviewWikiPage, WIKI_REVIEW_ACTIONS } from "../wiki/review.js";
 import { searchWikiPages } from "../wiki/search.js";
 import { SynthesisEngine } from "../wiki/synthesis.js";
+import {
+  createChangelogNotifier,
+  evaluateSunsetCandidates,
+  inspectSunsetRegistry,
+  SunsetScheduler,
+  type SunsetEvaluationResult
+} from "../sunset/index.js";
 import { SESSION_START_MODE_VALUES } from "../core/types.js";
 import type {
   ApprovalItem,
@@ -197,6 +204,13 @@ interface HostMemoryFileRefreshResult {
   indexed_paths: number;
   duration_ms: number;
   degraded?: "adapter_disabled" | "sqlite_only";
+}
+
+interface SunsetCheckResult {
+  schema_version: "1.0";
+  evaluated_at: string;
+  candidates: SunsetEvaluationResult[];
+  degraded?: "registry_missing" | "parse_error";
 }
 
 const toTextResult = (result: unknown, isError = false): CallToolResult => ({
@@ -782,6 +796,20 @@ export function createMCPServer({
   const hostMemoryFileAdapter = retrievalRegistry.get("host_memory_file");
   const refreshableHostMemoryFileAdapter =
     hostMemoryFileAdapter instanceof HostMemoryFileAdapter ? hostMemoryFileAdapter : undefined;
+  const sunsetScheduler = new SunsetScheduler({
+    registry: async () => inspectSunsetRegistry().candidates,
+    evaluator: async (candidates) =>
+      evaluateSunsetCandidates(candidates, {
+        db: activeRepository.db,
+        now: new Date(),
+        metricsQuery: async () => null
+      }),
+    notifier: createChangelogNotifier(resolve(process.cwd(), "CHANGELOG.md"))
+  });
+
+  if (process.env.VEGA_SUNSET_SCHEDULER_ENABLED !== "false") {
+    sunsetScheduler.start();
+  }
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: retrievalRegistry,
     checkpoint_store: checkpointStore,
@@ -2128,6 +2156,54 @@ export function createMCPServer({
       })
   );
 
+  server.registerTool(
+    "sunset.check",
+    {
+      description: "Evaluate sunset candidates from the checked-in registry.",
+      inputSchema: {
+        registry_path: z.string().trim().min(1).optional()
+      }
+    },
+    async (args: unknown) =>
+      runTool<SunsetCheckResult>(repository, "sunset.check", args, observer, async () => {
+        const parsedArgs = z
+          .object({
+            registry_path: z.string().trim().min(1).optional()
+          })
+          .safeParse(args);
+        const registryPath = parsedArgs.success ? parsedArgs.data.registry_path : undefined;
+        const evaluatedAt = new Date().toISOString();
+        const registry = inspectSunsetRegistry(registryPath);
+
+        if (registry.degraded !== undefined) {
+          return {
+            result: {
+              schema_version: "1.0",
+              evaluated_at: evaluatedAt,
+              candidates: [],
+              degraded: registry.degraded
+            },
+            resultCount: 0
+          };
+        }
+
+        const candidates = await evaluateSunsetCandidates(registry.candidates, {
+          db: activeRepository.db,
+          now: new Date(evaluatedAt),
+          metricsQuery: async () => null
+        });
+
+        return {
+          result: {
+            schema_version: "1.0",
+            evaluated_at: evaluatedAt,
+            candidates
+          },
+          resultCount: candidates.length
+        };
+      })
+  );
+
   for (const tool of [circuitBreakerStatusTool, circuitBreakerResetTool]) {
     const inputSchema =
       tool.name === "circuit_breaker_status"
@@ -2208,6 +2284,7 @@ export function createMCPServer({
   const originalClose = closableServer.close.bind(closableServer);
 
   closableServer.close = async (): Promise<void> => {
+    sunsetScheduler.stop();
     refreshableHostMemoryFileAdapter?.dispose();
     await originalClose();
   };
