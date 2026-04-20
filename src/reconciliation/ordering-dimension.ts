@@ -113,12 +113,12 @@ function listOrderingWindowRows(
 }
 
 function resolveToleranceMs(value?: number): number {
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
     return value;
   }
 
   const parsed = Number.parseInt(process.env.VEGA_RECONCILIATION_ORDERING_TOLERANCE_MS ?? "", 10);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : DEFAULT_TOLERANCE_MS;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_TOLERANCE_MS;
 }
 
 function toEpochMs(value: string): number {

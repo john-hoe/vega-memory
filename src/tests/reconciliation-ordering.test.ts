@@ -95,6 +95,26 @@ function getDriftFinding(result: Awaited<ReturnType<typeof runOrderingDimension>
   return finding;
 }
 
+async function runOrderingDimensionFor1200MsDrift(args?: { tolerance_ms?: number }) {
+  const repository = new Repository(":memory:");
+
+  try {
+    applyRawInboxMigration(repository.db);
+    repository.createMemory(createMemory("77777777-7777-4777-8777-777777777777"));
+    insertDecisionEnvelope(repository, "77777777-7777-4777-8777-777777777777");
+    setReceivedAt(repository, "77777777-7777-4777-8777-777777777777", "2026-04-20T12:00:01.200Z");
+
+    return await runOrderingDimension({
+      db: repository.db,
+      window_start: WINDOW_START,
+      window_end: WINDOW_END,
+      ...args
+    });
+  } finally {
+    repository.close();
+  }
+}
+
 test("runOrderingDimension passes when drift stays within tolerance", async () => {
   const repository = new Repository(":memory:");
 
@@ -172,6 +192,31 @@ test("runOrderingDimension respects VEGA_RECONCILIATION_ORDERING_TOLERANCE_MS", 
   } finally {
     repository.close();
   }
+});
+
+test("runOrderingDimension falls back to the default tolerance when env is 0", async () => {
+  await withEnv("VEGA_RECONCILIATION_ORDERING_TOLERANCE_MS", "0", async () => {
+    const result = await runOrderingDimensionFor1200MsDrift();
+
+    assert.equal(result.status, "pass");
+    assert.equal(result.findings.every((finding) => finding.status === "pass"), true);
+  });
+});
+
+test("runOrderingDimension falls back to the default tolerance when env is negative", async () => {
+  await withEnv("VEGA_RECONCILIATION_ORDERING_TOLERANCE_MS", "-500", async () => {
+    const result = await runOrderingDimensionFor1200MsDrift();
+
+    assert.equal(result.status, "pass");
+    assert.equal(result.findings.every((finding) => finding.status === "pass"), true);
+  });
+});
+
+test("runOrderingDimension falls back to the default tolerance when arg is 0", async () => {
+  const result = await runOrderingDimensionFor1200MsDrift({ tolerance_ms: 0 });
+
+  assert.equal(result.status, "pass");
+  assert.equal(result.findings.every((finding) => finding.status === "pass"), true);
 });
 
 test("runOrderingDimension treats positive and negative drift symmetrically", async () => {
