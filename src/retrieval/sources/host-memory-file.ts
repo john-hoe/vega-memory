@@ -22,6 +22,7 @@ import {
 import type { SourceAdapter, SourceRecord, SourceSearchInput } from "./types.js";
 
 const MAX_CONTENT_CHARS = 4096;
+const DEFAULT_POLL_INTERVAL_MS = 30_000;
 
 interface HostMemoryFileEntryRow {
   path: string;
@@ -54,6 +55,11 @@ const toContentSha256 = (content: string): string =>
 const toRawScore = (bm25Score: number): number =>
   Number.isFinite(bm25Score) ? 1 / (1 + Math.max(0, bm25Score)) : 0.5;
 
+const resolvePollIntervalMs = (): number => {
+  const parsed = Number.parseInt(process.env.VEGA_HOST_MEMORY_FILE_POLL_INTERVAL_MS ?? "", 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_POLL_INTERVAL_MS;
+};
+
 function parseContent(
   parser: HostMemoryFileParser,
   content: string
@@ -74,12 +80,16 @@ export class HostMemoryFileAdapter implements SourceAdapter {
   readonly #db: DatabaseAdapter;
   readonly #homeDir: string;
   readonly #logger: Logger;
+  readonly #pollIntervalMs: number;
+  #pollTimer: NodeJS.Timeout | null = null;
+  #refreshInFlight = false;
 
   constructor(options: HostMemoryFileAdapterOptions) {
     this.#db = options.db;
     this.#homeDir = options.homeDir;
     this.#logger =
       options.logger ?? createLogger({ name: "retrieval-source-host-memory-file" });
+    this.#pollIntervalMs = resolvePollIntervalMs();
 
     if (!this.#db.isPostgres) {
       applyHostMemoryFileFtsMigration(this.#db);
@@ -87,6 +97,8 @@ export class HostMemoryFileAdapter implements SourceAdapter {
 
     if (this.enabled) {
       this.refreshIndex();
+      this.#pollTimer = setInterval(() => this.refreshIndex(), this.#pollIntervalMs);
+      this.#pollTimer.unref?.();
     }
   }
 
@@ -138,99 +150,114 @@ export class HostMemoryFileAdapter implements SourceAdapter {
   }
 
   refreshIndex(): void {
-    if (!this.enabled) {
+    if (!this.enabled || this.#refreshInFlight) {
       return;
     }
 
-    this.#db.transaction(() => {
-      const existingEntries = this.#db
-        .prepare<[], HostMemoryFileEntryRow>(
-          `SELECT path, surface, mtime_ms, indexed_at FROM ${HOST_MEMORY_FILE_ENTRIES_TABLE}`
-        )
-        .all();
-      const existingByPath = new Map(existingEntries.map((entry) => [entry.path, entry]));
-      const discoveredPaths = enumeratePaths(this.#homeDir);
-      const seenPaths = new Set<string>();
+    this.#refreshInFlight = true;
 
-      for (const discovered of discoveredPaths) {
-        seenPaths.add(discovered.path);
-        let fileStats;
+    try {
+      this.#db.transaction(() => {
+        const existingEntries = this.#db
+          .prepare<[], HostMemoryFileEntryRow>(
+            `SELECT path, surface, mtime_ms, indexed_at FROM ${HOST_MEMORY_FILE_ENTRIES_TABLE}`
+          )
+          .all();
+        const existingByPath = new Map(existingEntries.map((entry) => [entry.path, entry]));
+        const discoveredPaths = enumeratePaths(this.#homeDir);
+        const seenPaths = new Set<string>();
 
-        try {
-          fileStats = statSync(discovered.path);
-        } catch (error) {
-          this.#logger.warn("Host memory file stat failed during refresh; skipping file", {
-            path: discovered.path,
-            error: error instanceof Error ? error.message : String(error)
-          });
-          continue;
+        for (const discovered of discoveredPaths) {
+          seenPaths.add(discovered.path);
+          let fileStats;
+
+          try {
+            fileStats = statSync(discovered.path);
+          } catch (error) {
+            this.#logger.warn("Host memory file stat failed during refresh; skipping file", {
+              path: discovered.path,
+              error: error instanceof Error ? error.message : String(error)
+            });
+            continue;
+          }
+
+          if (!fileStats.isFile()) {
+            continue;
+          }
+
+          const mtimeMs = Math.floor(fileStats.mtimeMs);
+          const existingEntry = existingByPath.get(discovered.path);
+
+          if (existingEntry?.mtime_ms === mtimeMs) {
+            continue;
+          }
+
+          try {
+            const rawContent = readFileSync(discovered.path, "utf8");
+            const parsed = parseContent(discovered.parser, rawContent);
+            const indexedAt = Math.max(Date.now(), (existingEntry?.indexed_at ?? 0) + 1);
+
+            this.#db.run(
+              `INSERT INTO ${HOST_MEMORY_FILE_ENTRIES_TABLE} (
+                path,
+                surface,
+                mtime_ms,
+                indexed_at,
+                file_size_bytes,
+                content_sha256
+              ) VALUES (?, ?, ?, ?, ?, ?)
+              ON CONFLICT(path) DO UPDATE SET
+                surface = excluded.surface,
+                mtime_ms = excluded.mtime_ms,
+                indexed_at = excluded.indexed_at,
+                file_size_bytes = excluded.file_size_bytes,
+                content_sha256 = excluded.content_sha256`,
+              discovered.path,
+              discovered.surface,
+              mtimeMs,
+              indexedAt,
+              fileStats.size,
+              toContentSha256(rawContent)
+            );
+            this.#db.run(`DELETE FROM ${HOST_MEMORY_FILE_FTS_TABLE} WHERE path = ?`, discovered.path);
+            this.#db.run(
+              `INSERT INTO ${HOST_MEMORY_FILE_FTS_TABLE} (path, surface, title, content) VALUES (?, ?, ?, ?)`,
+              discovered.path,
+              discovered.surface,
+              parsed.title ?? null,
+              parsed.body
+            );
+          } catch (error) {
+            this.#logger.warn("Host memory file refresh failed; skipping file", {
+              path: discovered.path,
+              parser: discovered.parser,
+              surface: discovered.surface,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
         }
 
-        if (!fileStats.isFile()) {
-          continue;
+        for (const entry of existingEntries) {
+          if (seenPaths.has(entry.path)) {
+            continue;
+          }
+
+          this.#db.run(`DELETE FROM ${HOST_MEMORY_FILE_FTS_TABLE} WHERE path = ?`, entry.path);
+          this.#db.run(`DELETE FROM ${HOST_MEMORY_FILE_ENTRIES_TABLE} WHERE path = ?`, entry.path);
         }
+      });
+    } finally {
+      this.#refreshInFlight = false;
+    }
+  }
 
-        const mtimeMs = Math.floor(fileStats.mtimeMs);
-        const existingEntry = existingByPath.get(discovered.path);
+  dispose(): void {
+    if (this.#pollTimer === null) {
+      return;
+    }
 
-        if (existingEntry?.mtime_ms === mtimeMs) {
-          continue;
-        }
-
-        try {
-          const rawContent = readFileSync(discovered.path, "utf8");
-          const parsed = parseContent(discovered.parser, rawContent);
-          const indexedAt = Math.max(Date.now(), (existingEntry?.indexed_at ?? 0) + 1);
-
-          this.#db.run(
-            `INSERT INTO ${HOST_MEMORY_FILE_ENTRIES_TABLE} (
-              path,
-              surface,
-              mtime_ms,
-              indexed_at,
-              file_size_bytes,
-              content_sha256
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(path) DO UPDATE SET
-              surface = excluded.surface,
-              mtime_ms = excluded.mtime_ms,
-              indexed_at = excluded.indexed_at,
-              file_size_bytes = excluded.file_size_bytes,
-              content_sha256 = excluded.content_sha256`,
-            discovered.path,
-            discovered.surface,
-            mtimeMs,
-            indexedAt,
-            fileStats.size,
-            toContentSha256(rawContent)
-          );
-          this.#db.run(`DELETE FROM ${HOST_MEMORY_FILE_FTS_TABLE} WHERE path = ?`, discovered.path);
-          this.#db.run(
-            `INSERT INTO ${HOST_MEMORY_FILE_FTS_TABLE} (path, surface, title, content) VALUES (?, ?, ?, ?)`,
-            discovered.path,
-            discovered.surface,
-            parsed.title ?? null,
-            parsed.body
-          );
-        } catch (error) {
-          this.#logger.warn("Host memory file refresh failed; skipping file", {
-            path: discovered.path,
-            parser: discovered.parser,
-            surface: discovered.surface,
-            error: error instanceof Error ? error.message : String(error)
-          });
-        }
-      }
-
-      for (const entry of existingEntries) {
-        if (seenPaths.has(entry.path)) {
-          continue;
-        }
-
-        this.#db.run(`DELETE FROM ${HOST_MEMORY_FILE_FTS_TABLE} WHERE path = ?`, entry.path);
-        this.#db.run(`DELETE FROM ${HOST_MEMORY_FILE_ENTRIES_TABLE} WHERE path = ?`, entry.path);
-      }
-    });
+    clearInterval(this.#pollTimer);
+    this.#pollTimer = null;
   }
 }
 

@@ -37,6 +37,7 @@ import { createCircuitBreaker } from "../retrieval/circuit-breaker.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
 import { createCandidateMemoryAdapter } from "../retrieval/sources/candidate-memory.js";
+import { HostMemoryFileAdapter } from "../retrieval/sources/host-memory-file.js";
 import { SourceRegistry } from "../retrieval/sources/registry.js";
 import {
   createDefaultPromotionPolicy,
@@ -256,16 +257,20 @@ export function createAPIServer(
       "Phase 8 persistence disabled: CheckpointStore, AckStore, CheckpointFailureStore require SQLite backend. context.resolve/usage.ack still accept traffic but responses carry degraded flags."
     );
   }
+  const retrievalRegistry = createRetrievalRegistry({
+    repository: activeServices.repository,
+    candidateRepository,
+    wikiSearch: searchWikiPages,
+    factClaimService,
+    graphReportService,
+    archiveService,
+    homeDir: runtimeOptions.homeDir
+  });
+  const hostMemoryFileAdapter = retrievalRegistry.get("host_memory_file");
+  const refreshableHostMemoryFileAdapter =
+    hostMemoryFileAdapter instanceof HostMemoryFileAdapter ? hostMemoryFileAdapter : undefined;
   const retrievalOrchestrator = new RetrievalOrchestrator({
-    registry: createRetrievalRegistry({
-      repository: activeServices.repository,
-      candidateRepository,
-      wikiSearch: searchWikiPages,
-      factClaimService,
-      graphReportService,
-      archiveService,
-      homeDir: runtimeOptions.homeDir
-    }),
+    registry: retrievalRegistry,
     checkpoint_store: checkpointStore,
     checkpoint_failure_store: checkpointFailureStore,
     circuit_breaker: circuitBreaker,
@@ -405,6 +410,8 @@ export function createAPIServer(
       return address.port;
     },
     async stop(): Promise<void> {
+      refreshableHostMemoryFileAdapter?.dispose();
+
       if (server === null) {
         return;
       }

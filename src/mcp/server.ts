@@ -68,6 +68,8 @@ import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
 import { createCandidateMemoryAdapter } from "../retrieval/sources/candidate-memory.js";
 import { applyHostMemoryFileFtsMigration } from "../retrieval/sources/host-memory-file-fts.js";
+import { HOST_MEMORY_FILE_ENTRIES_TABLE } from "../retrieval/sources/host-memory-file-fts.js";
+import { HostMemoryFileAdapter } from "../retrieval/sources/host-memory-file.js";
 import { SourceRegistry } from "../retrieval/sources/registry.js";
 import {
   applyReconciliationFindingsMigration,
@@ -176,6 +178,26 @@ const countMemories = (repository: Repository): number =>
   repository.listMemories({
     limit: 1_000_000
   }).length;
+
+const countHostMemoryFileEntries = (repository: Repository): number => {
+  if (repository.db.isPostgres) {
+    return 0;
+  }
+
+  return (
+    repository.db.get<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM ${HOST_MEMORY_FILE_ENTRIES_TABLE}`
+    )?.count ?? 0
+  );
+};
+
+interface HostMemoryFileRefreshResult {
+  schema_version: "1.0";
+  refreshed_at: string;
+  indexed_paths: number;
+  duration_ms: number;
+  degraded?: "adapter_disabled" | "sqlite_only";
+}
 
 const toTextResult = (result: unknown, isError = false): CallToolResult => ({
   content: [
@@ -748,16 +770,20 @@ export function createMCPServer({
     synthesisEngine,
     config
   );
+  const retrievalRegistry = createRetrievalRegistry({
+    repository: activeRepository,
+    candidateRepository,
+    wikiSearch: searchWikiPages,
+    factClaimService: retrievalFactClaimService,
+    graphReportService,
+    archiveService: retrievalArchiveService,
+    homeDir
+  });
+  const hostMemoryFileAdapter = retrievalRegistry.get("host_memory_file");
+  const refreshableHostMemoryFileAdapter =
+    hostMemoryFileAdapter instanceof HostMemoryFileAdapter ? hostMemoryFileAdapter : undefined;
   const retrievalOrchestrator = new RetrievalOrchestrator({
-    registry: createRetrievalRegistry({
-      repository: activeRepository,
-      candidateRepository,
-      wikiSearch: searchWikiPages,
-      factClaimService: retrievalFactClaimService,
-      graphReportService,
-      archiveService: retrievalArchiveService,
-      homeDir
-    }),
+    registry: retrievalRegistry,
     checkpoint_store: checkpointStore,
     checkpoint_failure_store: checkpointFailureStore,
     circuit_breaker: circuitBreaker
@@ -2052,6 +2078,56 @@ export function createMCPServer({
       })
   );
 
+  server.registerTool(
+    "host_memory_file.refresh",
+    {
+      description: "Refresh the host memory file index.",
+      inputSchema: {}
+    },
+    async (args: unknown) =>
+      runTool<HostMemoryFileRefreshResult>(repository, "host_memory_file.refresh", args, observer, async () => {
+        const startedAt = Date.now();
+
+        if (activeRepository.db.isPostgres) {
+          return {
+            result: {
+              schema_version: "1.0",
+              refreshed_at: new Date().toISOString(),
+              indexed_paths: 0,
+              duration_ms: Date.now() - startedAt,
+              degraded: "sqlite_only" as const
+            },
+            resultCount: 1
+          };
+        }
+
+        if (refreshableHostMemoryFileAdapter === undefined || !refreshableHostMemoryFileAdapter.enabled) {
+          return {
+            result: {
+              schema_version: "1.0",
+              refreshed_at: new Date().toISOString(),
+              indexed_paths: countHostMemoryFileEntries(activeRepository),
+              duration_ms: Date.now() - startedAt,
+              degraded: "adapter_disabled" as const
+            },
+            resultCount: 1
+          };
+        }
+
+        refreshableHostMemoryFileAdapter.refreshIndex();
+
+        return {
+          result: {
+            schema_version: "1.0",
+            refreshed_at: new Date().toISOString(),
+            indexed_paths: countHostMemoryFileEntries(activeRepository),
+            duration_ms: Date.now() - startedAt
+          },
+          resultCount: 1
+        };
+      })
+  );
+
   for (const tool of [circuitBreakerStatusTool, circuitBreakerResetTool]) {
     const inputSchema =
       tool.name === "circuit_breaker_status"
@@ -2126,7 +2202,17 @@ export function createMCPServer({
     );
   }
 
-  return server;
+  const closableServer = server as McpServer & {
+    close(): Promise<void>;
+  };
+  const originalClose = closableServer.close.bind(closableServer);
+
+  closableServer.close = async (): Promise<void> => {
+    refreshableHostMemoryFileAdapter?.dispose();
+    await originalClose();
+  };
+
+  return closableServer;
 }
 
 export type VegaMCPTransport = StdioServerTransport;
