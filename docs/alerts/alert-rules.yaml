@@ -1,0 +1,58 @@
+# Vega alert rules registry (P8-035). Aligned with Dashboard core 5 metrics.
+# Each rule declares a threshold against a Prometheus-style metric; the evaluator
+# calls injected metricsQuery(metric, windowMs) -> number | null.
+#
+# Schema (zod-enforced in src/alert/rules.ts):
+#   - id: kebab-case-string
+#   - severity: "info" | "warn" | "critical"
+#   - metric: string
+#   - operator: ">" | ">=" | "<" | "<="
+#   - threshold: number
+#   - window_ms: integer > 0
+#   - min_duration_ms: integer >= 0
+#   - channels: [string, ...]
+#
+rules:
+  - id: retrieval_coverage_low
+    severity: warn
+    metric: vega_retrieval_nonempty_ratio
+    operator: "<"
+    threshold: 0.5
+    window_ms: 300000
+    min_duration_ms: 900000
+    channels: [default_webhook]
+  - id: usage_ack_sufficiency_low
+    severity: warn
+    metric: vega_usage_ack_sufficiency_insufficient_ratio
+    operator: ">"
+    threshold: 0.3
+    window_ms: 600000
+    min_duration_ms: 600000
+    channels: [default_webhook]
+  - id: circuit_breaker_open
+    severity: critical
+    metric: vega_circuit_breaker_state
+    operator: ">"
+    threshold: 0
+    window_ms: 120000
+    min_duration_ms: 120000
+    channels: [default_webhook]
+  - id: raw_inbox_backlog_high
+    severity: warn
+    metric: vega_raw_inbox_rows
+    operator: ">"
+    threshold: 10000
+    window_ms: 300000
+    min_duration_ms: 300000
+    channels: [default_webhook]
+  - id: raw_inbox_oldest_age_high
+    severity: critical
+    metric: vega_raw_inbox_oldest_age_seconds
+    operator: ">"
+    threshold: 3600
+    window_ms: 300000
+    min_duration_ms: 300000
+    channels: [default_webhook]
+
+# Channel instances are registered via docs/alerts/channels.yaml separately so
+# deployment-specific secrets stay out of the rule definitions.

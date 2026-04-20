@@ -7,6 +7,17 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import {
+  AlertScheduler,
+  DEFAULT_ALERT_CHANNELS_PATH,
+  DEFAULT_ALERT_RULES_PATH,
+  evaluateAlertRules,
+  inspectAlertChannels,
+  inspectAlertRules,
+  loadAlertChannels,
+  loadAlertRules,
+  type AlertEvaluation
+} from "../alert/index.js";
+import {
   isConsolidationReportEnabled,
   isDeepRecallAvailable,
   isFactClaimsEnabled,
@@ -211,6 +222,20 @@ interface SunsetCheckResult {
   evaluated_at: string;
   candidates: SunsetEvaluationResult[];
   degraded?: "registry_missing" | "parse_error";
+}
+
+interface AlertCheckResult {
+  schema_version: "1.0";
+  evaluated_at: string;
+  evaluations: AlertEvaluation[];
+  degraded?: "rules_missing" | "channels_missing" | "parse_error";
+}
+
+interface AlertFireResult {
+  schema_version: "1.0";
+  fired_at: string;
+  dispatch_status: Record<string, string>;
+  degraded?: "rules_missing" | "channels_missing" | "parse_error" | "rule_not_found";
 }
 
 const toTextResult = (result: unknown, isError = false): CallToolResult => ({
@@ -806,9 +831,24 @@ export function createMCPServer({
       }),
     notifier: createChangelogNotifier(resolve(process.cwd(), "CHANGELOG.md"))
   });
+  const alertRules = loadAlertRules(DEFAULT_ALERT_RULES_PATH, process.env);
+  const alertChannels = loadAlertChannels(DEFAULT_ALERT_CHANNELS_PATH, process.env);
+  const alertScheduler = new AlertScheduler({
+    db: activeRepository.db,
+    rules: alertRules,
+    channels: alertChannels,
+    evaluator: () =>
+      evaluateAlertRules(alertRules, {
+        metricsQuery: async () => null,
+        now: () => new Date()
+      })
+  });
 
   if (process.env.VEGA_SUNSET_SCHEDULER_ENABLED !== "false") {
     sunsetScheduler.start();
+  }
+  if (process.env.VEGA_ALERT_SCHEDULER_ENABLED !== "false") {
+    alertScheduler.start();
   }
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: retrievalRegistry,
@@ -2204,6 +2244,155 @@ export function createMCPServer({
       })
   );
 
+  server.registerTool(
+    "alert.check",
+    {
+      description: "Evaluate alert rules from the checked-in registry.",
+      inputSchema: {
+        rules_path: z.string().trim().min(1).optional(),
+        channels_path: z.string().trim().min(1).optional()
+      }
+    },
+    async (args: unknown) =>
+      runTool<AlertCheckResult>(repository, "alert.check", args, observer, async () => {
+        const parsedArgs = z
+          .object({
+            rules_path: z.string().trim().min(1).optional(),
+            channels_path: z.string().trim().min(1).optional()
+          })
+          .safeParse(args);
+        const evaluatedAt = new Date().toISOString();
+        const rulesResult = inspectAlertRules(
+          parsedArgs.success ? parsedArgs.data.rules_path : undefined,
+          process.env
+        );
+        const channelsResult = inspectAlertChannels(
+          parsedArgs.success ? parsedArgs.data.channels_path : undefined,
+          process.env
+        );
+        const degraded =
+          rulesResult.degraded === "missing"
+            ? ("rules_missing" as const)
+            : channelsResult.degraded === "missing"
+              ? ("channels_missing" as const)
+              : rulesResult.degraded === "parse_error" || channelsResult.degraded === "parse_error"
+                ? ("parse_error" as const)
+                : undefined;
+        const evaluations =
+          rulesResult.degraded === undefined
+            ? await evaluateAlertRules(rulesResult.rules, {
+                metricsQuery: async () => null,
+                now: () => new Date(evaluatedAt)
+              })
+            : [];
+
+        return {
+          result: {
+            schema_version: "1.0",
+            evaluated_at: evaluatedAt,
+            evaluations,
+            ...(degraded === undefined ? {} : { degraded })
+          },
+          resultCount: evaluations.length
+        };
+      })
+  );
+
+  server.registerTool(
+    "alert.fire",
+    {
+      description: "Manually fire one alert rule and dispatch to its configured channels.",
+      inputSchema: {
+        rule_id: z.string().trim().min(1),
+        reason: z.string().trim().min(1).optional()
+      }
+    },
+    async (args: unknown) =>
+      runTool<AlertFireResult>(repository, "alert.fire", args, observer, async () => {
+        const parsedArgs = z
+          .object({
+            rule_id: z.string().trim().min(1),
+            reason: z.string().trim().min(1).optional()
+          })
+          .safeParse(args);
+        const firedAt = new Date();
+
+        if (!parsedArgs.success) {
+          return {
+            result: {
+              schema_version: "1.0",
+              fired_at: firedAt.toISOString(),
+              dispatch_status: {},
+              degraded: "parse_error"
+            },
+            resultCount: 0
+          };
+        }
+
+        const rulesResult = inspectAlertRules(DEFAULT_ALERT_RULES_PATH, process.env);
+        const channelsResult = inspectAlertChannels(DEFAULT_ALERT_CHANNELS_PATH, process.env);
+
+        if (rulesResult.degraded === "missing") {
+          return {
+            result: {
+              schema_version: "1.0",
+              fired_at: firedAt.toISOString(),
+              dispatch_status: {},
+              degraded: "rules_missing"
+            },
+            resultCount: 0
+          };
+        }
+
+        if (rulesResult.degraded === "parse_error" || channelsResult.degraded === "parse_error") {
+          return {
+            result: {
+              schema_version: "1.0",
+              fired_at: firedAt.toISOString(),
+              dispatch_status: {},
+              degraded: "parse_error"
+            },
+            resultCount: 0
+          };
+        }
+
+        const rule = rulesResult.rules.find((entry) => entry.id === parsedArgs.data.rule_id);
+        if (rule === undefined) {
+          return {
+            result: {
+              schema_version: "1.0",
+              fired_at: firedAt.toISOString(),
+              dispatch_status: {},
+              degraded: "rule_not_found"
+            },
+            resultCount: 0
+          };
+        }
+
+        const manualScheduler = new AlertScheduler({
+          db: activeRepository.db,
+          rules: rulesResult.rules,
+          channels: channelsResult.channels,
+          evaluator: async () => []
+        });
+        const dispatchStatus = await manualScheduler.fireRule(rule, {
+          reason: parsedArgs.data.reason,
+          firedAt
+        });
+        const degraded = channelsResult.degraded === "missing" ? "channels_missing" : undefined;
+
+        return {
+          result: {
+            schema_version: "1.0",
+            fired_at: firedAt.toISOString(),
+            dispatch_status: dispatchStatus,
+            ...(degraded === undefined ? {} : { degraded })
+          },
+          resultCount: Object.keys(dispatchStatus).length
+        };
+      })
+  );
+
   for (const tool of [circuitBreakerStatusTool, circuitBreakerResetTool]) {
     const inputSchema =
       tool.name === "circuit_breaker_status"
@@ -2285,6 +2474,7 @@ export function createMCPServer({
 
   closableServer.close = async (): Promise<void> => {
     sunsetScheduler.stop();
+    alertScheduler.stop();
     refreshableHostMemoryFileAdapter?.dispose();
     await originalClose();
   };

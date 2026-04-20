@@ -4,6 +4,14 @@ import { resolve } from "node:path";
 
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 
+import {
+  AlertScheduler,
+  DEFAULT_ALERT_CHANNELS_PATH,
+  DEFAULT_ALERT_RULES_PATH,
+  evaluateAlertRules,
+  loadAlertChannels,
+  loadAlertRules
+} from "../alert/index.js";
 import type { VegaConfig } from "../config.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { FactClaimService } from "../core/fact-claim-service.js";
@@ -286,9 +294,24 @@ export function createAPIServer(
       }),
     notifier: createChangelogNotifier(resolve(process.cwd(), "CHANGELOG.md"))
   });
+  const alertRules = loadAlertRules(DEFAULT_ALERT_RULES_PATH, process.env);
+  const alertChannels = loadAlertChannels(DEFAULT_ALERT_CHANNELS_PATH, process.env);
+  const alertScheduler = new AlertScheduler({
+    db,
+    rules: alertRules,
+    channels: alertChannels,
+    evaluator: () =>
+      evaluateAlertRules(alertRules, {
+        metricsQuery: async () => null,
+        now: () => new Date()
+      })
+  });
 
   if (process.env.VEGA_SUNSET_SCHEDULER_ENABLED !== "false") {
     sunsetScheduler.start();
+  }
+  if (process.env.VEGA_ALERT_SCHEDULER_ENABLED !== "false") {
+    alertScheduler.start();
   }
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: retrievalRegistry,
@@ -432,6 +455,7 @@ export function createAPIServer(
     },
     async stop(): Promise<void> {
       sunsetScheduler.stop();
+      alertScheduler.stop();
       refreshableHostMemoryFileAdapter?.dispose();
 
       if (server === null) {

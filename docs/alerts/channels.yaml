@@ -1,0 +1,15 @@
+# Vega alert channel registry. Kept SEPARATE from alert-rules.yaml so secrets
+# (webhook URLs, bot tokens) stay out of the rule definitions.
+#
+# Schema (zod-enforced in src/alert/channels/index.ts):
+#   - id: kebab-case
+#   - type: "webhook" | "slack" | "telegram"
+#   - config:
+#       webhook: { url: string, headers?: Record<string,string>, method?: "POST" }
+#       slack: { url: string }
+#       telegram: { bot_token: string, chat_id: string }
+#   - enabled: boolean
+#
+# For production, consider reading secrets from process.env instead of inlining
+# them here. Example env-ref syntax: url: "${VEGA_ALERT_WEBHOOK_URL}".
+channels: []
