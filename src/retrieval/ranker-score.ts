@@ -5,6 +5,7 @@ import type { SourceRecord } from "./sources/types.js";
 import type { RankerConfig, RankedRecord } from "./ranker.js";
 
 const DEMOTION_FACTOR = 0.3;
+export const HOST_MEMORY_FILE_FLOOR = 0.05;
 
 export function clampScore(score: number): number {
   if (score < 0) {
@@ -45,6 +46,10 @@ export function scoreRecord(
 
   if (demote_ids?.has(recordKey(record.source_kind, record.id))) {
     final_score *= DEMOTION_FACTOR;
+  }
+
+  if (record.source_kind === "host_memory_file") {
+    final_score = Math.max(final_score, HOST_MEMORY_FILE_FLOOR);
   }
 
   final_score = clampScore(final_score);

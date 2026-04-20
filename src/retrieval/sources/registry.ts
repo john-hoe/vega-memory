@@ -41,7 +41,23 @@ export class SourceRegistry {
     const results: SourceRecord[] = [];
 
     for (const kind of kinds) {
-      const adapter = this.get(kind);
+      let adapter: SourceAdapter;
+
+      try {
+        adapter = this.get(kind);
+      } catch (error) {
+        if (kind !== "host_memory_file") {
+          throw error;
+        }
+
+        this.#logger.warn("Source adapter missing during search; skipping source kind", {
+          source_kind: kind,
+          intent: input.request.intent,
+          query: input.request.query ?? "",
+          error: error instanceof Error ? error.message : String(error)
+        });
+        continue;
+      }
 
       if (!adapter.enabled) {
         continue;

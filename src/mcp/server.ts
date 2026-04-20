@@ -67,6 +67,7 @@ import { createContextResolveMcpTool } from "../retrieval/context-resolve-handle
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
 import { createCandidateMemoryAdapter } from "../retrieval/sources/candidate-memory.js";
+import { applyHostMemoryFileFtsMigration } from "../retrieval/sources/host-memory-file-fts.js";
 import { SourceRegistry } from "../retrieval/sources/registry.js";
 import {
   applyReconciliationFindingsMigration,
@@ -590,6 +591,7 @@ export interface CreateMCPServerOptions {
   };
   config: VegaConfig;
   healthProvider?: () => Promise<HealthInfo>;
+  homeDir?: string;
 }
 
 export function createMCPServer({
@@ -604,7 +606,8 @@ export function createMCPServer({
   compressionService,
   observerService,
   config,
-  healthProvider
+  healthProvider,
+  homeDir
 }: CreateMCPServerOptions): McpServer {
   const server = new McpServer({
     name: "vega-memory",
@@ -616,6 +619,7 @@ export function createMCPServer({
 
   if (!repository.db.isPostgres) {
     applyRawInboxMigration(repository.db);
+    applyHostMemoryFileFtsMigration(repository.db);
     applyReconciliationFindingsMigration(repository.db);
     const shadowWrite = createShadowWriter({ db: repository.db });
     const shadowWriteForMemoryService = (memory: Memory): void => {
@@ -751,7 +755,8 @@ export function createMCPServer({
       wikiSearch: searchWikiPages,
       factClaimService: retrievalFactClaimService,
       graphReportService,
-      archiveService: retrievalArchiveService
+      archiveService: retrievalArchiveService,
+      homeDir
     }),
     checkpoint_store: checkpointStore,
     checkpoint_failure_store: checkpointFailureStore,

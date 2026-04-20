@@ -20,6 +20,7 @@ import {
   matchesConfiguredApiKey
 } from "./auth.js";
 import { applyRawInboxMigration } from "../ingestion/raw-inbox.js";
+import { applyHostMemoryFileFtsMigration } from "../retrieval/sources/host-memory-file-fts.js";
 import { memoryToEnvelope } from "../ingestion/memory-to-envelope.js";
 import { createIngestEventHttpHandler } from "../ingestion/ingest-event-handler.js";
 import { createShadowWriter } from "../ingestion/shadow-writer.js";
@@ -118,7 +119,10 @@ export const getMetricsPathLabel = (req: Request): string => {
 
 export function createAPIServer(
   services: Omit<APIRouterServices, "config">,
-  config: VegaConfig
+  config: VegaConfig,
+  runtimeOptions: {
+    homeDir?: string;
+  } = {}
 ): {
   app: Express;
   start(port: number): Promise<number>;
@@ -147,6 +151,7 @@ export function createAPIServer(
 
   if (!db.isPostgres) {
     applyRawInboxMigration(db);
+    applyHostMemoryFileFtsMigration(db);
     applyReconciliationFindingsMigration(db);
     const shadowWrite = createShadowWriter({ db });
     const activeRepository = createShadowAwareRepository(activeServices.repository, shadowWrite);
@@ -258,7 +263,8 @@ export function createAPIServer(
       wikiSearch: searchWikiPages,
       factClaimService,
       graphReportService,
-      archiveService
+      archiveService,
+      homeDir: runtimeOptions.homeDir
     }),
     checkpoint_store: checkpointStore,
     checkpoint_failure_store: checkpointFailureStore,
@@ -339,7 +345,7 @@ export function createAPIServer(
   app.use(createOidcRouter(config, activeServices.repository));
   app.use(createAuthMiddleware(config, activeServices.repository));
   if (config.apiKey !== undefined) {
-    app.use(createMcpRouter(activeServices, config));
+    app.use(createMcpRouter(activeServices, config, runtimeOptions));
   }
   app.use(["/ingest_event", "/context_resolve", "/usage_ack"], requireAuthorizedHttpRoute);
   app.post("/ingest_event", createIngestEventHttpHandler(db));

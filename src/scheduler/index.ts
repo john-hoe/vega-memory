@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -129,7 +130,9 @@ export const startSchedulerApiServer = async (
     return null;
   }
 
-  const apiServer = createAPIServer(services, config);
+  const apiServer = createAPIServer(services, config, {
+    homeDir: process.env.HOME ?? homedir()
+  });
   mountDashboard(apiServer.app, services.repository, config);
   const apiPort = await apiServer.start(config.apiPort);
   writeLog(`HTTP API listening on port ${apiPort}`);

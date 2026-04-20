@@ -112,7 +112,7 @@ test("manual host_memory_file reserve config still pulls back a record when expl
     }
   );
 
-  assert.equal(result.budgeted.some((entry) => entry.record.id === "host-1"), true);
+  assert.equal(result.budgeted.some((entry) => entry.record.source_kind === "host_memory_file"), true);
   assert.equal(
     result.budgeted.find((entry) => entry.record.id === "host-1")?.ladder_level,
     "reference"

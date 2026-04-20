@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+
 import { Router, type Request, type Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
@@ -63,7 +65,10 @@ type CreateGraphServiceStub = {
 
 export const createMcpRouter = (
   services: Omit<APIRouterServices, "config">,
-  config: VegaConfig
+  config: VegaConfig,
+  runtimeOptions: {
+    homeDir?: string;
+  } = {}
 ): Router => {
   const router = Router();
 
@@ -86,6 +91,7 @@ export const createMcpRouter = (
       sessionService: services.sessionService,
       compactService: services.compactService,
       config,
+      homeDir: runtimeOptions.homeDir ?? process.env.HOME ?? homedir(),
       healthProvider: async (): Promise<HealthInfo> =>
         getHealthReport(services.repository, config)
     });

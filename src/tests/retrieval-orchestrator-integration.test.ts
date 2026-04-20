@@ -25,7 +25,7 @@ test("createDefaultRegistry registers every source kind and falls back to disabl
   );
 
   assert.equal(registry.get("candidate").enabled, false);
-  assert.equal(registry.get("host_memory_file").enabled, false);
+  assert.equal(registry.get("host_memory_file").enabled, true);
   assert.equal(registry.get("vega_memory").enabled, false);
   assert.equal(registry.get("wiki").enabled, false);
   assert.equal(registry.get("fact_claim").enabled, false);

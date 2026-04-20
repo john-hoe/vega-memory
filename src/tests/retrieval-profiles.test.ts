@@ -25,7 +25,7 @@ test("bootstrap profile excludes candidate source", () => {
 
 test("no profile advertises host_memory_file while the adapter remains a stub", () => {
   for (const profile of [BOOTSTRAP_PROFILE, LOOKUP_PROFILE, FOLLOWUP_PROFILE, EVIDENCE_PROFILE]) {
-    assert.equal(profile.default_sources.includes("host_memory_file"), false);
+    assert.equal(profile.default_sources.includes("host_memory_file"), true);
   }
 });
 

@@ -379,7 +379,10 @@ export class RetrievalOrchestrator {
         depth: profile.default_depth
       };
       const records = this.#registry.searchMany(profile.default_sources, input);
-      const ranked = rank(records, request, this.#rankerConfig, demote_ids);
+      const ranked = rank(records, request, this.#rankerConfig, demote_ids).slice(
+        0,
+        profile.default_top_k
+      );
       const budget = applyBudget(
         ranked,
         mode,

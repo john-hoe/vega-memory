@@ -24,6 +24,7 @@ export interface DefaultRegistryDependencies {
   factClaimService: FactClaimService | undefined;
   graphReportService: GraphReportService | undefined;
   archiveService: ArchiveService | undefined;
+  homeDir?: string;
 }
 
 const logger = createLogger({ name: "retrieval-orchestrator-config" });
@@ -95,7 +96,14 @@ export function createDefaultRegistry(deps: DefaultRegistryDependencies): Source
   registry.register(
     resolveAdapter("archive", "archive", deps.archiveService, createArchiveSource)
   );
-  registry.register(createHostMemoryFileSource());
+  registry.register(
+    deps.repository === undefined
+      ? createHostMemoryFileSource()
+      : createHostMemoryFileSource({
+          db: deps.repository.db,
+          homeDir: deps.homeDir ?? ""
+        })
+  );
 
   return registry;
 }

@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -132,7 +133,8 @@ async function main(): Promise<void> {
         })();
   const server = createMCPServer({
     ...runtime,
-    config
+    config,
+    homeDir: process.env.HOME ?? homedir()
   });
   const consolidationCron =
     config.mode === "server" && (config.consolidationCronEnabled ?? false)

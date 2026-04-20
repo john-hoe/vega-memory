@@ -12,9 +12,7 @@ export interface IntentProfile {
 
 export const BOOTSTRAP_PROFILE: IntentProfile = {
   intent: "bootstrap",
-  // TODO(Wave 5, issue #32): re-add "host_memory_file" to bootstrap/lookup profiles
-  // when HostMemoryFileAdapter (P8-028) is implemented.
-  default_sources: ["vega_memory", "wiki", "fact_claim", "graph", "archive"],
+  default_sources: ["vega_memory", "wiki", "fact_claim", "graph", "archive", "host_memory_file"],
   default_depth: "standard",
   default_top_k: 5,
   description: "Session bootstrap recall across promoted, documentary, and archival sources."
@@ -22,7 +20,7 @@ export const BOOTSTRAP_PROFILE: IntentProfile = {
 
 export const LOOKUP_PROFILE: IntentProfile = {
   intent: "lookup",
-  default_sources: ["vega_memory", "wiki", "fact_claim"],
+  default_sources: ["vega_memory", "wiki", "fact_claim", "host_memory_file"],
   default_depth: "minimal",
   default_top_k: 3,
   description: "Precise lookup against the hot memory, wiki, and fact-claim surfaces."
@@ -30,7 +28,7 @@ export const LOOKUP_PROFILE: IntentProfile = {
 
 export const FOLLOWUP_PROFILE: IntentProfile = {
   intent: "followup",
-  default_sources: ["vega_memory", "candidate", "wiki"],
+  default_sources: ["vega_memory", "candidate", "wiki", "host_memory_file"],
   default_depth: "standard",
   default_top_k: 3,
   description: "Follow-up recall that may expand into candidate memory before escalation."
@@ -38,7 +36,7 @@ export const FOLLOWUP_PROFILE: IntentProfile = {
 
 export const EVIDENCE_PROFILE: IntentProfile = {
   intent: "evidence",
-  default_sources: ["archive", "fact_claim", "graph"],
+  default_sources: ["archive", "fact_claim", "graph", "host_memory_file"],
   default_depth: "evidence",
   default_top_k: 5,
   description: "Evidence-oriented recall that prioritizes archival and provenance-bearing sources."
