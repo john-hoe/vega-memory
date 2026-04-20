@@ -23,6 +23,7 @@ export class ReconciliationOrchestrator {
     db: DatabaseAdapter;
     retention_days: number;
     retention_max_rows: number;
+    protect_run_id?: string;
   }) => void;
 
   constructor(options: {
@@ -32,6 +33,7 @@ export class ReconciliationOrchestrator {
       db: DatabaseAdapter;
       retention_days: number;
       retention_max_rows: number;
+      protect_run_id?: string;
     }) => void;
   }) {
     this.#db = options.db;
@@ -42,7 +44,8 @@ export class ReconciliationOrchestrator {
         pruneFindings(args.db, {
           now: this.#now,
           retention_days: args.retention_days,
-          retention_max_rows: args.retention_max_rows
+          retention_max_rows: args.retention_max_rows,
+          protect_run_id: args.protect_run_id
         }));
   }
 
@@ -97,7 +100,8 @@ export class ReconciliationOrchestrator {
     this.#prune({
       db: this.#db,
       retention_days: retention.retention_days,
-      retention_max_rows: retention.retention_max_rows
+      retention_max_rows: retention.retention_max_rows,
+      protect_run_id: runId
     });
 
     return buildReconciliationReport({

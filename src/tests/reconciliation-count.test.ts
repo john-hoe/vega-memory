@@ -157,6 +157,36 @@ test("runCountDimension detects a reverse orphan envelope", async () => {
   }
 });
 
+test("runCountDimension counts source:auto memories in forward expected totals", async () => {
+  const repository = new Repository(":memory:");
+
+  try {
+    applyRawInboxMigration(repository.db);
+    repository.createMemory(
+      createMemory("77777777-1111-4777-8111-777777777777", {
+        source: "auto"
+      })
+    );
+    insertShadowEnvelope(repository, "77777777-1111-4777-8111-777777777777", "decision");
+
+    const result = await runCountDimension({
+      db: repository.db,
+      window_start: WINDOW_START,
+      window_end: WINDOW_END
+    });
+
+    const forwardDecision = getFinding(result, "forward", "decision");
+
+    assert.equal(result.status, "pass");
+    assert.equal(forwardDecision.expected, 1);
+    assert.equal(forwardDecision.actual, 1);
+    assert.equal(forwardDecision.mismatch_count, 0);
+    assert.deepEqual(forwardDecision.sample_ids, []);
+  } finally {
+    repository.close();
+  }
+});
+
 test("runCountDimension passes when both forward and reverse counts reconcile", async () => {
   const repository = new Repository(":memory:");
 

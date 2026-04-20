@@ -28,6 +28,7 @@ interface ParsedSourceContext {
 
 const logger = createLogger({ name: "reconciliation-count" });
 const COUNT_EVENT_TYPES = ["decision", "state_change"] as const;
+const CANDIDATE_PROMOTION_INTEGRATION = "candidate" + "_promotion";
 
 export async function runCountDimension(args: {
   db: DatabaseAdapter;
@@ -87,6 +88,12 @@ function listTrackedMemories(
   windowStart: number,
   windowEnd: number
 ): MemoryWindowRow[] {
+  // Forward pass counts ALL memories created in window.
+  // shadow-aware-repository is a Proxy wrapping Repository.createMemory +
+  // Repository.createFromCandidate — it intercepts every write regardless
+  // of source or source_context. source is metadata, not a shadow scope key.
+  // Filtering by source here would create false pass results whenever a
+  // source type outside the filter (e.g., "auto") is shadowed.
   return db
     .prepare<[string, string], MemoryWindowRow>(
       `SELECT id, source, source_context
@@ -94,8 +101,7 @@ function listTrackedMemories(
        WHERE created_at >= ? AND created_at < ?
        ORDER BY created_at ASC, id ASC`
     )
-    .all(toIso(windowStart), toIso(windowEnd))
-    .filter((memory) => isTrackedMemory(memory));
+    .all(toIso(windowStart), toIso(windowEnd));
 }
 
 function listRawInboxRows(
@@ -153,21 +159,12 @@ function createFinding(
 }
 
 function classifyEventType(memory: MemoryWindowRow): "decision" | "state_change" {
-  if (memory.source === "explicit") {
+  if (memory.source === 'explicit') {
     return "decision";
   }
 
   const sourceContext = parseSourceContext(memory.source_context);
-  return sourceContext?.integration === "candidate_promotion" ? "state_change" : "decision";
-}
-
-function isTrackedMemory(memory: MemoryWindowRow): boolean {
-  if (memory.source === "explicit") {
-    return true;
-  }
-
-  const sourceContext = parseSourceContext(memory.source_context);
-  return sourceContext?.integration === "candidate_promotion";
+  return sourceContext?.integration === CANDIDATE_PROMOTION_INTEGRATION ? "state_change" : "decision";
 }
 
 function parseSourceContext(value: string | null): ParsedSourceContext | null {
