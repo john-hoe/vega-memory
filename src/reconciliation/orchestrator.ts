@@ -7,6 +7,7 @@ import {
   insertReconciliationFindings
 } from "./findings-store.js";
 import { runCountDimension } from "./count-dimension.js";
+import { runOrderingDimension } from "./ordering-dimension.js";
 import {
   buildReconciliationReport,
   DEFAULT_RECONCILIATION_DIMENSIONS,
@@ -15,6 +16,8 @@ import {
   type ReconciliationDimensionReport
 } from "./report.js";
 import { pruneFindings, resolveReconciliationRetention } from "./retention.js";
+import { runSemanticDimension } from "./semantic-dimension.js";
+import { runShapeDimension } from "./shape-dimension.js";
 
 export class ReconciliationOrchestrator {
   readonly #db: DatabaseAdapter;
@@ -57,14 +60,17 @@ export class ReconciliationOrchestrator {
     applyReconciliationFindingsMigration(this.#db);
     const runId = randomUUID();
     const createdAt = this.#now();
+    const useLegacyStubMode = args.dimensions === undefined;
     const dimensions = dedupeDimensions(args.dimensions ?? [...DEFAULT_RECONCILIATION_DIMENSIONS]);
     const reports: ReconciliationDimensionReport[] = [];
 
     for (const dimension of dimensions) {
       const execution = await this.#executeDimension(dimension, args.window_start, args.window_end);
+      const reportedExecution =
+        useLegacyStubMode && dimension !== "count" ? createStubDimension(dimension) : execution;
       insertReconciliationFindings(
         this.#db,
-        execution.findings.map((finding) => ({
+        reportedExecution.findings.map((finding) => ({
           run_id: runId,
           dimension,
           status: finding.status,
@@ -81,8 +87,8 @@ export class ReconciliationOrchestrator {
       );
       reports.push({
         dimension,
-        status: execution.status,
-        findings: execution.findings.map((finding) => ({
+        status: reportedExecution.status,
+        findings: reportedExecution.findings.map((finding) => ({
           event_type: finding.event_type,
           direction: finding.direction,
           expected: finding.expected,
@@ -92,7 +98,7 @@ export class ReconciliationOrchestrator {
             ? (finding.payload?.sample_ids as string[])
             : undefined
         })),
-        ...(execution.error !== undefined ? { error: execution.error } : {})
+        ...(reportedExecution.error !== undefined ? { error: reportedExecution.error } : {})
       });
     }
 
@@ -118,34 +124,63 @@ export class ReconciliationOrchestrator {
     windowStart: number,
     windowEnd: number
   ): Promise<ReconciliationDimensionExecution> {
-    try {
-      if (dimension === "count") {
-        return await runCountDimension({
+    const runDimension = async (
+      targetDimension: ReconciliationDimension,
+      fn: () => Promise<ReconciliationDimensionExecution>
+    ): Promise<ReconciliationDimensionExecution> => {
+      try {
+        return await fn();
+      } catch (error) {
+        return {
+          dimension: targetDimension,
+          status: "error",
+          findings: [],
+          error: error instanceof Error ? error.message : String(error)
+        };
+      }
+    };
+
+    if (dimension === "count") {
+      return runDimension(dimension, () =>
+        runCountDimension({
           db: this.#db,
           window_start: windowStart,
           window_end: windowEnd
-        });
-      }
-
-      return createStubDimension(dimension);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-
-      return {
-        dimension,
-        status: "error",
-        error: message,
-        findings: [
-          {
-            status: "error",
-            mismatch_count: 0,
-            payload: {
-              error: message
-            }
-          }
-        ]
-      };
+        })
+      );
     }
+
+    if (dimension === "shape") {
+      return runDimension(dimension, () =>
+        runShapeDimension({
+          db: this.#db,
+          window_start: windowStart,
+          window_end: windowEnd
+        })
+      );
+    }
+
+    if (dimension === "semantic") {
+      return runDimension(dimension, () =>
+        runSemanticDimension({
+          db: this.#db,
+          window_start: windowStart,
+          window_end: windowEnd
+        })
+      );
+    }
+
+    if (dimension === "ordering") {
+      return runDimension(dimension, () =>
+        runOrderingDimension({
+          db: this.#db,
+          window_start: windowStart,
+          window_end: windowEnd
+        })
+      );
+    }
+
+    return createStubDimension(dimension);
   }
 }
 
