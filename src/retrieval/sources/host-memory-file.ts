@@ -46,6 +46,12 @@ export interface HostMemoryFileAdapterOptions {
   logger?: Logger;
 }
 
+export interface HostMemoryFileReader {
+  search(input: SourceSearchInput): ReadonlyArray<SourceRecord>;
+  refreshIndex(): void;
+  dispose(): void;
+}
+
 const truncateContent = (content: string): string =>
   content.length > MAX_CONTENT_CHARS ? `${content.slice(0, MAX_CONTENT_CHARS - 1)}…` : content;
 
@@ -74,7 +80,7 @@ function parseContent(
   }
 }
 
-export class HostMemoryFileAdapter implements SourceAdapter {
+export class HostMemoryFileAdapter implements SourceAdapter, HostMemoryFileReader {
   readonly kind = "host_memory_file";
   readonly name = "host-memory-file";
   readonly #db: DatabaseAdapter;
