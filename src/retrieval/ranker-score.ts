@@ -7,7 +7,6 @@ import type { RankerConfig, RankedRecord } from "./ranker.js";
 const DEMOTION_FACTOR = 0.3;
 export const HOST_MEMORY_FILE_FLOOR = 0.05;
 const RECENCY_HALF_LIFE_DAYS = 7;
-const RECENCY_ZERO_FLOOR = 0.001;
 
 export function clampScore(score: number): number {
   if (score < 0) {
@@ -68,10 +67,6 @@ export function computeRecency(
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
   const decayed = Math.exp((-Math.LN2 * ageDays) / halfLifeDays);
 
-  if (decayed < RECENCY_ZERO_FLOOR) {
-    return 0;
-  }
-
   return clampScore(decayed);
 }
 
@@ -83,8 +78,6 @@ export function scoreRecord(
   const base = getBaseScore(record);
   const source_prior = getSourcePrior(record.source_kind, config.source_priors);
   const recency = computeRecency(record.created_at);
-  // access_frequency removed 2026-04-21 per #31: no backing signal in the current schema;
-  // re-add it only when retrieval records expose real access tracking.
   // TODO(Wave 5, issue #32): restore host_memory_file-specific floor logic only after the
   // adapter can surface real records instead of staying disabled by default.
   let final_score = (base + source_prior + recency) / 3;

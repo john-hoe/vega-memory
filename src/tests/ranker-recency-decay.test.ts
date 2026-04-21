@@ -22,8 +22,12 @@ test("computeRecency decays to roughly 0.25 after fourteen days", () => {
   assert.ok(Math.abs(score - 0.25) < 0.01);
 });
 
-test("computeRecency clamps very old timestamps down to zero", () => {
-  assert.equal(computeRecency(NOW - 20 * 365 * DAY_MS, NOW), 0);
+test("computeRecency stays above zero at seventy days", () => {
+  assert.ok(computeRecency(NOW - 70 * DAY_MS, NOW) > 0);
+});
+
+test("computeRecency underflows to zero for truly ancient timestamps", () => {
+  assert.equal(computeRecency(NOW - 20_000 * 365 * DAY_MS, NOW), 0);
 });
 
 test("computeRecency clamps future timestamps to one", () => {

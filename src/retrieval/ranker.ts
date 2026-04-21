@@ -29,7 +29,7 @@ export const DEFAULT_RANKER_CONFIG: RankerConfig = {
     candidate: 0.4,
     host_memory_file: 0.3
   },
-  score_version: "v1.0"
+  score_version: "v1.1"
 };
 
 const logger = createLogger({

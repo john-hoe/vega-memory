@@ -114,7 +114,7 @@ test("happy path assembles a bundle and returns a fresh UUID checkpoint", () => 
 
   assert.match(response.checkpoint_id, UUID_V4_PATTERN);
   assert.equal(response.profile_used, "lookup");
-  assert.equal(response.ranker_version, "v1.0");
+  assert.equal(response.ranker_version, "v1.1");
   assert.equal(response.bundle.sections.length, 2);
   assert.equal(countBundleRecords(response), 2);
   assert.equal(response.bundle.bundle_digest, response.bundle_digest);
@@ -145,6 +145,7 @@ test("the same request resolved twice within the TTL reuses the cached bundle bu
   assert.equal(first.bundle_digest, second.bundle_digest);
   assert.deepEqual(first.bundle, second.bundle);
   assert.equal(first.profile_used, second.profile_used);
+  assert.equal(first.ranker_version, "v1.1");
   assert.equal(first.ranker_version, second.ranker_version);
   assert.equal(cache.size(), 1);
 });
