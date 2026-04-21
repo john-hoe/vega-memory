@@ -24,16 +24,16 @@ if [[ -n "${GH_REPO:-}" ]]; then
   repo_flag=(-R "$GH_REPO")
 fi
 
-existing_labels="$(gh label list "${repo_flag[@]}" --limit 500 --json name,color,description)"
+existing_labels="$(gh label list ${repo_flag[@]+"${repo_flag[@]}"} --limit 500 --json name,color,description)"
 
 while IFS=$'\t' read -r action name color description; do
   case "$action" in
     create)
-      gh label create "${repo_flag[@]}" "$name" --color "$color" --description "$description" >/dev/null
+      gh label create ${repo_flag[@]+"${repo_flag[@]}"} "$name" --color "$color" --description "$description" >/dev/null
       echo "create $name"
       ;;
     edit)
-      gh label edit "${repo_flag[@]}" "$name" --color "$color" --description "$description" >/dev/null
+      gh label edit ${repo_flag[@]+"${repo_flag[@]}"} "$name" --color "$color" --description "$description" >/dev/null
       echo "edit $name"
       ;;
     skip)

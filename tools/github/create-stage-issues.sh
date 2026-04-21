@@ -24,10 +24,13 @@ if [[ -n "${GH_REPO:-}" ]]; then
   repo_flag=(-R "$GH_REPO")
 fi
 
-existing_titles="$(gh issue list "${repo_flag[@]}" --state all --limit 500 --json title)"
+existing_titles="$(gh issue list ${repo_flag[@]+"${repo_flag[@]}"} --state all --limit 500 --json title)"
 stage_milestone="${STAGE_MILESTONE:-Phase 8}"
 
-readarray -t stage_rows < <(cat <<'EOF'
+stage_rows=()
+while IFS= read -r row; do
+  [[ -n "$row" ]] && stage_rows+=("$row")
+done <<'EOF'
 S0	Contracts + ingestion	stage-0	P8-001, P8-002, P8-007, P8-010
 S1	Retrieval main brain	stage-1	P8-015, P8-016, P8-028, P8-029, P8-031
 S2	Storage and consolidation	stage-2	{{comma-separated P8 task ids}}
@@ -36,7 +39,6 @@ S4	Observability and reconciliation	stage-4	{{comma-separated P8 task ids}}
 S5	Workflow and docs	stage-5	{{comma-separated P8 task ids}}
 S6	SEAL and release hardening	stage-6	{{comma-separated P8 task ids}}
 EOF
-)
 
 for row in "${stage_rows[@]}"; do
   IFS=$'\t' read -r stage_number stage_name label_name task_links <<<"$row"
@@ -75,6 +77,6 @@ $stage_milestone
 EOF
 )
 
-  gh issue create "${repo_flag[@]}" --title "$title" --label "$label_name" --body "$body" >/dev/null
+  gh issue create ${repo_flag[@]+"${repo_flag[@]}"} --title "$title" --label "$label_name" --body "$body" >/dev/null
   echo "create $title"
 done
