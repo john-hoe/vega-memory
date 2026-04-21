@@ -157,6 +157,50 @@ test("lineage-bound acks promote once three sufficient sessions validate the sam
   }
 });
 
+test("vega_memory lineage promotes when acks bind to promoted memory id", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const candidate = createCandidate();
+    const evaluator = createPromotionEvaluator({
+      policy: createDefaultPromotionPolicy({
+        age_threshold_ms: 1_000_000
+      }),
+      ackStore: createAckStore(db),
+      now: () => NOW + 100
+    });
+    const promotedMemoryRecordId = `vega_memory:${candidate.id}`;
+
+    seedAck({
+      db,
+      checkpoint_id: "checkpoint-1",
+      session_id: "session-a",
+      acked_at: NOW + 10,
+      record_ids: [promotedMemoryRecordId]
+    });
+    seedAck({
+      db,
+      checkpoint_id: "checkpoint-2",
+      session_id: "session-b",
+      acked_at: NOW + 20,
+      record_ids: [promotedMemoryRecordId]
+    });
+    seedAck({
+      db,
+      checkpoint_id: "checkpoint-3",
+      session_id: "session-c",
+      acked_at: NOW + 30,
+      record_ids: [promotedMemoryRecordId]
+    });
+
+    const decision = evaluator.evaluate(candidate, "policy");
+
+    assert.equal(decision.action, "promote");
+  } finally {
+    db.close();
+  }
+});
+
 test("mixed lineage and unrelated acks only count the lineage-bound subset", () => {
   const db = new SQLiteAdapter(":memory:");
 

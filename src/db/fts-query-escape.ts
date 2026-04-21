@@ -17,7 +17,7 @@ export function escapeFtsMatchQuery(raw: string): string {
   const tokens = trimmed
     .split(FTS_TOKEN_SPLIT_REGEX)
     .filter((token) => token.length > 0 && WORD_BEARING_TOKEN_REGEX.test(token))
-    .map((token) => `"${token.replace(/"/g, "\"\"")}"`);
+    .map((token) => `"${token}"`);
 
   return tokens.length === 0 ? "\"\"" : tokens.join(" OR ");
 }
