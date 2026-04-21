@@ -16,6 +16,12 @@ Install the SDK in the OpenCode adapter package:
 npm install vega-memory
 ```
 
+Import the client from the package entrypoint in the worker or adapter process:
+
+```ts
+import { VegaClient } from "vega-memory";
+```
+
 Minimal adapter boot config:
 
 ```json

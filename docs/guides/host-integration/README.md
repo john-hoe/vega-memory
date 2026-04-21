@@ -2,8 +2,10 @@
 
 ## Quick start
 
+Install the SDK with `npm install vega-memory`, then import it from the published package entrypoint:
+
 ```ts
-import { VegaClient } from "../../../src/sdk/index.js";
+import { VegaClient } from "vega-memory";
 const client = new VegaClient({ baseUrl: "http://127.0.0.1:3271", apiKey: process.env.VEGA_API_KEY });
 await client.ingestEvent(envelope);
 const resolved = await client.contextResolve(intentRequest);
@@ -38,4 +40,4 @@ Keep the `surface` value aligned with the canonical enums already used by envelo
 - `POST /ingest_event` accepts `HostEventEnvelopeV1` and returns `IngestEventResponse`.
 - `POST /context_resolve` accepts `IntentRequest` and returns `ContextResolveResponse`.
 - `POST /usage_ack` accepts `UsageAck` and returns `UsageAckResponse`.
-- The SDK re-exports the request aliases plus `VegaClient`, `VegaClientError`, and the existing response types from the server implementation.
+- The `vega-memory` package re-exports the request aliases plus `VegaClient`, `VegaClientError`, and the existing response types from the server implementation.

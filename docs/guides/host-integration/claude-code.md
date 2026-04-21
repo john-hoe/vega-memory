@@ -16,6 +16,12 @@ Install the SDK in the MCP bridge package:
 npm install vega-memory
 ```
 
+Import the SDK from the package entrypoint in the bridge implementation:
+
+```ts
+import { VegaClient } from "vega-memory";
+```
+
 Minimal MCP-side wiring:
 
 ```json

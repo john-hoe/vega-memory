@@ -1,5 +1,13 @@
 # OpenCode Example
 
+> **Blueprint only** — this directory contains architecture sketches, directory
+> layouts, and configuration file shapes. It does NOT contain runnable code.
+> Runnable example repositories are a separate deliverable (not shipped as of
+> 2026-04-21). Use these blueprints to scaffold an integration; do not expect
+> `npm install` + `npm run` to work from here.
+
+Install the SDK with `npm install vega-memory`, then import it from the package entrypoint.
+
 Reference layout:
 
 ```text
@@ -17,7 +25,7 @@ opencode-vega/
 Entry-point sketch:
 
 ```ts
-import { VegaClient } from "../../../src/sdk/index.js";
+import { VegaClient } from "vega-memory";
 
 const client = new VegaClient({
   baseUrl: process.env.VEGA_BASE_URL ?? "http://127.0.0.1:3271",

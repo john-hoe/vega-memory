@@ -16,6 +16,12 @@ Install the SDK in the adapter package and expose Vega connection details throug
 npm install vega-memory
 ```
 
+Import the client from the installed package instead of a repo-relative source path:
+
+```ts
+import { VegaClient } from "vega-memory";
+```
+
 Suggested adapter config:
 
 ```json

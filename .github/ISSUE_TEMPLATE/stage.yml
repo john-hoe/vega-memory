@@ -1,13 +1,17 @@
-name: Phase 8 stage tracker
-description: Track one Phase 8 stage, linked P8 tasks, acceptance criteria, and milestone state.
+name: Stage issue (S0-S6)
+description: File a stage-level tracking issue for Vega Phase 8+ pipeline stages.
 title: "[S<N>] <Stage name>"
 labels:
-  - "stage-<N>"
+  - "phase-8-audit"
 body:
   - type: markdown
     attributes:
       value: |
-        Use this form for Phase 8 stage tracking only.
+        Use this form for Phase 8 stage tracking only. GitHub issue forms do not
+        template-substitute the stage number into labels, so apply the canonical
+        `stage-0` through `stage-6` label after the issue is created. Prefer
+        `bash tools/github/create-stage-issues.sh` for canonical stage issue
+        creation, or add the stage label manually post-create.
 
         Phase 8 conventions:
         - Replace `<N>` in the title with the selected stage number.
@@ -19,44 +23,33 @@ body:
     id: stage_number
     attributes:
       label: Stage number
-      description: Select the Phase 8 stage number for this issue.
+      description: Which pipeline stage does this issue track?
       options:
-        - S0
-        - S1
-        - S2
-        - S3
-        - S4
-        - S5
-        - S6
+        - S0 (contracts + ingestion)
+        - S1 (retrieval)
+        - S2 (promotion)
+        - S3 (wiki)
+        - S4 (fact-claim)
+        - S5 (graph)
+        - S6 (archive)
     validations:
       required: true
-  - type: textarea
+  - type: input
     id: p8_task_links
     attributes:
-      label: P8 task links
-      description: List the Phase 8 task IDs, briefs, or issue links that roll into this stage.
-      placeholder: |
-        - P8-038.5
-        - P8-039.1
-        - docs/briefs/YYYY-MM-DD-batchXX-slug.md
-    validations:
-      required: true
+      label: P8-NNN task references
+      description: Comma-separated list of Notion P8 task IDs.
+      placeholder: "P8-037, P8-038.5"
   - type: input
     id: milestone
     attributes:
       label: Milestone
-      description: Enter the milestone or release bucket for this stage.
-      placeholder: "Phase 8"
-    validations:
-      required: true
+      description: Target milestone / sprint / phase.
   - type: textarea
     id: acceptance_criteria
     attributes:
       label: Acceptance criteria
-      description: Capture the stage-level acceptance checks and any byte-lock or verification constraints.
-      placeholder: |
-        - [ ] Build and tests green for the approved brief set
-        - [ ] Byte-locked paths stay untouched unless explicitly reopened
-        - [ ] Final SEAL commit is mapped back to Notion
+      description: Bullet list of conditions that close this issue.
+      placeholder: "- [ ] ..."
     validations:
       required: true
