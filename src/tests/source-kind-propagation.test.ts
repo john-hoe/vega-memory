@@ -39,6 +39,16 @@ interface ApiHarness {
 }
 
 const now = "2026-04-21T12:00:00.000Z";
+const STORE_SUPPORT_THRESHOLD = 4;
+const STORE_SUPPORT_LABELS = [
+  "candidate_memory:candidate_memories",
+  "promoted_memory:memories",
+  "wiki:wiki_pages",
+  "fact_claim:fact_claims",
+  "graph:relations",
+  "archive:raw_archives"
+] as const;
+const CURRENT_MISSING_SOURCE_KIND_STORES = [...STORE_SUPPORT_LABELS] as const;
 
 function createEnvelope(source_kind: HostEventEnvelopeV1["source_kind"], event_id: string): HostEventEnvelopeV1 {
   return {
@@ -239,6 +249,19 @@ function readStoredSourceKind(repository: Repository, table: string, id: string,
   );
 }
 
+function assertStoreSupportThreshold(
+  supportingStores: string[],
+  floor = STORE_SUPPORT_THRESHOLD,
+  allStores: readonly string[] = STORE_SUPPORT_LABELS
+): void {
+  const missingStores = allStores.filter((store) => !supportingStores.includes(store));
+
+  assert.ok(
+    supportingStores.length >= floor,
+    `expected >= ${floor} stores to support source_kind, got ${supportingStores.length}: [${supportingStores.join(",")}]; missing: [${missingStores.join(",")}]`
+  );
+}
+
 test("raw_inbox preserves source_kind across multiple canonical values", async () => {
   const harness = await createApiHarness("vega-source-kind-raw-");
 
@@ -376,12 +399,31 @@ test("storage layers only assert source_kind where the backing schema currently 
     t.diagnostic(`stores supporting source_kind=${supportingStores.length}`);
     t.diagnostic(`stores missing source_kind=${missingStores.join(", ") || "none"}`);
     assert.equal(stores.length, 6);
-
-    // TODO(P8-029): tighten this threshold once the store schemas actually add source_kind.
-    assert.equal(supportingStores.length >= 0, true);
+    assert.deepEqual(missingStores, [...CURRENT_MISSING_SOURCE_KIND_STORES]);
+    assert.equal(
+      supportingStores.length,
+      stores.length - CURRENT_MISSING_SOURCE_KIND_STORES.length,
+      `expected current schema support count to remain ${stores.length - CURRENT_MISSING_SOURCE_KIND_STORES.length}, got ${supportingStores.length}: [${supportingStores.join(",")}]; missing: [${missingStores.join(",")}]`
+    );
   } finally {
     repository.close();
   }
+});
+
+test("store-support threshold hard-fails below 4", () => {
+  const fourSupportingStores = [...STORE_SUPPORT_LABELS].slice(0, STORE_SUPPORT_THRESHOLD);
+
+  assert.throws(() => assertStoreSupportThreshold([], STORE_SUPPORT_THRESHOLD, STORE_SUPPORT_LABELS));
+  assert.throws(() =>
+    assertStoreSupportThreshold(
+      ["candidate_memory:candidate_memories"],
+      STORE_SUPPORT_THRESHOLD,
+      STORE_SUPPORT_LABELS
+    )
+  );
+  assert.doesNotThrow(() =>
+    assertStoreSupportThreshold(fourSupportingStores, STORE_SUPPORT_THRESHOLD, STORE_SUPPORT_LABELS)
+  );
 });
 
 test("context.resolve bundle records preserve host_memory_file source_kind end-to-end", async () => {

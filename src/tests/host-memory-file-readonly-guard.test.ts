@@ -18,9 +18,92 @@ const HOST_MEMORY_FILE_SOURCES = [
   "src/retrieval/sources/host-memory-file-paths.ts",
   "src/retrieval/sources/host-memory-file-parser.ts"
 ] as const;
+const BANNED_FS_SPECIFIERS = [
+  "appendFile",
+  "appendFileSync",
+  "chmod",
+  "chmodSync",
+  "chown",
+  "chownSync",
+  "copyFile",
+  "copyFileSync",
+  "createWriteStream",
+  "ftruncate",
+  "ftruncateSync",
+  "link",
+  "linkSync",
+  "mkdir",
+  "mkdirSync",
+  "open",
+  "openSync",
+  "rename",
+  "renameSync",
+  "rm",
+  "rmSync",
+  "symlink",
+  "symlinkSync",
+  "truncate",
+  "truncateSync",
+  "unlink",
+  "unlinkSync",
+  "utimes",
+  "utimesSync",
+  "write",
+  "writeFile",
+  "writeFileSync",
+  "writeSync",
+  "writev",
+  "writevSync"
+] as const;
+const OPEN_CALL_NAMES: readonly string[] = ["open", "openSync"];
+const BANNED_FS_MODULE_IMPORT_PATTERN =
+  /^import\s*(?:type\s+)?\{([^}]*)\}\s*from\s*['"]((?:node:)?fs(?:\/promises)?)['"]/gmu;
 
-const FORBIDDEN_WRITE_PATTERN =
-  /\b(?:writeFile(?:Sync)?|appendFile(?:Sync)?|write|rm(?:Sync)?|unlink(?:Sync)?|mkdir(?:Sync)?|copyFile(?:Sync)?|rename(?:Sync)?|chmod(?:Sync)?|chown(?:Sync)?|truncate(?:Sync)?|createWriteStream)\b/u;
+function escapeForRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function collectReadOnlyGuardViolations(source: string, filePath: string): string[] {
+  const violations: string[] = [];
+  const bannedSpecifiers = new Set<string>(BANNED_FS_SPECIFIERS);
+
+  for (const match of source.matchAll(BANNED_FS_MODULE_IMPORT_PATTERN)) {
+    const specifiersBlock = match[1] ?? "";
+    const moduleName = match[2] ?? "";
+    const specifiers = specifiersBlock
+      .split(",")
+      .map((specifier) => specifier.trim())
+      .filter((specifier) => specifier.length > 0);
+
+    for (const specifier of specifiers) {
+      const importedName = specifier.replace(/^type\s+/u, "").split(/\s+as\s+/iu)[0]?.trim() ?? "";
+
+      if (bannedSpecifiers.has(importedName)) {
+        violations.push(`${filePath}: import ${importedName} from ${moduleName}`);
+      }
+    }
+  }
+
+  for (const specifier of BANNED_FS_SPECIFIERS.filter((name) => !OPEN_CALL_NAMES.includes(name))) {
+    const callPattern = new RegExp(`\\b(?:\\w+\\.)*${escapeForRegex(specifier)}\\s*\\(`, "gu");
+
+    for (const match of source.matchAll(callPattern)) {
+      violations.push(`${filePath}: ${match[0].trim()}`);
+    }
+  }
+
+  const openPattern = /\b(?:\w+\.)*open(?:Sync)?\s*\(\s*[^,]+,\s*(['"])([^'"\\]*(?:\\.[^'"\\]*)*)\1/gu;
+
+  for (const match of source.matchAll(openPattern)) {
+    const flag = match[2] ?? "";
+
+    if (/[wa]/u.test(flag)) {
+      violations.push(`${filePath}: ${match[0].trim()}`);
+    }
+  }
+
+  return [...new Set(violations)];
+}
 
 function createSearchInput(query: string, top_k = 5): SourceSearchInput {
   return {
@@ -134,11 +217,39 @@ test("HostMemoryFileAdapter satisfies HostMemoryFileReader and works through the
 });
 
 test("host-memory-file source files contain no forbidden write-oriented fs APIs", () => {
-  const matches = HOST_MEMORY_FILE_SOURCES.flatMap((filePath) => {
-    const contents = readFileSync(filePath, "utf8");
-    const fileMatches = contents.match(new RegExp(FORBIDDEN_WRITE_PATTERN, "gu")) ?? [];
-    return fileMatches.map((match) => `${filePath}:${match}`);
-  });
+  const matches = HOST_MEMORY_FILE_SOURCES.flatMap((filePath) =>
+    collectReadOnlyGuardViolations(readFileSync(filePath, "utf8"), filePath)
+  );
 
   assert.deepEqual(matches, []);
+});
+
+test("readonly scanner flags aliased write imports", () => {
+  const matches = collectReadOnlyGuardViolations(
+    `import { writeFileSync as wf } from "node:fs";
+wf("/tmp/x", "y");`,
+    "mock-alias.ts"
+  );
+
+  assert.equal(matches.some((match) => match.includes("writeFileSync")), true);
+});
+
+test("readonly scanner flags fs.promises write calls", () => {
+  const matches = collectReadOnlyGuardViolations(
+    `import { promises } from "node:fs";
+promises.writeFile("/tmp/x", "y");`,
+    "mock-promises.ts"
+  );
+
+  assert.equal(matches.some((match) => match.includes("promises.writeFile")), true);
+});
+
+test("readonly scanner flags open calls that use write-like flags", () => {
+  const matches = collectReadOnlyGuardViolations(
+    `import { open } from "node:fs";
+open("/tmp/x", "w");`,
+    "mock-open.ts"
+  );
+
+  assert.equal(matches.some((match) => match.includes('open("/tmp/x", "w"')), true);
 });
