@@ -1,5 +1,14 @@
 import type { DatabaseAdapter, PreparedStatement } from "../db/adapter.js";
-import { SURFACES, type Surface } from "../core/contracts/enums.js";
+import {
+  HOST_TIERS,
+  RETRIEVAL_INTENTS,
+  SUFFICIENCY,
+  SURFACES,
+  type HostTier,
+  type RetrievalIntent,
+  type Sufficiency,
+  type Surface
+} from "../core/contracts/enums.js";
 import {
   CIRCUIT_BREAKER_STATES,
   CIRCUIT_BREAKER_TRIP_REASONS,
@@ -29,17 +38,12 @@ import type { CounterMetric, GaugeMetric, MetricsCollector } from "./metrics.js"
 // 6. sufficiency_fp_rate 仅为 proxy：dashboard 上展示的 "sufficiency_fp_rate (proxy)" 来自 `vega_usage_followup_loop_override_total` / `vega_usage_ack_total{sufficiency="needs_followup"}`。底层 metric 刻意不叫 fp_rate，避免与真 FP 指标混淆。HELP 文本明写 "proxy signal for sufficiency false-positive, derived from loop guard override"。
 //
 // 7. raw_inbox gauge 按 event_type 分组是为了 drill-down：总积压 / 最大年龄这两个 Wave 5 首发面板一律在 dashboard 侧用 sum() / max() 聚合，不在 metric 层再开一份无 label 版本。`raw_inbox_backlog_total` / `raw_inbox_oldest_age_max` 是 Batch 10b 的 Grafana 面板标题，不是 metric family 名字；本批次严禁以此命名注册任何新 counter / gauge。 如果未来发现 scrape-time 聚合成本过高才考虑预聚合，本批次不预先做。
-
-export const RETRIEVAL_INTENTS = ["bootstrap", "lookup", "followup", "evidence"] as const;
-// Source of truth remains src/core/contracts/usage-ack.ts / src/core/contracts/enums.ts.
-export const SUFFICIENCY = ["sufficient", "needs_followup", "needs_external"] as const;
-export const HOST_TIER = ["T1", "T2", "T3"] as const;
+export { HOST_TIERS, RETRIEVAL_INTENTS, SUFFICIENCY } from "../core/contracts/enums.js";
 
 const UNKNOWN_LABEL = "unknown";
 
-type RetrievalIntent = (typeof RETRIEVAL_INTENTS)[number];
-type SufficiencyLabel = (typeof SUFFICIENCY)[number];
-type HostTierLabel = (typeof HOST_TIER)[number];
+type SufficiencyLabel = Sufficiency;
+type HostTierLabel = HostTier;
 
 export interface VegaMetricsRegistry {
   recordRetrievalCall(surface: Surface, intent: RetrievalIntent): void;
@@ -82,7 +86,7 @@ const coerceSufficiency = (sufficiency: string): SufficiencyLabel | "unknown" =>
   coerceKnownValue(sufficiency, SUFFICIENCY);
 
 const coerceHostTier = (host_tier: string): HostTierLabel | "unknown" =>
-  coerceKnownValue(host_tier, HOST_TIER);
+  coerceKnownValue(host_tier, HOST_TIERS);
 
 const coerceTripReason = (reason: string): CircuitBreakerTripReason | "unknown" =>
   coerceKnownValue(reason, CIRCUIT_BREAKER_TRIP_REASONS);

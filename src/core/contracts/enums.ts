@@ -37,3 +37,7 @@ export type HostTier = (typeof HOST_TIERS)[number];
 export const SUFFICIENCY = ["sufficient", "needs_followup", "needs_external"] as const;
 
 export type Sufficiency = (typeof SUFFICIENCY)[number];
+
+export const RETRIEVAL_INTENTS = ["bootstrap", "lookup", "followup", "evidence"] as const;
+
+export type RetrievalIntent = (typeof RETRIEVAL_INTENTS)[number];
