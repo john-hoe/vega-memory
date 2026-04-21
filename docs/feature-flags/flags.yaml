@@ -1,0 +1,16 @@
+# Vega feature flag registry (P8-020). Each flag gates one variant with a
+# per-dimension match: surface × intent × traffic_percent.
+#
+# Schema (zod-enforced in src/feature-flags/registry.ts):
+#   - id: kebab-case
+#   - description: short human-readable
+#   - variants: { on: <any serializable>, off: <any serializable> }
+#   - default: "on" | "off"
+#   - matchers:
+#       surfaces: [string] | "*"     # "*" = any
+#       intents: [string] | "*"
+#       traffic_percent: 0-100        # 0 = all-off; 100 = all-on (within matchers)
+#   - bucketing:
+#       seed_field: "session_id" | "project" | "surface"  # default session_id
+#
+flags: []

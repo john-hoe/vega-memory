@@ -39,6 +39,7 @@ import { applyHostMemoryFileFtsMigration } from "../retrieval/sources/host-memor
 import { memoryToEnvelope } from "../ingestion/memory-to-envelope.js";
 import { createIngestEventHttpHandler } from "../ingestion/ingest-event-handler.js";
 import { createShadowWriter } from "../ingestion/shadow-writer.js";
+import { DEFAULT_FEATURE_FLAG_REGISTRY_PATH, evaluateFeatureFlag, extractSurfaceFromHeader, loadFeatureFlagRegistry } from "../feature-flags/index.js";
 import { createMcpRouter } from "./mcp.js";
 import { createOidcRouter } from "./oidc.js";
 import { createRouter, type APIRouterServices } from "./routes.js";
@@ -432,7 +433,13 @@ export function createAPIServer(
     app.use(createMcpRouter(activeServices, config, runtimeOptions));
   }
   app.use(["/ingest_event", "/context_resolve", "/usage_ack"], requireAuthorizedHttpRoute);
-  app.post("/ingest_event", createIngestEventHttpHandler(db));
+  const ingestHandler = createIngestEventHttpHandler(db);
+  app.post("/ingest_event", (req, res) => {
+    const flag = loadFeatureFlagRegistry(DEFAULT_FEATURE_FLAG_REGISTRY_PATH).find(({ id }) => id === "canary.api-ingest-v2");
+    const variant = flag === undefined ? "off" : evaluateFeatureFlag(flag, { surface: extractSurfaceFromHeader(req) || "unknown", intent: "ingest" }).variant;
+    res.setHeader("X-Vega-Canary", variant === "on" ? "api-ingest-v2-on" : "off");
+    return ingestHandler(req, res);
+  });
   app.post("/context_resolve", createContextResolveHttpHandler(retrievalOrchestrator));
   app.post(
     "/usage_ack",

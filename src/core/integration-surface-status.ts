@@ -245,7 +245,7 @@ const inspectManagedSetup = (surface: IntegrationSurface, config: VegaConfig): M
 const toWindowStart = (days: number): string => {
   const current = new Date();
   current.setUTCHours(0, 0, 0, 0);
-  current.setUTCDate(current.getUTCDate() - days + 1);
+  current.setUTCDate(current.getUTCDate() - days);
   return current.toISOString();
 };
 

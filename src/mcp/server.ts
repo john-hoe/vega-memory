@@ -84,6 +84,13 @@ import {
   createCircuitBreakerStatusMcpTool
 } from "../retrieval/circuit-breaker-mcp-tools.js";
 import { createCircuitBreaker } from "../retrieval/circuit-breaker.js";
+import {
+  DEFAULT_FEATURE_FLAG_REGISTRY_PATH,
+  createEvaluateFlagMcpTool,
+  createFlagHitMetricsCollector,
+  createFlagMetricsMcpTool,
+  createListFlagsMcpTool
+} from "../feature-flags/index.js";
 import { createContextResolveMcpTool } from "../retrieval/context-resolve-handler.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
@@ -927,6 +934,14 @@ export function createMCPServer({
   const usageAckTool = createUsageAckMcpTool(ackStore, checkpointStore, undefined, circuitBreaker);
   const circuitBreakerStatusTool = createCircuitBreakerStatusMcpTool(circuitBreaker);
   const circuitBreakerResetTool = createCircuitBreakerResetMcpTool(circuitBreaker);
+  const flagHitMetrics = createFlagHitMetricsCollector();
+  const evaluateFlagTool = createEvaluateFlagMcpTool(
+    activeRepository.db,
+    DEFAULT_FEATURE_FLAG_REGISTRY_PATH,
+    flagHitMetrics
+  );
+  const listFlagsTool = createListFlagsMcpTool(activeRepository.db, DEFAULT_FEATURE_FLAG_REGISTRY_PATH);
+  const flagMetricsTool = createFlagMetricsMcpTool(flagHitMetrics);
   const candidateCreateTool = createCandidateCreateMcpTool(candidateRepository);
   const candidateListTool = createCandidateListMcpTool(candidateRepository);
   const candidatePromoteTool = createCandidatePromoteMcpTool(promotionOrchestrator);
@@ -2655,6 +2670,71 @@ export function createMCPServer({
         })
     );
   }
+
+  const featureFlagToolRegistrar = server as unknown as {
+    registerTool(
+      name: string,
+      config: {
+        description: string;
+        inputSchema: unknown;
+      },
+      handler: (args: unknown) => Promise<CallToolResult>
+    ): void;
+  };
+
+  // Register feature_flag.evaluate
+  featureFlagToolRegistrar.registerTool(
+    evaluateFlagTool.name,
+    {
+      description: evaluateFlagTool.description,
+      inputSchema: evaluateFlagTool.inputSchema
+    },
+    async (args: unknown) =>
+      runTool(repository, evaluateFlagTool.name, args, observer, async () => {
+        const result = await evaluateFlagTool.invoke(args);
+
+        return {
+          result,
+          resultCount: 1
+        };
+      })
+  );
+
+  // Register feature_flag.list
+  featureFlagToolRegistrar.registerTool(
+    listFlagsTool.name,
+    {
+      description: listFlagsTool.description,
+      inputSchema: listFlagsTool.inputSchema
+    },
+    async (args: unknown) =>
+      runTool(repository, listFlagsTool.name, args, observer, async () => {
+        const result = await listFlagsTool.invoke(args);
+
+        return {
+          result,
+          resultCount: 1
+        };
+      })
+  );
+
+  // Register feature_flag.metrics
+  featureFlagToolRegistrar.registerTool(
+    flagMetricsTool.name,
+    {
+      description: flagMetricsTool.description,
+      inputSchema: flagMetricsTool.inputSchema
+    },
+    async (args: unknown) =>
+      runTool(repository, flagMetricsTool.name, args, observer, async () => {
+        const result = await flagMetricsTool.invoke(args);
+
+        return {
+          result,
+          resultCount: 1
+        };
+      })
+  );
 
   const candidateToolRegistrar = server as unknown as {
     registerTool(
