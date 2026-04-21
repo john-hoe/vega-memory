@@ -1,4 +1,5 @@
 const TELEGRAM_TIMEOUT_MS = 5_000;
+const UNSAFE_TELEGRAM_MARKDOWN_REGEX = /[_*[\]()~`>#+\-=|{}.!\\]/u;
 
 interface TelegramSendResponse {
   ok?: unknown;
@@ -20,6 +21,12 @@ const withTimeout = async (input: string, init: RequestInit): Promise<Response> 
   }
 };
 
+const toTelegramBody = (chatId: string, message: string): { chat_id: string; text: string; parse_mode?: string } => ({
+  chat_id: chatId,
+  text: message,
+  ...(UNSAFE_TELEGRAM_MARKDOWN_REGEX.test(message) ? {} : { parse_mode: "Markdown" })
+});
+
 export class TelegramNotifier {
   readonly #botToken: string;
   readonly #chatId: string;
@@ -38,11 +45,7 @@ export class TelegramNotifier {
           headers: {
             "content-type": "application/json"
           },
-          body: JSON.stringify({
-            chat_id: this.#chatId,
-            text: message,
-            parse_mode: "Markdown"
-          })
+          body: JSON.stringify(toTelegramBody(this.#chatId, message))
         }
       );
 

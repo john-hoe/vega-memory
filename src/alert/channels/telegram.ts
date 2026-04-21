@@ -12,8 +12,12 @@ export interface CreateTelegramChannelOptions {
   retryDelaysMs?: number[];
 }
 
+function escapeTelegramMarkdown(text: string): string {
+  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+}
+
 const toTelegramText = (payload: AlertPayload): string =>
-  `*${payload.severity}: ${payload.alert_id}*\nValue: ${payload.value}\nThreshold: ${payload.threshold}\n${payload.message}`;
+  `*${escapeTelegramMarkdown(payload.severity)}: ${escapeTelegramMarkdown(payload.alert_id)}*\nValue: ${payload.value}\nThreshold: ${payload.threshold}\n${escapeTelegramMarkdown(payload.message)}`;
 
 export function createTelegramChannel(options: CreateTelegramChannelOptions): AlertChannel {
   return createWebhookChannel({
@@ -24,7 +28,7 @@ export function createTelegramChannel(options: CreateTelegramChannelOptions): Al
     bodyFactory: (payload: AlertPayload) => ({
       chat_id: options.chatId,
       text: toTelegramText(payload),
-      parse_mode: "Markdown"
+      parse_mode: "MarkdownV2"
     })
   });
 }

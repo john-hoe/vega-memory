@@ -133,7 +133,7 @@ test("createSlackChannel wraps alerts in a Slack blocks payload", async () => {
   try {
     const channel = createSlackChannel({
       id: "slack_default",
-      url: "https://hooks.slack.example/services/TOKEN",
+      url: "https://hooks.slack.com/services/TOKEN",
       retryDelaysMs: [0, 0, 0]
     });
 
@@ -179,8 +179,8 @@ test("createTelegramChannel wraps alerts in a Telegram sendMessage payload", asy
     };
     assert.equal(requestUrl, "https://api.telegram.org/bot123:token/sendMessage");
     assert.equal(parsed.chat_id, "456");
-    assert.equal(parsed.parse_mode, "Markdown");
-    assert.match(parsed.text, /circuit_breaker_open/);
+    assert.equal(parsed.parse_mode, "MarkdownV2");
+    assert.match(parsed.text, /circuit\\_breaker\\_open/);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -27,6 +27,8 @@ export interface CreateWebhookChannelOptions {
   bodyFactory?: (payload: AlertPayload) => unknown;
 }
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
+
 const wait = async (delayMs: number): Promise<void> => {
   if (delayMs <= 0) {
     return;
@@ -43,7 +45,22 @@ const formatHttpError = (status: number, statusText: string): string =>
 const formatError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+function validateWebhookUrl(raw: string): string {
+  const url = new URL(raw);
+
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error(`unsupported protocol: ${url.protocol}`);
+  }
+
+  if (url.protocol === "http:" && !LOOPBACK_HOSTS.has(url.hostname)) {
+    throw new Error(`plain http not allowed for non-loopback host: ${url.hostname}`);
+  }
+
+  return url.toString();
+}
+
 export function createWebhookChannel(options: CreateWebhookChannelOptions): AlertChannel {
+  const validatedUrl = validateWebhookUrl(options.url);
   const method = options.method ?? "POST";
   const timeoutMs = options.timeoutMs ?? DEFAULT_ALERT_TIMEOUT_MS;
   const retryDelaysMs = options.retryDelaysMs ?? [...DEFAULT_ALERT_RETRY_DELAYS_MS];
@@ -60,7 +77,7 @@ export function createWebhookChannel(options: CreateWebhookChannelOptions): Aler
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
-          const response = await globalThis.fetch(options.url, {
+          const response = await globalThis.fetch(validatedUrl, {
             method,
             headers: {
               "content-type": "application/json",

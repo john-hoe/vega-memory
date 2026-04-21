@@ -2,6 +2,7 @@ const FTS_TOKEN_SPLIT_REGEX =
   /[\s,.;:!?()[\]{}<>'"*+\-/\\|=@#$%^&~`]+/u;
 const WORD_BEARING_TOKEN_REGEX = /[\p{L}\p{N}]/u;
 const SIMPLE_ASCII_FTS_QUERY_REGEX = /^[A-Za-z0-9_\s]+$/u;
+const SIMPLE_ASCII_FTS_TOKEN_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 export function escapeFtsMatchQuery(raw: string): string {
   const trimmed = raw.trim();
@@ -10,7 +11,10 @@ export function escapeFtsMatchQuery(raw: string): string {
     return "\"\"";
   }
 
-  if (SIMPLE_ASCII_FTS_QUERY_REGEX.test(trimmed)) {
+  if (
+    SIMPLE_ASCII_FTS_QUERY_REGEX.test(trimmed) &&
+    trimmed.split(/\s+/u).every((token) => SIMPLE_ASCII_FTS_TOKEN_REGEX.test(token))
+  ) {
     return trimmed;
   }
 
