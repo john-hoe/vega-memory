@@ -1,0 +1,19 @@
+[project]
+name = "vega-memory"
+version = "0.1.0"
+description = "Python SDK for Vega Memory (ingest, context, ack)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "httpx>=0.27.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vega_memory"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0.0", "pytest-httpx>=0.30.0"]

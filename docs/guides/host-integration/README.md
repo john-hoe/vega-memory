@@ -12,6 +12,16 @@ const resolved = await client.contextResolve(intentRequest);
 await client.usageAck({ checkpoint_id: resolved.checkpoint_id, bundle_digest: resolved.bundle_digest, sufficiency: "sufficient", host_tier: "T2" });
 ```
 
+## Python SDK
+
+For Python integrations, install the sibling package:
+
+```bash
+pip install vega-memory
+```
+
+See [python-sdk/README.md](../../../python-sdk/README.md) for usage.
+
 ## Surface registration
 
 Every host adapter should register two stable identities with Vega: `surface` on the event envelope or intent request, and `host_tier` on `usage_ack`.
