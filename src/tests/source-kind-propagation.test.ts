@@ -743,11 +743,42 @@ test("storage layers preserve explicit source_kind across all six stores", (t) =
     t.diagnostic(`stores supporting source_kind=${supportingStores.length}`);
     t.diagnostic(`stores missing source_kind=${CURRENT_MISSING_SOURCE_KIND_STORES.join(", ") || "none"}`);
     assert.equal(stores.length, 6);
-    assert.equal(
-      supportingStores.length,
-      stores.length - CURRENT_MISSING_SOURCE_KIND_STORES.length,
-      `expected current schema support count to remain ${stores.length - CURRENT_MISSING_SOURCE_KIND_STORES.length}, got ${supportingStores.length}: [${supportingStores.join(",")}]; missing: [${CURRENT_MISSING_SOURCE_KIND_STORES.join(",")}]`
+    assertStoreSupportThreshold(supportingStores, 4, STORE_SUPPORT_LABELS);
+    assert.equal(supportingStores.length, 6);
+  } finally {
+    repository.close();
+  }
+});
+
+test("wiki updatePage preserves source_kind across edits and honors explicit override", () => {
+  const repository = new Repository(":memory:");
+  const pageManager = new PageManager(repository);
+
+  try {
+    const page = pageManager.createPage({
+      title: "Wiki Source Kind Update",
+      content: "initial wiki content",
+      summary: "initial wiki summary",
+      page_type: "reference",
+      project: "vega-memory",
+      tags: ["source-kind"],
+      auto_generated: false,
+      source_kind: "wiki"
+    } as Parameters<PageManager["createPage"]>[0]);
+
+    const preserved = pageManager.updatePage(page.id, { title: "Wiki Source Kind Update Preserved" }, "preserve source kind");
+    assert.equal(preserved.source_kind, "wiki");
+    assert.equal(readStoredSourceKind(repository, "wiki_pages", page.id), "wiki");
+    assert.equal(pageManager.getPage(page.id)?.source_kind, "wiki");
+
+    const overridden = pageManager.updatePage(
+      page.id,
+      { title: "Wiki Source Kind Update Override", source_kind: "vega_memory" },
+      "override source kind"
     );
+    assert.equal(overridden.source_kind, "vega_memory");
+    assert.equal(readStoredSourceKind(repository, "wiki_pages", page.id), "vega_memory");
+    assert.equal(pageManager.getPage(page.id)?.source_kind, "vega_memory");
   } finally {
     repository.close();
   }
