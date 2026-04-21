@@ -7,6 +7,7 @@ export interface SourceRecord {
   id: string;
   source_kind: SourceKind;
   content: string;
+  created_at?: string | number | Date;
   provenance: {
     origin: string;
     retrieved_at: string;

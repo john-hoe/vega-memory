@@ -10,6 +10,7 @@ export interface RankedRecord extends SourceRecord {
   score_breakdown: {
     base: number;
     source_prior: number;
+    recency: number;
   };
 }
 

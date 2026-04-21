@@ -283,7 +283,7 @@ test("intent request schema requires prev_checkpoint_id only for followup", () =
   }
 });
 
-test("intent request schema requires a non-empty query", () => {
+test("intent request schema allows omitted or empty queries", () => {
   const missingQuery = INTENT_REQUEST_SCHEMA.safeParse({
     intent: "lookup",
     surface: "codex",
@@ -308,8 +308,8 @@ test("intent request schema requires a non-empty query", () => {
     cwd: "/Users/johnmacmini/workspace/vega-memory"
   });
 
-  assert.equal(missingQuery.success, false);
-  assert.equal(emptyQuery.success, false);
+  assert.equal(missingQuery.success, true);
+  assert.equal(emptyQuery.success, true);
   assert.equal(validQuery.success, true);
 });
 

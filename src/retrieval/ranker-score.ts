@@ -6,6 +6,8 @@ import type { RankerConfig, RankedRecord } from "./ranker.js";
 
 const DEMOTION_FACTOR = 0.3;
 export const HOST_MEMORY_FILE_FLOOR = 0.05;
+const RECENCY_HALF_LIFE_DAYS = 7;
+const RECENCY_ZERO_FLOOR = 0.001;
 
 export function clampScore(score: number): number {
   if (score < 0) {
@@ -30,6 +32,49 @@ export function getSourcePrior(
   return clampScore(priors[sourceKind] ?? 0.5);
 }
 
+function toTimestamp(created_at: SourceRecord["created_at"], now: number): number {
+  if (created_at instanceof Date) {
+    return created_at.getTime();
+  }
+
+  if (typeof created_at === "number") {
+    return Number.isFinite(created_at) ? created_at : now;
+  }
+
+  if (typeof created_at === "string") {
+    const parsed = Date.parse(created_at);
+    return Number.isFinite(parsed) ? parsed : now;
+  }
+
+  return now;
+}
+
+export function computeRecency(
+  created_at: SourceRecord["created_at"],
+  now: number = Date.now(),
+  halfLifeDays = RECENCY_HALF_LIFE_DAYS
+): number {
+  if (halfLifeDays <= 0) {
+    return 1;
+  }
+
+  const createdAtMs = toTimestamp(created_at, now);
+  const ageMs = now - createdAtMs;
+
+  if (ageMs <= 0) {
+    return 1;
+  }
+
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  const decayed = Math.exp((-Math.LN2 * ageDays) / halfLifeDays);
+
+  if (decayed < RECENCY_ZERO_FLOOR) {
+    return 0;
+  }
+
+  return clampScore(decayed);
+}
+
 export function scoreRecord(
   record: SourceRecord,
   config: RankerConfig,
@@ -37,12 +82,12 @@ export function scoreRecord(
 ): RankedRecord {
   const base = getBaseScore(record);
   const source_prior = getSourcePrior(record.source_kind, config.source_priors);
-  // TODO(Wave 5, issue #31): re-introduce recency / access_frequency / safety_penalty signals
-  // when the Memory model exposes updated_at, access_count, and redaction tags;
-  // narrowed score_breakdown and formula to only use base + source_prior for now.
+  const recency = computeRecency(record.created_at);
+  // access_frequency removed 2026-04-21 per #31: no backing signal in the current schema;
+  // re-add it only when retrieval records expose real access tracking.
   // TODO(Wave 5, issue #32): restore host_memory_file-specific floor logic only after the
   // adapter can surface real records instead of staying disabled by default.
-  let final_score = 0.5 * base + 0.5 * source_prior;
+  let final_score = (base + source_prior + recency) / 3;
 
   if (demote_ids?.has(recordKey(record.source_kind, record.id))) {
     final_score *= DEMOTION_FACTOR;
@@ -59,7 +104,8 @@ export function scoreRecord(
     final_score,
     score_breakdown: {
       base,
-      source_prior
+      source_prior,
+      recency
     }
   };
 }

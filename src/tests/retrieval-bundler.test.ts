@@ -19,7 +19,8 @@ function createBudgetedRecord(overrides: Partial<BudgetedRecord> = {}): Budgeted
     final_score: 0.7,
     score_breakdown: {
       base: 0.7,
-      source_prior: 0.5
+      source_prior: 0.5,
+      recency: 1
     }
   };
 

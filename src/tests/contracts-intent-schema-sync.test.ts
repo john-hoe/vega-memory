@@ -123,7 +123,7 @@ test("context.resolve inputSchema stays aligned with INTENT_REQUEST_SCHEMA for c
       }
     },
     {
-      name: "invalid lookup with empty query",
+      name: "valid lookup with empty query",
       request: {
         intent: "lookup",
         query: "",
@@ -190,9 +190,10 @@ test("context.resolve inputSchema exposes the current intent contract", () => {
   assert.deepEqual(properties.intent.enum, ["bootstrap", "lookup", "followup", "evidence"]);
   assert.deepEqual(properties.mode.enum, ["L0", "L1", "L2", "L3"]);
   assert.equal(properties.mode.default, "L1");
-  assert.equal(properties.query.minLength, 1);
+  assert.equal("minLength" in properties.query, false);
   assert.ok(!(inputSchema.required as string[]).includes("mode"));
   assert.ok(!(inputSchema.required as string[]).includes("prev_checkpoint_id"));
+  assert.ok(!(inputSchema.required as string[]).includes("query"));
   assert.ok(!("depth" in budgetOverride));
   assert.deepEqual(inputSchema.allOf, [
     {

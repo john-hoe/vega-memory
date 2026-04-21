@@ -20,6 +20,7 @@ function createRecord(overrides: Partial<SourceRecord> = {}): SourceRecord {
     id: "record-1",
     source_kind: "wiki",
     content: "Line one\nLine two",
+    created_at: "2026-04-17T00:00:00.000Z",
     provenance: {
       origin: "test:record-1",
       retrieved_at: "2026-04-17T00:00:00.000Z"
@@ -65,8 +66,8 @@ test("results are returned in descending final_score order", () => {
 test("score breakdown only exposes signals the ranker actually computes", () => {
   const [ranked] = rank([createRecord({ id: "fact-1", source_kind: "fact_claim" })], request);
 
-  assert.deepEqual(Object.keys(ranked?.score_breakdown ?? {}).sort(), ["base", "source_prior"]);
-  assert.equal("recency" in (ranked?.score_breakdown ?? {}), false);
+  assert.deepEqual(Object.keys(ranked?.score_breakdown ?? {}).sort(), ["base", "recency", "source_prior"]);
+  assert.equal("recency" in (ranked?.score_breakdown ?? {}), true);
   assert.equal("safety_penalty" in (ranked?.score_breakdown ?? {}), false);
 });
 

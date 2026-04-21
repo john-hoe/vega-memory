@@ -22,7 +22,8 @@ function createRankedRecord(overrides: Partial<RankedRecord> = {}): RankedRecord
     final_score: 0.8,
     score_breakdown: {
       base: 0.7,
-      source_prior: 0.5
+      source_prior: 0.5,
+      recency: 1
     },
     ...overrides
   };
