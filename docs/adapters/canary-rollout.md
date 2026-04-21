@@ -67,8 +67,8 @@ Using `session_id` as the seed field gives **stable per-user rollout**: the same
   - Gates the bootstrap queryless dispatch path. `off` returns an empty bundle for empty-query bootstrap requests instead of fanning out to the wide-recall fallback.
 - `usage-ack-echo-source-kind` — `src/api/server.ts` and `src/mcp/server.ts`
   - Gates `echoed_source_kinds[]` in `usage_ack` responses. `off` omits the response field for older consumers.
-- `ranker-recency-halflife-14d` — `src/retrieval/orchestrator.ts` and `src/retrieval/ranker-score.ts`
-  - Gates the recency half-life used by the ranker. `on` switches the ranker from a 7-day to a 14-day decay curve.
+- `ranker-recency-halflife-14d` — `src/retrieval/ranker.ts:67` and `src/retrieval/ranker-score.ts`
+  - Gates the recency half-life used by the ranker. `src/retrieval/ranker.ts:67` evaluates the flag, and `src/retrieval/ranker-score.ts` consumes the resulting `halfLifeDays` parameter to switch from a 7-day to a 14-day decay curve.
 
 ## Sunset and retirement
 

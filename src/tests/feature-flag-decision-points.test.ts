@@ -498,3 +498,170 @@ test("ranker-recency-halflife-14d on switches the same seven-day-old record to a
     registryFile.cleanup();
   }
 });
+
+test("MCP usage.ack default on includes echoed_source_kinds in MCP responses", async () => {
+  const registryFile = writeFlagRegistry(defaultFlagsYaml);
+
+  try {
+    const { SQLiteAdapter } = await import("../db/sqlite-adapter.js");
+    const { evaluateFeatureFlag, loadFeatureFlagRegistry } = await import("../feature-flags/index.js");
+    const { createAckStore } = await import("../usage/index.js");
+    const { createUsageAckMcpTool } = await import("../usage/usage-ack-handler.js");
+
+    const db = new SQLiteAdapter(":memory:");
+
+    try {
+      const response = await withRegistryPath(registryFile.path, () => {
+        const flag = loadFeatureFlagRegistry(registryFile.path).find(
+          (candidate) => candidate.id === "usage-ack-echo-source-kind"
+        );
+        const variant =
+          flag === undefined
+            ? "on"
+            : evaluateFeatureFlag(flag, {
+                surface: "unknown",
+                intent: "ack"
+              }).variant;
+
+        return createUsageAckMcpTool(
+          createAckStore(db),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          {
+            echoed_source_kinds: variant === "on"
+          }
+        ).invoke({
+          checkpoint_id: "checkpoint-mcp-default-on",
+          bundle_digest: "digest-mcp-default-on",
+          sufficiency: "sufficient",
+          host_tier: "T2",
+          evidence: "MCP usage.ack source_kind echo",
+          turn_elapsed_ms: 64,
+          bundle_sections: [
+            {
+              source_kind: "host_memory_file",
+              records: [
+                {
+                  id: "host-record",
+                  source_kind: "host_memory_file",
+                  content: "host content",
+                  provenance: {
+                    origin: "/tmp/host-memory.md",
+                    retrieved_at: new Date(NOW).toISOString()
+                  }
+                }
+              ]
+            },
+            {
+              source_kind: "wiki",
+              records: [
+                {
+                  id: "wiki-record",
+                  source_kind: "wiki",
+                  content: "wiki content",
+                  provenance: {
+                    origin: "wiki://source-kind",
+                    retrieved_at: new Date(NOW).toISOString()
+                  }
+                }
+              ]
+            }
+          ]
+        });
+      });
+
+      assert.deepEqual(response, {
+        ack: true,
+        echoed_source_kinds: ["host_memory_file", "wiki"]
+      });
+    } finally {
+      db.close();
+    }
+  } finally {
+    registryFile.cleanup();
+  }
+});
+
+test("MCP usage.ack off omits echoed_source_kinds in MCP responses", async () => {
+  const registryFile = writeFlagRegistry(usageAckFlagOffYaml);
+
+  try {
+    const { SQLiteAdapter } = await import("../db/sqlite-adapter.js");
+    const { evaluateFeatureFlag, loadFeatureFlagRegistry } = await import("../feature-flags/index.js");
+    const { createAckStore } = await import("../usage/index.js");
+    const { createUsageAckMcpTool } = await import("../usage/usage-ack-handler.js");
+
+    const db = new SQLiteAdapter(":memory:");
+
+    try {
+      const response = await withRegistryPath(registryFile.path, () => {
+        const flag = loadFeatureFlagRegistry(registryFile.path).find(
+          (candidate) => candidate.id === "usage-ack-echo-source-kind"
+        );
+        const variant =
+          flag === undefined
+            ? "on"
+            : evaluateFeatureFlag(flag, {
+                surface: "unknown",
+                intent: "ack"
+              }).variant;
+
+        return createUsageAckMcpTool(
+          createAckStore(db),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          {
+            echoed_source_kinds: variant === "on"
+          }
+        ).invoke({
+          checkpoint_id: "checkpoint-mcp-off",
+          bundle_digest: "digest-mcp-off",
+          sufficiency: "sufficient",
+          host_tier: "T2",
+          evidence: "MCP usage.ack source_kind echo",
+          turn_elapsed_ms: 64,
+          bundle_sections: [
+            {
+              source_kind: "host_memory_file",
+              records: [
+                {
+                  id: "host-record",
+                  source_kind: "host_memory_file",
+                  content: "host content",
+                  provenance: {
+                    origin: "/tmp/host-memory.md",
+                    retrieved_at: new Date(NOW).toISOString()
+                  }
+                }
+              ]
+            },
+            {
+              source_kind: "wiki",
+              records: [
+                {
+                  id: "wiki-record",
+                  source_kind: "wiki",
+                  content: "wiki content",
+                  provenance: {
+                    origin: "wiki://source-kind",
+                    retrieved_at: new Date(NOW).toISOString()
+                  }
+                }
+              ]
+            }
+          ]
+        });
+      });
+
+      assert.deepEqual(response, { ack: true });
+    } finally {
+      db.close();
+    }
+  } finally {
+    registryFile.cleanup();
+  }
+});
