@@ -160,7 +160,7 @@ test("CRUD operations on memories", () => {
 
     const stored = repository.getMemory(memory.id);
     assert.ok(stored);
-    assert.deepEqual(stored, memory);
+    assert.deepEqual(stored, { ...memory, source_kind: "vega_memory" });
 
     repository.updateMemory(memory.id, {
       title: "Choose better-sqlite3",

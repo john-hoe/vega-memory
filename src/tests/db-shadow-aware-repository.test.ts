@@ -101,7 +101,7 @@ test("flag off keeps createMemory behavior unchanged and does not add raw_inbox 
 
       wrapped.createMemory(memory);
 
-      assert.deepEqual(wrapped.getMemory(memory.id), { ...memory, access_count: 0 });
+      assert.deepEqual(wrapped.getMemory(memory.id), { ...memory, access_count: 0, source_kind: "vega_memory" });
       assert.equal(queryRawInbox(repository.db).length, 0);
     } finally {
       repository.close();
@@ -258,7 +258,7 @@ test("shadow writer error outcomes are logged without breaking createMemory", ()
     const { result, logs } = captureStructuredLogs(() => wrapped.createMemory(memory));
 
     assert.equal(result, undefined);
-    assert.deepEqual(wrapped.getMemory(memory.id), { ...memory, access_count: 0 });
+    assert.deepEqual(wrapped.getMemory(memory.id), { ...memory, access_count: 0, source_kind: "vega_memory" });
     assert.ok(logs.some((record) => record.level === "warn" && record.message === "Shadow write failed"));
   } finally {
     repository.close();
@@ -277,7 +277,7 @@ test("shadow writer throws are caught and logged without breaking createMemory",
     const { result, logs } = captureStructuredLogs(() => wrapped.createMemory(memory));
 
     assert.equal(result, undefined);
-    assert.deepEqual(wrapped.getMemory(memory.id), { ...memory, access_count: 0 });
+    assert.deepEqual(wrapped.getMemory(memory.id), { ...memory, access_count: 0, source_kind: "vega_memory" });
     assert.ok(
       logs.some((record) => record.level === "warn" && record.message === "Shadow write throw caught")
     );
@@ -297,7 +297,7 @@ test("non-createMemory methods are transparently bound back to the inner reposit
       reason: "disabled"
     }));
 
-    assert.deepEqual(wrapped.getMemory(expected.id), { ...expected, access_count: 0 });
+    assert.deepEqual(wrapped.getMemory(expected.id), { ...expected, access_count: 0, source_kind: "vega_memory" });
     assert.deepEqual(wrapped.listMemories({ limit: 10 }), repository.listMemories({ limit: 10 }));
   } finally {
     repository.close();

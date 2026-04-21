@@ -1,10 +1,12 @@
 import { v4 as uuidv4 } from "uuid";
 
+import type { SourceKind } from "../core/contracts/enums.js";
 import { createLogger } from "../core/logging/index.js";
 import type { DatabaseAdapter } from "./adapter.js";
 import {
   applyCandidateMemoryMigration,
   CANDIDATE_MEMORIES_TABLE,
+  DEFAULT_CANDIDATE_SOURCE_KIND,
   DEFAULT_CANDIDATE_STATE
 } from "./candidate-memory-migration.js";
 
@@ -22,6 +24,7 @@ export interface CandidateMemoryRecord {
   promotion_score: number;
   visibility_gated: boolean;
   candidate_state: CandidateState;
+  source_kind?: SourceKind | null;
   created_at: number;
   updated_at: number;
 }
@@ -37,6 +40,7 @@ export interface CandidateMemoryCreateInput {
   extraction_confidence?: number | null;
   visibility_gated?: boolean;
   candidate_state?: CandidateState;
+  source_kind?: SourceKind;
 }
 
 export interface CandidateQuery {
@@ -73,6 +77,7 @@ interface CandidateMemoryRow {
   promotion_score: number;
   visibility_gated: number;
   candidate_state: CandidateState;
+  source_kind: SourceKind | null;
   created_at: number;
   updated_at: number;
 }
@@ -120,6 +125,7 @@ function toRecord(row: CandidateMemoryRow): CandidateMemoryRecord | undefined {
       promotion_score: row.promotion_score ?? 0,
       visibility_gated: row.visibility_gated === 1,
       candidate_state: row.candidate_state ?? DEFAULT_CANDIDATE_STATE,
+      source_kind: row.source_kind ?? DEFAULT_CANDIDATE_SOURCE_KIND,
       created_at: row.created_at,
       updated_at: row.updated_at
     };
@@ -145,7 +151,7 @@ export function createCandidateRepository(
   const now = options.now ?? (() => Date.now());
 
   const insertStatement = db.prepare<
-    [string, string, string, string | null, string, string, string, number | null, number, number, CandidateState, number, number],
+    [string, string, string, string | null, string, string, string, number | null, number, number, CandidateState, SourceKind, number, number],
     never
   >(
     `INSERT INTO ${CANDIDATE_MEMORIES_TABLE} (
@@ -160,9 +166,10 @@ export function createCandidateRepository(
       promotion_score,
       visibility_gated,
       candidate_state,
+      source_kind,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const findStatement = db.prepare<[string], CandidateMemoryRow>(
     `SELECT
@@ -177,6 +184,7 @@ export function createCandidateRepository(
       promotion_score,
       visibility_gated,
       candidate_state,
+      source_kind,
       created_at,
       updated_at
     FROM ${CANDIDATE_MEMORIES_TABLE}
@@ -204,6 +212,7 @@ export function createCandidateRepository(
         promotion_score: 0,
         visibility_gated: input.visibility_gated ?? true,
         candidate_state: input.candidate_state ?? DEFAULT_CANDIDATE_STATE,
+        source_kind: input.source_kind ?? DEFAULT_CANDIDATE_SOURCE_KIND,
         created_at,
         updated_at: created_at
       };
@@ -220,6 +229,7 @@ export function createCandidateRepository(
         record.promotion_score,
         record.visibility_gated ? 1 : 0,
         record.candidate_state,
+        record.source_kind ?? DEFAULT_CANDIDATE_SOURCE_KIND,
         record.created_at,
         record.updated_at
       );

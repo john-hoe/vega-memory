@@ -2,6 +2,7 @@ import type { DatabaseAdapter } from "./adapter.js";
 
 export const CANDIDATE_MEMORIES_TABLE = "candidate_memories";
 export const DEFAULT_CANDIDATE_STATE = "pending";
+export const DEFAULT_CANDIDATE_SOURCE_KIND = "vega_memory";
 
 interface TableInfoRow {
   cid: number;
@@ -24,10 +25,11 @@ const CANDIDATE_MEMORY_DDL = `
     extraction_confidence REAL,
     promotion_score REAL NOT NULL DEFAULT 0,
     visibility_gated INTEGER NOT NULL DEFAULT 1,
-    candidate_state TEXT NOT NULL DEFAULT '${DEFAULT_CANDIDATE_STATE}',
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  )
+      candidate_state TEXT NOT NULL DEFAULT '${DEFAULT_CANDIDATE_STATE}',
+      source_kind TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
 `;
 
 // Columns that a pre-existing partial schema may be missing. Each entry must
@@ -41,7 +43,8 @@ const ADDITIVE_COLUMNS: ReadonlyArray<readonly [string, string]> = [
   [
     "candidate_state",
     `candidate_state TEXT NOT NULL DEFAULT '${DEFAULT_CANDIDATE_STATE}'`
-  ]
+  ],
+  ["source_kind", "source_kind TEXT"]
 ];
 
 const CANDIDATE_MEMORY_INDEXES = [
@@ -66,6 +69,12 @@ export function applyCandidateMemoryMigration(db: DatabaseAdapter): void {
       db.exec(`ALTER TABLE ${CANDIDATE_MEMORIES_TABLE} ADD COLUMN ${alterClause}`);
     }
   }
+
+  db.exec(
+    `UPDATE ${CANDIDATE_MEMORIES_TABLE}
+     SET source_kind = '${DEFAULT_CANDIDATE_SOURCE_KIND}'
+     WHERE source_kind IS NULL`
+  );
 
   for (const statement of CANDIDATE_MEMORY_INDEXES) {
     db.exec(statement);

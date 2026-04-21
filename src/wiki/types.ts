@@ -1,3 +1,5 @@
+import type { SourceKind } from "../core/contracts/enums.js";
+
 export type WikiPageType =
   | "topic"
   | "project"
@@ -63,6 +65,7 @@ export interface WikiPage {
   updated_at: string;
   reviewed_at: string | null;
   published_at: string | null;
+  source_kind?: SourceKind | null;
 }
 
 export interface WikiSpace {

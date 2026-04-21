@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 
+import type { SourceKind } from "../core/contracts/enums.js";
 import { Repository } from "../db/repository.js";
 import { SpaceService } from "./spaces.js";
 import type {
@@ -37,6 +38,7 @@ interface WikiPageRow {
   updated_at: string;
   reviewed_at: string | null;
   published_at: string | null;
+  source_kind: SourceKind | null;
 }
 
 interface WikiPageVersionRow {
@@ -86,6 +88,7 @@ interface CreatePageParams {
   parent_id?: string | null;
   tenant_id?: string | null;
   embedding?: Buffer | null;
+  source_kind?: SourceKind;
 }
 
 interface CreateContentSourceParams {
@@ -345,7 +348,8 @@ export class PageManager {
       created_at: createdAt,
       updated_at: createdAt,
       reviewed_at: null,
-      published_at: null
+      published_at: null,
+      source_kind: params.source_kind ?? "wiki"
     };
 
     const insertPage = this.repository.db.prepare<
@@ -368,6 +372,7 @@ export class PageManager {
         string | null,
         string | null,
         string | null,
+        SourceKind,
         number,
         string,
         string,
@@ -377,10 +382,10 @@ export class PageManager {
     >(
       `INSERT INTO wiki_pages (
          id, slug, title, content, summary, page_type, scope, project, tags, source_memory_ids,
-         embedding, status, auto_generated, reviewed, version, space_id, parent_id, tenant_id, sort_order,
+         embedding, status, auto_generated, reviewed, version, space_id, parent_id, tenant_id, source_kind, sort_order,
          created_at, updated_at, reviewed_at, published_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertFts = this.repository.db.prepare<[number, string, string, string, string]>(
       "INSERT INTO wiki_pages_fts (rowid, title, content, summary, tags) VALUES (?, ?, ?, ?, ?)"
@@ -409,6 +414,7 @@ export class PageManager {
         page.space_id,
         page.parent_id,
         page.tenant_id,
+        page.source_kind ?? "wiki",
         page.sort_order,
         page.created_at,
         page.updated_at,

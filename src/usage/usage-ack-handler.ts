@@ -24,6 +24,7 @@ export interface UsageAckResponse {
   follow_up_hint?: {
     suggested_intent: "followup";
   };
+  echoed_source_kinds?: string[];
   degraded?: UsageAckDegradedReason;
   forced_sufficiency?: "needs_external";
 }
@@ -33,6 +34,10 @@ export interface UsageAckMcpTool {
   description: string;
   inputSchema: object;
   invoke(request: unknown): Promise<UsageAckResponse>;
+}
+
+interface UsageAckEchoOptions {
+  echoed_source_kinds?: boolean;
 }
 
 const logger = createLogger({ name: "usage-ack-handler" });
@@ -95,10 +100,14 @@ const formatValidationDetail = (issues: { path: PropertyKey[]; message: string }
 function buildResponseFromRecord(record: {
   sufficiency: UsageAck["sufficiency"];
   guard_overridden: boolean;
-}): UsageAckResponse {
+}, echoedSourceKinds?: string[]): UsageAckResponse {
+  const response: UsageAckResponse = echoedSourceKinds === undefined
+    ? { ack: true }
+    : { ack: true, echoed_source_kinds: echoedSourceKinds };
+
   if (record.sufficiency === "needs_followup") {
     return {
-      ack: true,
+      ...response,
       follow_up_hint: {
         suggested_intent: "followup"
       }
@@ -107,13 +116,25 @@ function buildResponseFromRecord(record: {
 
   if (record.sufficiency === "needs_external" && record.guard_overridden) {
     return {
-      ack: true,
+      ...response,
       degraded: "needs_followup_loop_limit",
       forced_sufficiency: "needs_external"
     };
   }
 
-  return { ack: true };
+  return response;
+}
+
+function collectEchoedSourceKinds(ack: UsageAck, options?: UsageAckEchoOptions): string[] | undefined {
+  if (options?.echoed_source_kinds !== true || ack.bundle_sections === undefined) {
+    return undefined;
+  }
+
+  return [...new Set(
+    ack.bundle_sections
+      .flatMap((section) => section.records.map((record) => record.source_kind))
+      .sort()
+  )];
 }
 
 function resolveLoopGuardWindowMs(): number {
@@ -129,8 +150,10 @@ function processUsageAck(
   checkpointStore?: CheckpointStore,
   now: () => number = Date.now,
   circuitBreaker?: CircuitBreaker,
-  metrics?: VegaMetricsRegistry
+  metrics?: VegaMetricsRegistry,
+  options?: UsageAckEchoOptions
 ): UsageAckResponse {
+  const echoedSourceKinds = collectEchoedSourceKinds(ack, options);
   const loopGuardWindowMs = resolveLoopGuardWindowMs();
   let session_id: string | null = null;
   let digestMismatch = false;
@@ -170,14 +193,14 @@ function processUsageAck(
       checkpoint_id: ack.checkpoint_id
     });
     return {
-      ack: true,
+      ...(echoedSourceKinds === undefined ? { ack: true } : { ack: true, echoed_source_kinds: echoedSourceKinds }),
       degraded: "usage_ack_unavailable"
     };
   }
 
   if (digestMismatch) {
     return {
-      ack: true,
+      ...(echoedSourceKinds === undefined ? { ack: true } : { ack: true, echoed_source_kinds: echoedSourceKinds }),
       degraded: "bundle_digest_mismatch"
     };
   }
@@ -199,20 +222,20 @@ function processUsageAck(
       error: error instanceof Error ? error.message : String(error)
     });
     return {
-      ack: true,
+      ...(echoedSourceKinds === undefined ? { ack: true } : { ack: true, echoed_source_kinds: echoedSourceKinds }),
       degraded: "persist_failed"
     };
   }
 
   if (putResult.status === "conflict") {
     return {
-      ack: true,
+      ...(echoedSourceKinds === undefined ? { ack: true } : { ack: true, echoed_source_kinds: echoedSourceKinds }),
       degraded: "ack_already_recorded"
     };
   }
 
   if (putResult.status === "idempotent") {
-    return buildResponseFromRecord(putResult.record);
+    return buildResponseFromRecord(putResult.record, echoedSourceKinds);
   }
 
   if (previousCheckpoint !== undefined) {
@@ -255,7 +278,7 @@ function processUsageAck(
           ? { ...putResult.record, sufficiency: "needs_external", guard_overridden: true }
           : putResult.record;
 
-        return buildResponseFromRecord(effectiveRecord);
+        return buildResponseFromRecord(effectiveRecord, echoedSourceKinds);
       }
     } catch (error) {
       logger.warn("loop_guard_query_failed", {
@@ -265,7 +288,7 @@ function processUsageAck(
     }
   }
 
-  return buildResponseFromRecord(putResult.record);
+  return buildResponseFromRecord(putResult.record, echoedSourceKinds);
 }
 
 export function createUsageAckMcpTool(
@@ -273,7 +296,8 @@ export function createUsageAckMcpTool(
   checkpointStore?: CheckpointStore,
   now?: () => number,
   circuitBreaker?: CircuitBreaker,
-  metrics?: VegaMetricsRegistry
+  metrics?: VegaMetricsRegistry,
+  options?: UsageAckEchoOptions
 ): UsageAckMcpTool {
   return {
     name: "usage.ack",
@@ -281,7 +305,7 @@ export function createUsageAckMcpTool(
     inputSchema: USAGE_ACK_INPUT_SCHEMA,
     async invoke(request: unknown): Promise<UsageAckResponse> {
       const parsed = USAGE_ACK_SCHEMA.parse(request);
-      return processUsageAck(parsed, ackStore, checkpointStore, now, circuitBreaker, metrics);
+      return processUsageAck(parsed, ackStore, checkpointStore, now, circuitBreaker, metrics, options);
     }
   };
 }
@@ -291,7 +315,8 @@ export function createUsageAckHttpHandler(
   checkpointStore?: CheckpointStore,
   now?: () => number,
   circuitBreaker?: CircuitBreaker,
-  metrics?: VegaMetricsRegistry
+  metrics?: VegaMetricsRegistry,
+  options?: UsageAckEchoOptions
 ): (req: Request, res: Response) => Promise<void> {
   return async (req: Request, res: Response): Promise<void> => {
     const parsed = USAGE_ACK_SCHEMA.safeParse(req.body);
@@ -306,6 +331,6 @@ export function createUsageAckHttpHandler(
 
     res
       .status(200)
-      .json(processUsageAck(parsed.data, ackStore, checkpointStore, now, circuitBreaker, metrics));
+      .json(processUsageAck(parsed.data, ackStore, checkpointStore, now, circuitBreaker, metrics, options));
   };
 }

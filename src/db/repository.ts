@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 
+import type { SourceKind } from "../core/contracts/enums.js";
 import { SEMANTIC_RELATION_TYPES, STRUCTURAL_RELATION_TYPES } from "../core/types.js";
 import type {
   ApprovalItem,
@@ -65,6 +66,7 @@ interface MemoryRow {
   scope: Memory["scope"];
   accessed_projects: string;
   source_context: string | null;
+  source_kind: SourceKind | null;
 }
 
 interface AuditRow {
@@ -102,6 +104,7 @@ interface RawArchiveRow {
   captured_at: string | null;
   created_at: string;
   updated_at: string;
+  source_kind: SourceKind | null;
 }
 
 interface FactClaimRow {
@@ -124,6 +127,7 @@ interface FactClaimRow {
   invalidation_reason: string | null;
   created_at: string;
   updated_at: string;
+  source_kind: SourceKind | null;
 }
 
 interface TopicRow {
@@ -312,6 +316,7 @@ interface EntityRelationRow {
   confidence: number;
   extraction_method: ExtractionMethod;
   created_at: string;
+  source_kind: SourceKind | null;
   source_entity_name: string;
   source_entity_type: Entity["type"];
   target_entity_name: string;
@@ -526,7 +531,8 @@ function mapMemory(row: MemoryRow): Memory {
     summary: row.summary ?? null,
     tags: parseJsonArray(row.tags),
     accessed_projects: parseJsonArray(row.accessed_projects),
-    source_context: mapMemorySourceContext(row.source_context)
+    source_context: mapMemorySourceContext(row.source_context),
+    source_kind: row.source_kind
   };
 }
 
@@ -544,7 +550,8 @@ function mapRawArchive(row: RawArchiveRow): RawArchive {
     metadata: parseJsonObject(row.metadata),
     captured_at: row.captured_at,
     created_at: row.created_at,
-    updated_at: row.updated_at
+    updated_at: row.updated_at,
+    source_kind: row.source_kind
   };
 }
 
@@ -555,7 +562,8 @@ function mapFactClaim(row: FactClaimRow): FactClaim {
     source_memory_id: row.source_memory_id,
     evidence_archive_id: row.evidence_archive_id,
     valid_to: row.valid_to,
-    invalidation_reason: row.invalidation_reason
+    invalidation_reason: row.invalidation_reason,
+    source_kind: row.source_kind
   };
 }
 
@@ -953,14 +961,15 @@ export class Repository {
         Memory["verified"],
         Memory["scope"],
         string,
-        string | null
+        string | null,
+        SourceKind
       ]
     >(
       `INSERT INTO memories (
         id, tenant_id, type, project, title, content, summary, embedding, importance, source,
         tags, created_at, updated_at, accessed_at, status, verified, scope, accessed_projects,
-        source_context
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        source_context, source_kind
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertFts = this.db.prepare<[number, string, string, string]>(
       "INSERT INTO memories_fts(rowid, title, content, tags) VALUES (?, ?, ?, ?)"
@@ -987,7 +996,8 @@ export class Repository {
         memory.verified,
         memory.scope,
         serializeJsonArray(memory.accessed_projects),
-        serializeOptionalJsonObject(memory.source_context ?? null)
+        serializeOptionalJsonObject(memory.source_context ?? null),
+        memory.source_kind ?? "vega_memory"
       );
       const row = getRowId.get(memory.id);
 
@@ -1790,7 +1800,8 @@ export class Repository {
           FactClaim["temporal_precision"],
           string | null,
           string,
-          string
+          string,
+          SourceKind
         ]
       >(
         `INSERT INTO fact_claims (
@@ -1812,9 +1823,10 @@ export class Repository {
            temporal_precision,
            invalidation_reason,
            created_at,
-           updated_at
+           updated_at,
+           source_kind
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         claim.id,
@@ -1835,7 +1847,8 @@ export class Repository {
         claim.temporal_precision,
         claim.invalidation_reason,
         claim.created_at,
-        claim.updated_at
+        claim.updated_at,
+        claim.source_kind ?? "fact_claim"
       );
   }
 
@@ -2077,7 +2090,8 @@ export class Repository {
         string,
         string | null,
         string,
-        string
+        string,
+        SourceKind
       ]
     >(
       `INSERT INTO raw_archives (
@@ -2094,8 +2108,9 @@ export class Repository {
         metadata,
         captured_at,
         created_at,
-        updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        updated_at,
+        source_kind
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertFts = this.db.prepare<[number, string, string, string]>(
       "INSERT INTO raw_archives_fts(rowid, title, content, metadata) VALUES (?, ?, ?, ?)"
@@ -2119,7 +2134,8 @@ export class Repository {
         serializeJsonObject(archive.metadata),
         archive.captured_at,
         archive.created_at,
-        archive.updated_at
+        archive.updated_at,
+        archive.source_kind ?? "archive"
       );
 
       const row = getRowId.get(archive.id);
@@ -3104,10 +3120,11 @@ export class Repository {
     relationType: RelationType,
     memoryId: string,
     confidence = 1,
-    extractionMethod: ExtractionMethod = "EXTRACTED"
+    extractionMethod: ExtractionMethod = "EXTRACTED",
+    sourceKind: SourceKind = "graph"
   ): void {
     this.db
-      .prepare<[string, string, string, RelationType, string, number, ExtractionMethod, string]>(
+      .prepare<[string, string, string, RelationType, string, number, ExtractionMethod, string, SourceKind]>(
         `INSERT OR IGNORE INTO relations (
           id,
           source_entity_id,
@@ -3116,8 +3133,9 @@ export class Repository {
           memory_id,
           confidence,
           extraction_method,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          created_at,
+          source_kind
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         uuidv4(),
@@ -3127,7 +3145,8 @@ export class Repository {
         memoryId,
         confidence,
         extractionMethod,
-        timestamp()
+        timestamp(),
+        sourceKind
       );
   }
 
@@ -3243,6 +3262,7 @@ export class Repository {
            relations.confidence,
            relations.extraction_method,
            relations.created_at,
+           relations.source_kind,
            source.name AS source_entity_name,
            source.type AS source_entity_type,
            target.name AS target_entity_name,
@@ -3271,6 +3291,7 @@ export class Repository {
            relations.confidence,
            relations.extraction_method,
            relations.created_at,
+           relations.source_kind,
            source.name AS source_entity_name,
            source.type AS source_entity_type,
            target.name AS target_entity_name,
@@ -3302,6 +3323,7 @@ export class Repository {
            relations.confidence,
            relations.extraction_method,
            relations.created_at,
+           relations.source_kind,
            source.name AS source_entity_name,
            source.type AS source_entity_type,
            target.name AS target_entity_name,
@@ -3369,6 +3391,7 @@ export class Repository {
            relations.confidence,
            relations.extraction_method,
            relations.created_at,
+           relations.source_kind,
            source.name AS source_entity_name,
            source.type AS source_entity_type,
            target.name AS target_entity_name,

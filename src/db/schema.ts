@@ -124,6 +124,11 @@ const ensureTenantScopedWikiPageSlug = (db: Database.Database): void => {
 };
 
 export function initializeDatabase(db: Database.Database): void {
+  // Equivalent to a db.isPostgres early-return when adapter-backed callers forward here.
+  if ((db as Database.Database & { isPostgres?: boolean }).isPostgres === true) {
+    return;
+  }
+
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
   db.pragma("foreign_keys = ON");
@@ -683,6 +688,20 @@ export function initializeDatabase(db: Database.Database): void {
     CREATE VIRTUAL TABLE IF NOT EXISTS wiki_pages_fts
     USING fts5(title, content, summary, tags, content=wiki_pages, content_rowid=rowid);
   `);
+
+  try { db.exec("ALTER TABLE candidate_memories ADD COLUMN source_kind TEXT"); } catch {}
+  try { db.exec("ALTER TABLE memories ADD COLUMN source_kind TEXT"); } catch {}
+  try { db.exec("ALTER TABLE wiki_pages ADD COLUMN source_kind TEXT"); } catch {}
+  try { db.exec("ALTER TABLE fact_claims ADD COLUMN source_kind TEXT"); } catch {}
+  try { db.exec("ALTER TABLE relations ADD COLUMN source_kind TEXT"); } catch {}
+  try { db.exec("ALTER TABLE raw_archives ADD COLUMN source_kind TEXT"); } catch {}
+
+  try { db.exec("UPDATE candidate_memories SET source_kind = 'vega_memory' WHERE source_kind IS NULL"); } catch {}
+  db.exec("UPDATE memories SET source_kind = 'vega_memory' WHERE source_kind IS NULL");
+  db.exec("UPDATE wiki_pages SET source_kind = 'wiki' WHERE source_kind IS NULL");
+  db.exec("UPDATE fact_claims SET source_kind = 'fact_claim' WHERE source_kind IS NULL");
+  db.exec("UPDATE relations SET source_kind = 'graph' WHERE source_kind IS NULL");
+  db.exec("UPDATE raw_archives SET source_kind = 'archive' WHERE source_kind IS NULL");
 
   ensureColumn(db, "memories", "tenant_id", "TEXT");
   ensureColumn(db, "memories", "summary", "TEXT");

@@ -198,6 +198,7 @@ test("list sorts by created_at desc and supports project, type, and since filter
         promotion_score: 0,
         visibility_gated: false,
         candidate_state: "discarded",
+        source_kind: "vega_memory",
         created_at: 3_000,
         updated_at: 3_000
       },
@@ -213,6 +214,7 @@ test("list sorts by created_at desc and supports project, type, and since filter
         promotion_score: 0,
         visibility_gated: false,
         candidate_state: "ready",
+        source_kind: "vega_memory",
         created_at: 2_000,
         updated_at: 2_000
       },
@@ -228,6 +230,7 @@ test("list sorts by created_at desc and supports project, type, and since filter
         promotion_score: 0,
         visibility_gated: true,
         candidate_state: "held",
+        source_kind: "vega_memory",
         created_at: 1_000,
         updated_at: 1_000
       }

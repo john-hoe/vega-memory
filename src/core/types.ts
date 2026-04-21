@@ -1,3 +1,5 @@
+import type { SourceKind } from "./contracts/enums.js";
+
 export type MemoryType =
   | "task_state"
   | "preference"
@@ -160,6 +162,7 @@ export interface Memory {
   scope: MemoryScope;
   accessed_projects: string[];
   source_context?: MemorySourceContext | null;
+  source_kind?: SourceKind | null;
 }
 
 export interface FactClaim {
@@ -182,6 +185,7 @@ export interface FactClaim {
   invalidation_reason: string | null;
   created_at: string;
   updated_at: string;
+  source_kind?: SourceKind | null;
 }
 
 export interface AsOfQueryOptions {
@@ -205,6 +209,7 @@ export interface RawArchive {
   captured_at: string | null;
   created_at: string;
   updated_at: string;
+  source_kind?: SourceKind | null;
 }
 
 export interface ArchiveStats {
@@ -292,6 +297,7 @@ export interface EntityRelation {
   source_entity_type: EntityType;
   target_entity_name: string;
   target_entity_type: EntityType;
+  source_kind?: SourceKind | null;
 }
 
 export interface GraphTraversal {

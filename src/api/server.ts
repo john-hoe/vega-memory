@@ -443,7 +443,9 @@ export function createAPIServer(
   app.post("/context_resolve", createContextResolveHttpHandler(retrievalOrchestrator));
   app.post(
     "/usage_ack",
-    createUsageAckHttpHandler(ackStore, checkpointStore, undefined, circuitBreaker, vegaMetrics)
+    createUsageAckHttpHandler(ackStore, checkpointStore, undefined, circuitBreaker, vegaMetrics, {
+      echoed_source_kinds: true
+    })
   );
   app.use(
     createRouter({

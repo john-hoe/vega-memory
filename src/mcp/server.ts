@@ -931,7 +931,9 @@ export function createMCPServer({
   });
   const ingestEventTool = createIngestEventMcpTool(activeRepository.db);
   const contextResolveTool = createContextResolveMcpTool(retrievalOrchestrator);
-  const usageAckTool = createUsageAckMcpTool(ackStore, checkpointStore, undefined, circuitBreaker);
+  const usageAckTool = createUsageAckMcpTool(ackStore, checkpointStore, undefined, circuitBreaker, undefined, {
+    echoed_source_kinds: true
+  });
   const circuitBreakerStatusTool = createCircuitBreakerStatusMcpTool(circuitBreaker);
   const circuitBreakerResetTool = createCircuitBreakerResetMcpTool(circuitBreaker);
   const flagHitMetrics = createFlagHitMetricsCollector();
