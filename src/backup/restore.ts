@@ -12,7 +12,13 @@ import { z } from "zod";
 
 import { createLogger, type Logger } from "../core/logging/index.js";
 
-import { BackupManifestSchema, verifyManifest } from "./manifest.js";
+import {
+  BackupIntegrityError,
+  type BackupIntegrityFailure,
+  BackupManifestSchema,
+  assertSafeRelativePath,
+  verifyManifest
+} from "./manifest.js";
 import { DEFAULT_BACKUP_CONFIG_PATH, loadBackupConfig } from "./registry.js";
 import {
   BACKUP_MANIFEST_FILENAME,
@@ -63,6 +69,7 @@ interface InternalRestoreResult {
   degraded?: "backup_missing" | "manifest_parse_error" | "file_read_error";
   before_state_sha256?: string | null;
   after_state_sha256?: string | null;
+  error?: BackupIntegrityFailure;
 }
 
 const computeStateHash = (
@@ -121,9 +128,10 @@ const loadTargetIndex = (
 
 const resolveDestinationPath = (
   relativePath: string,
+  backupPath: string,
   indexByRoot: Map<string, BackupTargetIndexEntry>
 ): string | null => {
-  const normalized = normalizePath(relativePath);
+  const normalized = normalizePath(assertSafeRelativePath(relativePath, backupPath));
   const [rootName, ...rest] = normalized.split("/");
   const target = indexByRoot.get(rootName);
 
@@ -135,7 +143,35 @@ const resolveDestinationPath = (
     return rest.length === 0 ? target.source_path : null;
   }
 
-  return join(target.source_path, ...rest);
+  const destinationRelativePath = assertSafeRelativePath(rest.join("/"), target.source_path);
+  return join(target.source_path, destinationRelativePath);
+};
+
+const truncatePathForLog = (value: string): string =>
+  value.length <= 200 ? value : `${value.slice(0, 197)}...`;
+
+const rejectedRestoreResult = (
+  error: BackupIntegrityFailure,
+  backup_id: string,
+  manifest_id: string,
+  restored_at: string,
+  activeLogger: Logger
+): InternalRestoreResult => {
+  activeLogger.warn("Restore rejected unsafe manifest path.", {
+    backup_id,
+    manifest_id,
+    status: "rejected",
+    error_code: error.code,
+    relative_path: truncatePathForLog(error.path)
+  });
+
+  return {
+    restored_at,
+    files_restored: 0,
+    verified: false,
+    mismatches: [error.code],
+    error
+  };
 };
 
 const selectFiles = (
@@ -182,6 +218,16 @@ export async function restoreBackup(options: {
     const manifest = BackupManifestSchema.parse(JSON.parse(readFileSync(manifestPath, "utf8")));
     const verification = verifyManifest(manifest, { expectedBasePath: backupPath });
 
+    if (verification.error !== undefined) {
+      return rejectedRestoreResult(
+        verification.error,
+        options.backup_id,
+        manifest.backup_id,
+        restored_at,
+        activeLogger
+      );
+    }
+
     if (!verification.ok) {
       return {
         restored_at,
@@ -195,12 +241,13 @@ export async function restoreBackup(options: {
     const indexByRoot = new Map(targetIndex.map((entry) => [entry.root_name, entry]));
     const filesToRestore = selectFiles(manifest.files, options.mode, options.selective);
     const destinations = filesToRestore.flatMap((file) => {
-      const destinationPath = resolveDestinationPath(file.relative_path, indexByRoot);
+      const safeRelativePath = assertSafeRelativePath(file.relative_path, backupPath);
+      const destinationPath = resolveDestinationPath(safeRelativePath, backupPath, indexByRoot);
       return destinationPath === null
         ? []
         : [
             {
-              relative_path: file.relative_path,
+              relative_path: safeRelativePath,
               destination_path: destinationPath
             }
           ];
@@ -223,7 +270,8 @@ export async function restoreBackup(options: {
 
     for (const destination of destinations) {
       try {
-        const bytes = fs.readFileSync(join(backupPath, destination.relative_path));
+        const sourceRelativePath = assertSafeRelativePath(destination.relative_path, backupPath);
+        const bytes = fs.readFileSync(join(backupPath, sourceRelativePath));
         fs.mkdirSync(dirname(destination.destination_path), { recursive: true });
         fs.writeFileSync(destination.destination_path, bytes);
         files_restored += 1;
@@ -247,6 +295,20 @@ export async function restoreBackup(options: {
       ...(degraded === undefined ? {} : { degraded })
     };
   } catch (error) {
+    if (error instanceof BackupIntegrityError) {
+      return rejectedRestoreResult(
+        {
+          code: error.code,
+          path: error.path,
+          message: error.message
+        },
+        options.backup_id,
+        options.backup_id,
+        restored_at,
+        activeLogger
+      );
+    }
+
     activeLogger.warn("Restore failed.", {
       backup_id: options.backup_id,
       error: error instanceof Error ? error.message : String(error)
