@@ -16,6 +16,16 @@ import { ContentFetcher } from "../ingestion/fetcher.js";
 import { RSSService } from "../ingestion/rss.js";
 import { InsightGenerator } from "../insights/generator.js";
 import type { NotificationManager } from "../notify/manager.js";
+import {
+  createReconciliationAlertCooldown,
+  evaluateReconciliationAlerts,
+  type ReconciliationAlert,
+  type ReconciliationAlertConfig,
+  type ReconciliationAlertInput,
+  type ReconciliationAlertCooldown
+} from "../reconciliation/alert.js";
+import { ReconciliationOrchestrator } from "../reconciliation/orchestrator.js";
+import type { ReconciliationDimension, ReconciliationReport } from "../reconciliation/report.js";
 import { resolveConfiguredEncryptionKey } from "../security/keychain.js";
 import { CrossReferenceService } from "../wiki/cross-reference.js";
 import { PageManager } from "../wiki/page-manager.js";
@@ -53,13 +63,37 @@ export interface DailyMaintenanceOptions {
   crossReferenceService?: CrossReferenceService;
   stalenessService?: StalenessService;
   resolveEncryptionKey?: (config: VegaConfig) => Promise<string | undefined>;
+  now?: () => number;
+  runReconciliation?: (args: {
+    repository: Repository;
+    window_start: number;
+    window_end: number;
+    dimensions: ReconciliationDimension[];
+  }) => Promise<ReconciliationReport>;
+  reconciliationAlertConfig?: ReconciliationAlertConfig;
+  reconciliationAlertCooldown?: ReconciliationAlertCooldown;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+const DEFAULT_RECONCILIATION_WINDOW_HOURS = 24;
+const DEFAULT_RECONCILIATION_FLAP_COOLDOWN_MS = HOUR_MS;
+const DEFAULT_RECONCILIATION_DIMENSIONS: ReconciliationDimension[] = [
+  "count",
+  "shape",
+  "semantic",
+  "ordering"
+];
+const RECONCILIATION_AUTO_ENABLED_ENV = "VEGA_RECONCILIATION_AUTO_ENABLED";
+const RECONCILIATION_WINDOW_HOURS_ENV = "VEGA_RECONCILIATION_WINDOW_HOURS";
+const RECONCILIATION_SCHEDULE_CRON_ENV = "VEGA_RECONCILIATION_SCHEDULE_CRON";
+const RECONCILIATION_FLAP_COOLDOWN_ENV = "VEGA_RECONCILIATION_FLAP_COOLDOWN_MS";
+const RECONCILIATION_SEMANTIC_SAMPLE_SIZE_ENV = "VEGA_RECONCILIATION_SEMANTIC_SAMPLE_SIZE";
+const RECONCILIATION_SHAPE_FIELD_COUNT = 5;
 
 let ollamaDownSince: number | null = null;
 let ollamaWarningSent = false;
+const defaultReconciliationAlertCooldown = createReconciliationAlertCooldown();
 
 const timestamp = (): string => new Date().toISOString();
 
@@ -78,6 +112,74 @@ const getErrorMessage = (error: unknown): string =>
 
 const formatPercent = (count: number, total: number): string =>
   total === 0 ? "0.0" : ((count / total) * 100).toFixed(1);
+
+const resolvePositiveInteger = (value: string | undefined, fallback: number): number => {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const isReconciliationAutoEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  env[RECONCILIATION_AUTO_ENABLED_ENV] === "true";
+
+const resolveReconciliationWindowHours = (env: NodeJS.ProcessEnv = process.env): number =>
+  resolvePositiveInteger(env[RECONCILIATION_WINDOW_HOURS_ENV], DEFAULT_RECONCILIATION_WINDOW_HOURS);
+
+const resolveReconciliationFlapCooldownMs = (env: NodeJS.ProcessEnv = process.env): number =>
+  resolvePositiveInteger(env[RECONCILIATION_FLAP_COOLDOWN_ENV], DEFAULT_RECONCILIATION_FLAP_COOLDOWN_MS);
+
+const resolveReconciliationSemanticSampleSize = (env: NodeJS.ProcessEnv = process.env): number =>
+  resolvePositiveInteger(env[RECONCILIATION_SEMANTIC_SAMPLE_SIZE_ENV], 50);
+
+const matchesCronField = (
+  token: string,
+  value: number,
+  minimum: number,
+  maximum: number
+): boolean => {
+  if (token === "*") {
+    return true;
+  }
+
+  const parsed = Number.parseInt(token, 10);
+  return String(parsed) === token && parsed >= minimum && parsed <= maximum && parsed === value;
+};
+
+const matchesCronSchedule = (expression: string, value: Date): boolean => {
+  const tokens = expression.trim().split(/\s+/);
+  if (tokens.length !== 5) {
+    throw new Error(`Expected 5 cron fields, received ${tokens.length}`);
+  }
+
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = tokens;
+  return (
+    matchesCronField(minute!, value.getMinutes(), 0, 59) &&
+    matchesCronField(hour!, value.getHours(), 0, 23) &&
+    matchesCronField(dayOfMonth!, value.getDate(), 1, 31) &&
+    matchesCronField(month!, value.getMonth() + 1, 1, 12) &&
+    matchesCronField(dayOfWeek!, value.getDay(), 0, 6)
+  );
+};
+
+const shouldRunReconciliationForCurrentSchedule = (
+  value: Date,
+  env: NodeJS.ProcessEnv = process.env
+): boolean => {
+  const cron = env[RECONCILIATION_SCHEDULE_CRON_ENV]?.trim();
+  if (cron === undefined || cron.length === 0) {
+    return true;
+  }
+
+  try {
+    return matchesCronSchedule(cron, value);
+  } catch (error) {
+    logError(`Invalid ${RECONCILIATION_SCHEDULE_CRON_ENV}: ${getErrorMessage(error)}`);
+    return false;
+  }
+};
 
 const getDataDir = (config: VegaConfig): string =>
   config.dbPath === ":memory:" ? resolve(process.cwd(), "data") : dirname(resolve(config.dbPath));
@@ -134,6 +236,146 @@ const flushDailyDigestSafely = async (
     logError(`Daily warning digest failed: ${getErrorMessage(error)}`);
     return false;
   }
+};
+
+const countJoinedReconciliationRows = (
+  repository: Repository,
+  windowStart: number,
+  windowEnd: number
+): number =>
+  repository.db
+    .prepare<[string, string], { count: number }>(
+      `SELECT COUNT(*) AS count
+       FROM memories AS memory
+       INNER JOIN raw_inbox AS raw
+         ON raw.event_id = memory.id
+       WHERE memory.created_at >= ? AND memory.created_at < ?`
+    )
+    .get(new Date(windowStart).toISOString(), new Date(windowEnd).toISOString())?.count ?? 0;
+
+const toReconciliationAlertInputs = (
+  report: ReconciliationReport,
+  repository: Repository,
+  windowStart: number,
+  windowEnd: number,
+  env: NodeJS.ProcessEnv = process.env
+): ReconciliationAlertInput[] => {
+  const joinedRows = countJoinedReconciliationRows(repository, windowStart, windowEnd);
+  const semanticSampleSize = Math.min(joinedRows, resolveReconciliationSemanticSampleSize(env));
+
+  return report.dimensions.map((dimension) => {
+    const mismatchCount = dimension.findings.reduce(
+      (total, finding) => total + finding.mismatch_count,
+      0
+    );
+
+    if (dimension.dimension === "count") {
+      const memoryChecked = dimension.findings
+        .filter((finding) => finding.direction === "forward")
+        .reduce((total, finding) => total + (finding.expected ?? 0), 0);
+      const rawChecked = dimension.findings
+        .filter((finding) => finding.direction === "reverse")
+        .reduce((total, finding) => total + (finding.expected ?? 0), 0);
+
+      return {
+        dimension: dimension.dimension,
+        status: dimension.status,
+        mismatch_count: mismatchCount,
+        compared_count: Math.max(memoryChecked, rawChecked, mismatchCount)
+      };
+    }
+
+    if (dimension.dimension === "shape") {
+      return {
+        dimension: dimension.dimension,
+        status: dimension.status,
+        mismatch_count: mismatchCount,
+        compared_count: Math.max(joinedRows * RECONCILIATION_SHAPE_FIELD_COUNT, mismatchCount)
+      };
+    }
+
+    if (dimension.dimension === "semantic") {
+      return {
+        dimension: dimension.dimension,
+        status: dimension.status,
+        mismatch_count: mismatchCount,
+        compared_count: Math.max(semanticSampleSize, mismatchCount)
+      };
+    }
+
+    if (dimension.dimension === "ordering") {
+      return {
+        dimension: dimension.dimension,
+        status: dimension.status,
+        mismatch_count: mismatchCount,
+        compared_count: Math.max(joinedRows, mismatchCount)
+      };
+    }
+
+    return {
+      dimension: dimension.dimension,
+      status: dimension.status,
+      mismatch_count: mismatchCount,
+      compared_count: Math.max(mismatchCount, 0)
+    };
+  });
+};
+
+const formatReconciliationAlertTitle = (alert: ReconciliationAlert): string =>
+  `Reconciliation: ${alert.dimension} at ${(alert.mismatch_rate * 100).toFixed(1)}% mismatch`;
+
+const dispatchReconciliationAlerts = async (args: {
+  alerts: ReconciliationAlert[];
+  notificationManager: NotificationManager;
+  cooldown: ReconciliationAlertCooldown;
+  cooldownMs: number;
+  now: number;
+}): Promise<number> => {
+  let dispatched = 0;
+
+  for (const alert of args.alerts) {
+    if (!args.cooldown.shouldDispatch(alert, args.now, args.cooldownMs)) {
+      continue;
+    }
+
+    try {
+      if (alert.severity === "critical") {
+        await args.notificationManager.notifyError(
+          formatReconciliationAlertTitle(alert),
+          alert.summary
+        );
+      } else {
+        await args.notificationManager.notifyWarning(
+          formatReconciliationAlertTitle(alert),
+          alert.summary
+        );
+      }
+
+      args.cooldown.record(alert, args.now);
+      dispatched += 1;
+    } catch (error) {
+      logError(`Reconciliation alert dispatch failed: ${getErrorMessage(error)}`);
+    }
+  }
+
+  return dispatched;
+};
+
+const runReconciliation = async (args: {
+  repository: Repository;
+  window_start: number;
+  window_end: number;
+  dimensions: ReconciliationDimension[];
+}): Promise<ReconciliationReport> => {
+  const reconciliationOrchestrator = new ReconciliationOrchestrator({
+    db: args.repository.db
+  });
+
+  return reconciliationOrchestrator.run({
+    window_start: args.window_start,
+    window_end: args.window_end,
+    dimensions: args.dimensions
+  });
 };
 
 const toEmbeddingBuffer = (embedding: Float32Array): Buffer =>
@@ -259,6 +501,10 @@ export async function dailyMaintenance(
   const resolveEncryptionKey =
     options.resolveEncryptionKey ??
     (async (config: VegaConfig) => resolveConfiguredEncryptionKey(config));
+  const now = options.now ?? Date.now;
+  const runReconciliationStep = options.runReconciliation ?? runReconciliation;
+  const reconciliationAlertCooldown =
+    options.reconciliationAlertCooldown ?? defaultReconciliationAlertCooldown;
   const recordError = (message: string): void => {
     errors.push(message);
     logError(message);
@@ -444,6 +690,71 @@ export async function dailyMaintenance(
       );
     } catch (error) {
       recordError(`Staleness scan failed: ${getErrorMessage(error)}`);
+    }
+  }
+
+  if (isReconciliationAutoEnabled()) {
+    const reconciliationRunAt = now();
+    const reconciliationWindowHours = resolveReconciliationWindowHours();
+
+    if (shouldRunReconciliationForCurrentSchedule(new Date(reconciliationRunAt))) {
+      log("Running reconciliation auto-trigger");
+
+      try {
+        const windowEnd = reconciliationRunAt;
+        const windowStart = windowEnd - reconciliationWindowHours * HOUR_MS;
+        const reconciliationResult = await runReconciliationStep({
+          repository,
+          window_start: windowStart,
+          window_end: windowEnd,
+          dimensions: DEFAULT_RECONCILIATION_DIMENSIONS
+        });
+        const alertInputs = toReconciliationAlertInputs(
+          reconciliationResult,
+          repository,
+          windowStart,
+          windowEnd
+        );
+
+        log(
+          `reconciliation_complete ${JSON.stringify({
+            run_id: reconciliationResult.run_id,
+            totals: reconciliationResult.totals,
+            dimensions: reconciliationResult.dimensions.map((dimension) => ({
+              dimension: dimension.dimension,
+              status: dimension.status
+            }))
+          })}`
+        );
+        log("vega_reconciliation_runs_total status=success count=1");
+
+        if (notificationManager !== undefined) {
+          const alerts = evaluateReconciliationAlerts(
+            alertInputs,
+            options.reconciliationAlertConfig
+          );
+          const dispatched = await dispatchReconciliationAlerts({
+            alerts,
+            notificationManager,
+            cooldown: reconciliationAlertCooldown,
+            cooldownMs: resolveReconciliationFlapCooldownMs(),
+            now: reconciliationRunAt
+          });
+
+          if (dispatched > 0) {
+            preserveAlert = true;
+          }
+
+          log(
+            `Reconciliation alert evaluation finished with ${alerts.length} alerts and ${dispatched} dispatched`
+          );
+        }
+      } catch (error) {
+        logError(`reconciliation_auto_trigger_failed: ${getErrorMessage(error)}`);
+        log("vega_reconciliation_failures_total count=1");
+      }
+    } else {
+      log("Reconciliation auto-trigger skipped because the configured cron does not match");
     }
   }
 
