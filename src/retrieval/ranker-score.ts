@@ -73,11 +73,12 @@ export function computeRecency(
 export function scoreRecord(
   record: SourceRecord,
   config: RankerConfig,
-  demote_ids?: ReadonlySet<string>
+  demote_ids?: ReadonlySet<string>,
+  halfLifeDays = RECENCY_HALF_LIFE_DAYS
 ): RankedRecord {
   const base = getBaseScore(record);
   const source_prior = getSourcePrior(record.source_kind, config.source_priors);
-  const recency = computeRecency(record.created_at);
+  const recency = computeRecency(record.created_at, Date.now(), halfLifeDays);
   // TODO(Wave 5, issue #32): restore host_memory_file-specific floor logic only after the
   // adapter can surface real records instead of staying disabled by default.
   let final_score = (base + source_prior + recency) / 3;

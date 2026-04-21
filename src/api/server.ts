@@ -82,6 +82,28 @@ import {
 
 const isAddressInfo = (value: string | AddressInfo | null): value is AddressInfo =>
   typeof value === "object" && value !== null;
+const INGEST_CANARY_FLAG_ID = "canary-api-ingest-v2";
+const USAGE_ACK_ECHO_SOURCE_KIND_FLAG_ID = "usage-ack-echo-source-kind";
+
+function resolveFeatureFlagRegistryPath(): string {
+  const override = process.env.VEGA_FEATURE_FLAG_REGISTRY_PATH?.trim();
+  return override && override.length > 0 ? override : DEFAULT_FEATURE_FLAG_REGISTRY_PATH;
+}
+
+function resolveFlagVariant(
+  flags: ReturnType<typeof loadFeatureFlagRegistry>,
+  id: string,
+  fallback: "on" | "off",
+  context: {
+    surface?: string;
+    intent?: string;
+    session_id?: string;
+    project?: string;
+  }
+): "on" | "off" {
+  const flag = flags.find((candidate) => candidate.id === id);
+  return flag === undefined ? fallback : evaluateFeatureFlag(flag, context).variant;
+}
 
 const shouldLogApiRequest = (path: string): boolean =>
   path.startsWith("/api") &&
@@ -332,6 +354,7 @@ export function createAPIServer(
     db
   });
   const timeoutSweepConfig = resolveTimeoutSweepConfig(process.env);
+  const featureFlags = loadFeatureFlagRegistry(resolveFeatureFlagRegistryPath());
   const timeoutSweepScheduler = new TimeoutSweepScheduler({
     db,
     config: timeoutSweepConfig
@@ -435,18 +458,49 @@ export function createAPIServer(
   app.use(["/ingest_event", "/context_resolve", "/usage_ack"], requireAuthorizedHttpRoute);
   const ingestHandler = createIngestEventHttpHandler(db);
   app.post("/ingest_event", (req, res) => {
-    const flag = loadFeatureFlagRegistry(DEFAULT_FEATURE_FLAG_REGISTRY_PATH).find(({ id }) => id === "canary-api-ingest-v2");
-    const variant = flag === undefined ? "off" : evaluateFeatureFlag(flag, { surface: extractSurfaceFromHeader(req) || "unknown", intent: "ingest" }).variant;
+    const variant = resolveFlagVariant(featureFlags, INGEST_CANARY_FLAG_ID, "off", {
+      surface: extractSurfaceFromHeader(req) || "unknown",
+      intent: "ingest"
+    });
     res.setHeader("X-Vega-Canary", variant === "on" ? "api-ingest-v2-on" : "off");
     return ingestHandler(req, res);
   });
   app.post("/context_resolve", createContextResolveHttpHandler(retrievalOrchestrator));
-  app.post(
-    "/usage_ack",
-    createUsageAckHttpHandler(ackStore, checkpointStore, undefined, circuitBreaker, vegaMetrics, {
-      echoed_source_kinds: true
-    })
-  );
+  app.post("/usage_ack", async (req, res) => {
+    const checkpointId =
+      typeof req.body === "object" &&
+      req.body !== null &&
+      typeof (req.body as { checkpoint_id?: unknown }).checkpoint_id === "string"
+        ? (req.body as { checkpoint_id: string }).checkpoint_id
+        : undefined;
+    const checkpoint =
+      checkpointId === undefined
+        ? undefined
+        : (() => {
+            try {
+              return checkpointStore?.get(checkpointId);
+            } catch {
+              return undefined;
+            }
+          })();
+    const variant = resolveFlagVariant(featureFlags, USAGE_ACK_ECHO_SOURCE_KIND_FLAG_ID, "on", {
+      surface: checkpoint?.surface ?? extractSurfaceFromHeader(req) ?? "unknown",
+      intent: "ack",
+      session_id: checkpoint?.session_id ?? undefined,
+      project: checkpoint?.project ?? undefined
+    });
+    const handler = createUsageAckHttpHandler(
+      ackStore,
+      checkpointStore,
+      undefined,
+      circuitBreaker,
+      vegaMetrics,
+      {
+        echoed_source_kinds: variant === "on"
+      }
+    );
+    await handler(req, res);
+  });
   app.use(
     createRouter({
       ...activeServices,

@@ -89,7 +89,9 @@ import {
   createEvaluateFlagMcpTool,
   createFlagHitMetricsCollector,
   createFlagMetricsMcpTool,
-  createListFlagsMcpTool
+  createListFlagsMcpTool,
+  evaluateFeatureFlag,
+  loadFeatureFlagRegistry
 } from "../feature-flags/index.js";
 import { createContextResolveMcpTool } from "../retrieval/context-resolve-handler.js";
 import { createDefaultRegistry } from "../retrieval/orchestrator-config.js";
@@ -210,6 +212,27 @@ const FACT_CLAIM_STATUSES = [
 ] as const satisfies readonly FactClaimStatus[];
 const MCP_AUDIT_CONTEXT: AuditContext = { actor: "mcp", ip: null };
 const logger = createLogger({ name: "mcp-server" });
+const USAGE_ACK_ECHO_SOURCE_KIND_FLAG_ID = "usage-ack-echo-source-kind";
+
+function resolveFeatureFlagRegistryPath(): string {
+  const override = process.env.VEGA_FEATURE_FLAG_REGISTRY_PATH?.trim();
+  return override && override.length > 0 ? override : DEFAULT_FEATURE_FLAG_REGISTRY_PATH;
+}
+
+function resolveFlagVariant(
+  flags: ReturnType<typeof loadFeatureFlagRegistry>,
+  id: string,
+  fallback: "on" | "off",
+  context: {
+    surface?: string;
+    intent?: string;
+    session_id?: string;
+    project?: string;
+  }
+): "on" | "off" {
+  const flag = flags.find((candidate) => candidate.id === id);
+  return flag === undefined ? fallback : evaluateFeatureFlag(flag, context).variant;
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -906,6 +929,7 @@ export function createMCPServer({
     db: activeRepository.db
   });
   const timeoutSweepConfig = resolveTimeoutSweepConfig(process.env);
+  const featureFlags = loadFeatureFlagRegistry(resolveFeatureFlagRegistryPath());
   const timeoutSweepScheduler = new TimeoutSweepScheduler({
     db: activeRepository.db,
     config: timeoutSweepConfig
@@ -931,9 +955,12 @@ export function createMCPServer({
   });
   const ingestEventTool = createIngestEventMcpTool(activeRepository.db);
   const contextResolveTool = createContextResolveMcpTool(retrievalOrchestrator);
-  const usageAckTool = createUsageAckMcpTool(ackStore, checkpointStore, undefined, circuitBreaker, undefined, {
-    echoed_source_kinds: true
-  });
+  const usageAckTool = createUsageAckMcpTool(
+    ackStore,
+    checkpointStore,
+    undefined,
+    circuitBreaker
+  );
   const circuitBreakerStatusTool = createCircuitBreakerStatusMcpTool(circuitBreaker);
   const circuitBreakerResetTool = createCircuitBreakerResetMcpTool(circuitBreaker);
   const flagHitMetrics = createFlagHitMetricsCollector();
@@ -2203,7 +2230,38 @@ export function createMCPServer({
     },
     async (args: unknown) =>
       runTool(repository, usageAckTool.name, args, observer, async () => {
-        const result = await usageAckTool.invoke(args);
+        const checkpointId =
+          typeof args === "object" &&
+          args !== null &&
+          typeof (args as { checkpoint_id?: unknown }).checkpoint_id === "string"
+            ? (args as { checkpoint_id: string }).checkpoint_id
+            : undefined;
+        const checkpoint =
+          checkpointId === undefined
+            ? undefined
+            : (() => {
+                try {
+                  return checkpointStore?.get(checkpointId);
+                } catch {
+                  return undefined;
+                }
+              })();
+        const variant = resolveFlagVariant(featureFlags, USAGE_ACK_ECHO_SOURCE_KIND_FLAG_ID, "on", {
+          surface: checkpoint?.surface ?? "unknown",
+          intent: "ack",
+          session_id: checkpoint?.session_id ?? undefined,
+          project: checkpoint?.project ?? undefined
+        });
+        const result = await createUsageAckMcpTool(
+          ackStore,
+          checkpointStore,
+          undefined,
+          circuitBreaker,
+          undefined,
+          {
+            echoed_source_kinds: variant === "on"
+          }
+        ).invoke(args);
 
         return {
           result,

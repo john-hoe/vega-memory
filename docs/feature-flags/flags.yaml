@@ -13,4 +13,42 @@
 #   - bucketing:
 #       seed_field: "session_id" | "project" | "surface"  # default session_id
 #
-flags: []
+flags:
+  - id: retrieval-queryless-bootstrap
+    description: Gate the queryless bootstrap wide-recall path. Off reverts to empty-bundle-on-empty-query (pre-B5 behavior).
+    variants:
+      on: true
+      off: false
+    default: on
+    matchers:
+      surfaces: "*"
+      intents: ["bootstrap"]
+      traffic_percent: 100
+    bucketing:
+      seed_field: session_id
+
+  - id: usage-ack-echo-source-kind
+    description: Gate the echoed_source_kinds[] field in usage.ack response. Off omits the echo (compat for older consumers).
+    variants:
+      on: true
+      off: false
+    default: on
+    matchers:
+      surfaces: "*"
+      intents: "*"
+      traffic_percent: 100
+    bucketing:
+      seed_field: session_id
+
+  - id: ranker-recency-halflife-14d
+    description: When on, switches ranker recency decay half-life from 7 days to 14 days. Retention-sensitivity canary.
+    variants:
+      on: true
+      off: false
+    default: off
+    matchers:
+      surfaces: "*"
+      intents: "*"
+      traffic_percent: 0
+    bucketing:
+      seed_field: session_id

@@ -61,6 +61,15 @@ Using `session_id` as the seed field gives **stable per-user rollout**: the same
 3. Call `feature_flag.evaluate` with the flag ID and evaluation context to check the variant at runtime.
 4. Observe hit counts and reasons via `feature_flag.metrics`.
 
+## Live decision points
+
+- `retrieval-queryless-bootstrap` — `src/retrieval/orchestrator.ts`
+  - Gates the bootstrap queryless dispatch path. `off` returns an empty bundle for empty-query bootstrap requests instead of fanning out to the wide-recall fallback.
+- `usage-ack-echo-source-kind` — `src/api/server.ts` and `src/mcp/server.ts`
+  - Gates `echoed_source_kinds[]` in `usage_ack` responses. `off` omits the response field for older consumers.
+- `ranker-recency-halflife-14d` — `src/retrieval/orchestrator.ts` and `src/retrieval/ranker-score.ts`
+  - Gates the recency half-life used by the ranker. `on` switches the ranker from a 7-day to a 14-day decay curve.
+
 ## Sunset and retirement
 
 To retire a flag:

@@ -9,6 +9,13 @@ import { recordKey } from "../core/contracts/checkpoint-record.js";
 import type { IntentRequest } from "../core/contracts/intent.js";
 import type { Mode } from "../core/contracts/enums.js";
 import { createLogger, createTraceId } from "../core/logging/index.js";
+import {
+  DEFAULT_FEATURE_FLAG_REGISTRY_PATH,
+  evaluateFeatureFlag,
+  loadFeatureFlagRegistry,
+  type EvaluationContext,
+  type FeatureFlag
+} from "../feature-flags/index.js";
 import type { CheckpointFailureStore } from "../usage/checkpoint-failure-store.js";
 import type { CheckpointStore } from "../usage/checkpoint-store.js";
 import type { VegaMetricsRegistry } from "../monitoring/vega-metrics.js";
@@ -59,6 +66,26 @@ const ERROR_BUNDLE = BUNDLE_SCHEMA.parse({
   bundle_digest: "error",
   sections: []
 });
+const RETRIEVAL_QUERYLESS_BOOTSTRAP_FLAG_ID = "retrieval-queryless-bootstrap";
+
+function resolveFeatureFlagRegistryPath(): string {
+  const override = process.env.VEGA_FEATURE_FLAG_REGISTRY_PATH?.trim();
+  return override && override.length > 0 ? override : DEFAULT_FEATURE_FLAG_REGISTRY_PATH;
+}
+
+function resolveFlagVariant(
+  flags: FeatureFlag[],
+  id: string,
+  fallback: "on" | "off",
+  context: EvaluationContext
+): "on" | "off" {
+  const flag = flags.find((candidate) => candidate.id === id);
+  return flag === undefined ? fallback : evaluateFeatureFlag(flag, context).variant;
+}
+
+function isQuerylessRequest(request: IntentRequest): boolean {
+  return request.query.trim().length === 0;
+}
 
 function resolveMode(request: IntentRequest): Mode {
   return request.mode ?? "L1";
@@ -132,6 +159,7 @@ export class RetrievalOrchestrator {
   readonly #checkpointFailureStore?: CheckpointFailureStore;
   readonly #circuitBreaker?: CircuitBreaker;
   readonly #metrics?: VegaMetricsRegistry;
+  readonly #featureFlags: FeatureFlag[];
 
   constructor(config: OrchestratorConfig) {
     this.#registry = config.registry;
@@ -142,6 +170,7 @@ export class RetrievalOrchestrator {
     this.#checkpointFailureStore = config.checkpoint_failure_store;
     this.#circuitBreaker = config.circuit_breaker;
     this.#metrics = config.metrics;
+    this.#featureFlags = loadFeatureFlagRegistry(resolveFeatureFlagRegistryPath());
   }
 
   #errorResponse(
@@ -378,7 +407,22 @@ export class RetrievalOrchestrator {
         top_k: profile.default_top_k,
         depth: profile.default_depth
       };
-      const records = this.#registry.searchMany(profile.default_sources, input);
+      const records =
+        request.intent === "bootstrap" &&
+        isQuerylessRequest(request) &&
+        resolveFlagVariant(
+          this.#featureFlags,
+          RETRIEVAL_QUERYLESS_BOOTSTRAP_FLAG_ID,
+          "on",
+          {
+            surface: request.surface,
+            intent: request.intent,
+            session_id: request.session_id,
+            project: request.project ?? undefined
+          }
+        ) === "off"
+          ? []
+          : this.#registry.searchMany(profile.default_sources, input);
       const ranked = rank(records, request, this.#rankerConfig, demote_ids).slice(
         0,
         profile.default_top_k
