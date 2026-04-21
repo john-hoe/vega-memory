@@ -1,7 +1,12 @@
 import type { DatabaseAdapter } from "../../db/adapter.js";
+import { escapeFtsMatchQuery } from "../../db/fts-query-escape.js";
 
 export const HOST_MEMORY_FILE_FTS_TABLE = "host_memory_file_fts";
 export const HOST_MEMORY_FILE_ENTRIES_TABLE = "host_memory_file_entries";
+
+export function toHostMemoryFileFtsMatchQuery(raw: string): string {
+  return escapeFtsMatchQuery(raw);
+}
 
 const HOST_MEMORY_FILE_FTS_DDL = `
   CREATE VIRTUAL TABLE IF NOT EXISTS ${HOST_MEMORY_FILE_FTS_TABLE}

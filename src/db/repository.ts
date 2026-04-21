@@ -42,6 +42,7 @@ import type { WikiNotification } from "../wiki/notifications.js";
 import type { WikiSpace, WikiSpaceVisibility } from "../wiki/types.js";
 import type { DatabaseAdapter } from "./adapter.js";
 import { SQLiteAdapter } from "./sqlite-adapter.js";
+import { escapeFtsMatchQuery } from "./fts-query-escape.js";
 
 interface MemoryRow {
   id: string;
@@ -2372,7 +2373,7 @@ export class Repository {
     topic?: string | TopicRecallOptions
   ): { memory: Memory; rank: number }[] {
     const clauses = ["memories_fts MATCH ?", "memories.status = 'active'"];
-    const params: unknown[] = [query];
+    const params: unknown[] = [escapeFtsMatchQuery(query)];
 
     if (tenantId !== undefined && tenantId !== null) {
       clauses.push("memories.tenant_id IS ?");
@@ -2429,7 +2430,7 @@ export class Repository {
     }
 
     const clauses = ["raw_archives_fts MATCH ?"];
-    const params: unknown[] = [normalizedQuery];
+    const params: unknown[] = [escapeFtsMatchQuery(normalizedQuery)];
 
     if (tenantId !== undefined) {
       clauses.push("raw_archives.tenant_id IS ?");

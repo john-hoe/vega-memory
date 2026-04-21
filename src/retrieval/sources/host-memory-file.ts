@@ -7,7 +7,8 @@ import type { DatabaseAdapter } from "../../db/adapter.js";
 import {
   applyHostMemoryFileFtsMigration,
   HOST_MEMORY_FILE_ENTRIES_TABLE,
-  HOST_MEMORY_FILE_FTS_TABLE
+  HOST_MEMORY_FILE_FTS_TABLE,
+  toHostMemoryFileFtsMatchQuery
 } from "./host-memory-file-fts.js";
 import {
   enumeratePaths,
@@ -126,7 +127,7 @@ export class HostMemoryFileAdapter implements SourceAdapter, HostMemoryFileReade
       WHERE ${HOST_MEMORY_FILE_FTS_TABLE} MATCH ?
       ORDER BY bm25_score ASC, ${HOST_MEMORY_FILE_FTS_TABLE}.path ASC
       LIMIT ?`
-    ).all(query, Math.max(1, input.top_k));
+    ).all(toHostMemoryFileFtsMatchQuery(query), Math.max(1, input.top_k));
 
     return rows.map((row): SourceRecord => ({
       id: `host-memory-file:${row.path}:0`,

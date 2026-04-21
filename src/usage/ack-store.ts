@@ -1,4 +1,8 @@
 import type { HostTier, Sufficiency } from "../core/contracts/enums.js";
+import {
+  applyCheckpointStoreMigration,
+  RESOLVED_CHECKPOINTS_TABLE
+} from "./checkpoint-store.js";
 import type { DatabaseAdapter } from "../db/adapter.js";
 
 export interface AckRecord {
@@ -32,6 +36,14 @@ export interface AckStore {
   get(checkpoint_id: string): AckRecord | undefined;
   overrideSufficiency(checkpoint_id: string, sufficiency: Sufficiency): void;
   countRecent(filter: AckCountFilter): number;
+  listRecent?(filter: {
+    since: number;
+    sufficiency?: Sufficiency;
+  }): ReadonlyArray<AckRecord>;
+  listRecentForRecord?(record_id: string, filter: {
+    since: number;
+    sufficiency?: Sufficiency;
+  }): ReadonlyArray<AckRecord>;
   size(): number;
 }
 
@@ -105,6 +117,7 @@ export function createAckStore(
   options: AckStoreOptions = {}
 ): AckStore {
   applyAckStoreMigration(db);
+  applyCheckpointStoreMigration(db);
 
   const now = options.now ?? (() => Date.now());
   const insertStatement = db.prepare<
@@ -152,6 +165,48 @@ export function createAckStore(
       AND sufficiency = ?
       AND acked_at >= ?
       AND (? IS NULL OR checkpoint_id != ?)`
+  );
+  const listRecentStatement = db.prepare<
+    [number, Sufficiency | null, Sufficiency | null],
+    AckRow
+  >(
+    `SELECT
+      checkpoint_id,
+      bundle_digest,
+      sufficiency,
+      host_tier,
+      evidence,
+      turn_elapsed_ms,
+      session_id,
+      acked_at,
+      guard_overridden
+    FROM ${USAGE_ACKS_TABLE}
+    WHERE acked_at >= ?
+      AND (? IS NULL OR sufficiency = ?)
+    ORDER BY acked_at DESC, checkpoint_id ASC`
+  );
+  const listRecentForRecordStatement = db.prepare<
+    [string, number, Sufficiency | null, Sufficiency | null],
+    AckRow
+  >(
+    `SELECT DISTINCT
+      usage_acks.checkpoint_id,
+      usage_acks.bundle_digest,
+      usage_acks.sufficiency,
+      usage_acks.host_tier,
+      usage_acks.evidence,
+      usage_acks.turn_elapsed_ms,
+      usage_acks.session_id,
+      usage_acks.acked_at,
+      usage_acks.guard_overridden
+    FROM ${USAGE_ACKS_TABLE} AS usage_acks
+    JOIN ${RESOLVED_CHECKPOINTS_TABLE} AS resolved_checkpoints
+      ON resolved_checkpoints.checkpoint_id = usage_acks.checkpoint_id
+    JOIN json_each(resolved_checkpoints.record_ids) AS record_ids
+      ON record_ids.value = ?
+    WHERE usage_acks.acked_at >= ?
+      AND (? IS NULL OR usage_acks.sufficiency = ?)
+    ORDER BY usage_acks.acked_at DESC, usage_acks.checkpoint_id ASC`
   );
 
   const toAckRecord = (row: AckRow): AckRecord => ({
@@ -228,6 +283,21 @@ export function createAckStore(
         exclude_checkpoint_id,
         exclude_checkpoint_id
       )?.count ?? 0;
+    },
+    listRecent(filter: { since: number; sufficiency?: Sufficiency }): ReadonlyArray<AckRecord> {
+      const sufficiency = filter.sufficiency ?? null;
+      return listRecentStatement
+        .all(filter.since, sufficiency, sufficiency)
+        .map(toAckRecord);
+    },
+    listRecentForRecord(
+      record_id: string,
+      filter: { since: number; sufficiency?: Sufficiency }
+    ): ReadonlyArray<AckRecord> {
+      const sufficiency = filter.sufficiency ?? null;
+      return listRecentForRecordStatement
+        .all(record_id, filter.since, sufficiency, sufficiency)
+        .map(toAckRecord);
     },
     size(): number {
       return db.get<{ count: number }>(

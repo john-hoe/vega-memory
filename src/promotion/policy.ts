@@ -112,15 +112,15 @@ function createAckRule(
         return undefined;
       }
 
-      const sufficientAcks = ctx.ack_history.filter(
+      const lineageBoundAcks = ctx.ack_history.filter(
         (ack) => ack.sufficiency === "sufficient"
       );
       const distinctSessions = new Set(
-        sufficientAcks.flatMap((ack) => (ack.session_id === null ? [] : [ack.session_id]))
+        lineageBoundAcks.flatMap((ack) => (ack.session_id === null ? [] : [ack.session_id]))
       );
 
       if (
-        sufficientAcks.length < minSufficientAcks ||
+        lineageBoundAcks.length < minSufficientAcks ||
         distinctSessions.size < minDistinctSessions
       ) {
         return undefined;
