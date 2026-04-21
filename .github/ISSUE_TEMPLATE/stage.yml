@@ -1,0 +1,62 @@
+name: Phase 8 stage tracker
+description: Track one Phase 8 stage, linked P8 tasks, acceptance criteria, and milestone state.
+title: "[S<N>] <Stage name>"
+labels:
+  - "stage-<N>"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for Phase 8 stage tracking only.
+
+        Phase 8 conventions:
+        - Replace `<N>` in the title with the selected stage number.
+        - Keep the issue scope aligned to the approved brief set for the stage.
+        - Verify byte-locked paths before merge.
+        - Map the final SEAL commit SHA back to the Notion `GitHub/Commit 链接` field.
+        - If you need concrete per-stage labels or issue creation, prefer `bash tools/github/create-stage-issues.sh`.
+  - type: dropdown
+    id: stage_number
+    attributes:
+      label: Stage number
+      description: Select the Phase 8 stage number for this issue.
+      options:
+        - S0
+        - S1
+        - S2
+        - S3
+        - S4
+        - S5
+        - S6
+    validations:
+      required: true
+  - type: textarea
+    id: p8_task_links
+    attributes:
+      label: P8 task links
+      description: List the Phase 8 task IDs, briefs, or issue links that roll into this stage.
+      placeholder: |
+        - P8-038.5
+        - P8-039.1
+        - docs/briefs/YYYY-MM-DD-batchXX-slug.md
+    validations:
+      required: true
+  - type: input
+    id: milestone
+    attributes:
+      label: Milestone
+      description: Enter the milestone or release bucket for this stage.
+      placeholder: "Phase 8"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: Capture the stage-level acceptance checks and any byte-lock or verification constraints.
+      placeholder: |
+        - [ ] Build and tests green for the approved brief set
+        - [ ] Byte-locked paths stay untouched unless explicitly reopened
+        - [ ] Final SEAL commit is mapped back to Notion
+    validations:
+      required: true
