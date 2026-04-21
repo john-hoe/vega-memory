@@ -24,6 +24,10 @@ import {
   type ReconciliationAlertInput,
   type ReconciliationAlertCooldown
 } from "../reconciliation/alert.js";
+import {
+  createPerDimensionAlertDispatcher,
+  type AlertDispatcher
+} from "../reconciliation/alert-dispatcher.js";
 import { ReconciliationOrchestrator } from "../reconciliation/orchestrator.js";
 import type { ReconciliationDimension, ReconciliationReport } from "../reconciliation/report.js";
 import { resolveConfiguredEncryptionKey } from "../security/keychain.js";
@@ -55,6 +59,7 @@ interface TopAccessedMemoryRow {
 
 export interface DailyMaintenanceOptions {
   notificationManager?: NotificationManager;
+  alertDispatcher?: AlertDispatcher;
   rssService?: RSSService;
   contentFetcher?: ContentFetcher;
   contentDistiller?: ContentDistiller;
@@ -134,18 +139,69 @@ const resolveReconciliationFlapCooldownMs = (env: NodeJS.ProcessEnv = process.en
 const resolveReconciliationSemanticSampleSize = (env: NodeJS.ProcessEnv = process.env): number =>
   resolvePositiveInteger(env[RECONCILIATION_SEMANTIC_SAMPLE_SIZE_ENV], 50);
 
-const matchesCronField = (
-  token: string,
-  value: number,
+const parseCronLiteral = (
+  value: string,
   minimum: number,
   maximum: number
-): boolean => {
-  if (token === "*") {
+): number | null => {
+  if (!/^\d+$/.test(value)) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+
+  if (parsed < minimum || parsed > maximum) {
+    return null;
+  }
+
+  return parsed;
+};
+
+const matchesCronField = (fieldSpec: string, currentValue: number, minimum: number, maximum: number): boolean => {
+  if (fieldSpec === "*") {
     return true;
   }
 
-  const parsed = Number.parseInt(token, 10);
-  return String(parsed) === token && parsed >= minimum && parsed <= maximum && parsed === value;
+  for (const rawPart of fieldSpec.split(",")) {
+    const part = rawPart.trim();
+
+    if (part === "*") {
+      return true;
+    }
+
+    // Support */N step syntax in addition to literals, ranges, and comma lists.
+    const stepMatch = /^\*\/(\d+)$/.exec(part);
+    if (stepMatch) {
+      const step = parseCronLiteral(stepMatch[1]!, 1, maximum);
+
+      if (step !== null && currentValue % step === 0) {
+        return true;
+      }
+
+      continue;
+    }
+
+    const rangeMatch = /^(\d+)-(\d+)$/.exec(part);
+    if (rangeMatch) {
+      const lower = parseCronLiteral(rangeMatch[1]!, minimum, maximum);
+      const upper = parseCronLiteral(rangeMatch[2]!, minimum, maximum);
+
+      if (lower !== null && upper !== null && lower <= upper) {
+        if (currentValue >= lower && currentValue <= upper) {
+          return true;
+        }
+      }
+
+      continue;
+    }
+
+    const literal = parseCronLiteral(part, minimum, maximum);
+    if (literal !== null && literal === currentValue) {
+      return true;
+    }
+  }
+
+  return false;
 };
 
 const matchesCronSchedule = (expression: string, value: Date): boolean => {
@@ -321,44 +377,54 @@ const toReconciliationAlertInputs = (
   });
 };
 
-const formatReconciliationAlertTitle = (alert: ReconciliationAlert): string =>
-  `Reconciliation: ${alert.dimension} at ${(alert.mismatch_rate * 100).toFixed(1)}% mismatch`;
+interface ReconciliationAlertSummaryNotifier {
+  notifyWarning(title: string, detail: string): Promise<void>;
+}
 
-const dispatchReconciliationAlerts = async (args: {
-  alerts: ReconciliationAlert[];
-  notificationManager: NotificationManager;
+const formatReconciliationAlertSummary = (alerts: ReadonlyArray<ReconciliationAlert>): string =>
+  `Reconciliation found ${alerts.length} alert(s) across dimensions: ${[
+    ...new Set(alerts.map((alert) => alert.dimension))
+  ].join(", ")}`;
+
+export const dispatchReconciliationAlerts = async (args: {
+  alerts: ReadonlyArray<ReconciliationAlert>;
+  alertDispatcher: AlertDispatcher;
+  notificationManager?: ReconciliationAlertSummaryNotifier;
   cooldown: ReconciliationAlertCooldown;
   cooldownMs: number;
   now: number;
 }): Promise<number> => {
-  let dispatched = 0;
+  const dispatchableAlerts = args.alerts.filter((alert) =>
+    args.cooldown.shouldDispatch(alert, args.now, args.cooldownMs)
+  );
 
-  for (const alert of args.alerts) {
-    if (!args.cooldown.shouldDispatch(alert, args.now, args.cooldownMs)) {
-      continue;
-    }
+  if (dispatchableAlerts.length === 0) {
+    return 0;
+  }
 
+  try {
+    await args.alertDispatcher.dispatch(dispatchableAlerts, new Date(args.now));
+  } catch (error) {
+    logError(`Reconciliation alert file dispatch failed: ${getErrorMessage(error)}`);
+    return 0;
+  }
+
+  for (const alert of dispatchableAlerts) {
+    args.cooldown.record(alert, args.now);
+  }
+
+  if (args.notificationManager !== undefined) {
     try {
-      if (alert.severity === "critical") {
-        await args.notificationManager.notifyError(
-          formatReconciliationAlertTitle(alert),
-          alert.summary
-        );
-      } else {
-        await args.notificationManager.notifyWarning(
-          formatReconciliationAlertTitle(alert),
-          alert.summary
-        );
-      }
-
-      args.cooldown.record(alert, args.now);
-      dispatched += 1;
+      await args.notificationManager.notifyWarning(
+        "Reconciliation Alerts",
+        formatReconciliationAlertSummary(dispatchableAlerts)
+      );
     } catch (error) {
-      logError(`Reconciliation alert dispatch failed: ${getErrorMessage(error)}`);
+      logError(`Reconciliation alert summary notification failed: ${getErrorMessage(error)}`);
     }
   }
 
-  return dispatched;
+  return dispatchableAlerts.length;
 };
 
 const runReconciliation = async (args: {
@@ -728,27 +794,29 @@ export async function dailyMaintenance(
         );
         log("vega_reconciliation_runs_total status=success count=1");
 
-        if (notificationManager !== undefined) {
-          const alerts = evaluateReconciliationAlerts(
-            alertInputs,
-            options.reconciliationAlertConfig
-          );
-          const dispatched = await dispatchReconciliationAlerts({
-            alerts,
-            notificationManager,
-            cooldown: reconciliationAlertCooldown,
-            cooldownMs: resolveReconciliationFlapCooldownMs(),
-            now: reconciliationRunAt
-          });
+        const alerts = evaluateReconciliationAlerts(
+          alertInputs,
+          options.reconciliationAlertConfig
+        );
+        const alertBaseDir = join(getDataDir(config), "alerts", "reconciliation");
+        const alertDispatcher =
+          options.alertDispatcher ?? createPerDimensionAlertDispatcher(alertBaseDir);
+        const dispatched = await dispatchReconciliationAlerts({
+          alerts,
+          alertDispatcher,
+          notificationManager,
+          cooldown: reconciliationAlertCooldown,
+          cooldownMs: resolveReconciliationFlapCooldownMs(),
+          now: reconciliationRunAt
+        });
 
-          if (dispatched > 0) {
-            preserveAlert = true;
-          }
-
-          log(
-            `Reconciliation alert evaluation finished with ${alerts.length} alerts and ${dispatched} dispatched`
-          );
+        if (dispatched > 0) {
+          preserveAlert = true;
         }
+
+        log(
+          `Reconciliation alert evaluation finished with ${alerts.length} alerts and ${dispatched} dispatched`
+        );
       } catch (error) {
         logError(`reconciliation_auto_trigger_failed: ${getErrorMessage(error)}`);
         log("vega_reconciliation_failures_total count=1");

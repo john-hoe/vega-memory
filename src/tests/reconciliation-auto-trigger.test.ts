@@ -13,6 +13,7 @@ import { listReconciliationFindings } from "../reconciliation/findings-store.js"
 import { dailyMaintenance } from "../scheduler/tasks.js";
 
 const AUTO_ENABLED_ENV = "VEGA_RECONCILIATION_AUTO_ENABLED";
+const SCHEDULE_CRON_ENV = "VEGA_RECONCILIATION_SCHEDULE_CRON";
 
 const createConfig = (dbPath: string, cacheDbPath: string): VegaConfig => ({
   dbPath,
@@ -258,6 +259,77 @@ test("dailyMaintenance logs reconciliation failures and continues when the auto-
     );
   } finally {
     console.error = originalConsoleError;
+    harness.close();
+  }
+});
+
+test("dailyMaintenance honors */15 reconciliation cron schedules", async () => {
+  const harness = createHarness();
+  let runCount = 0;
+
+  try {
+    await withEnv(AUTO_ENABLED_ENV, "true", async () => {
+      await withEnv(SCHEDULE_CRON_ENV, "*/15 * * * *", async () => {
+        await dailyMaintenance(
+          harness.repository,
+          harness.compactService,
+          harness.memoryService,
+          harness.config,
+          {
+            now: () => Date.parse("2026-04-21T04:15:00.000Z"),
+            resolveEncryptionKey: async () => undefined,
+            runReconciliation: async () => {
+              runCount += 1;
+              return {
+                schema_version: "1.0",
+                run_id: `run-${runCount}`,
+                window_start: 0,
+                window_end: 0,
+                dimensions: [],
+                totals: {
+                  pass: 0,
+                  fail: 0,
+                  not_implemented: 0,
+                  error: 0
+                },
+                generated_at: Date.parse("2026-04-21T04:15:00.000Z")
+              };
+            }
+          }
+        );
+
+        await dailyMaintenance(
+          harness.repository,
+          harness.compactService,
+          harness.memoryService,
+          harness.config,
+          {
+            now: () => Date.parse("2026-04-21T04:07:00.000Z"),
+            resolveEncryptionKey: async () => undefined,
+            runReconciliation: async () => {
+              runCount += 1;
+              return {
+                schema_version: "1.0",
+                run_id: `run-${runCount}`,
+                window_start: 0,
+                window_end: 0,
+                dimensions: [],
+                totals: {
+                  pass: 0,
+                  fail: 0,
+                  not_implemented: 0,
+                  error: 0
+                },
+                generated_at: Date.parse("2026-04-21T04:07:00.000Z")
+              };
+            }
+          }
+        );
+      });
+    });
+
+    assert.equal(runCount, 1);
+  } finally {
     harness.close();
   }
 });
