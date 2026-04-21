@@ -244,6 +244,19 @@ promises.writeFile("/tmp/x", "y");`,
   assert.equal(matches.some((match) => match.includes("promises.writeFile")), true);
 });
 
+test("readonly scanner flags fsp alias for fs.promises write calls", () => {
+  const matches = collectReadOnlyGuardViolations(
+    `import { promises as fsp } from "node:fs";
+async function leak() {
+  await fsp.writeFile("/tmp/x", "y");
+}`,
+    "mock-fsp.ts"
+  );
+
+  assert.ok(matches.length >= 1, `expected at least 1 violation, got ${matches.length}`);
+  assert.equal(matches.some((match) => match.includes("writeFile")), true);
+});
+
 test("readonly scanner flags open calls that use write-like flags", () => {
   const matches = collectReadOnlyGuardViolations(
     `import { open } from "node:fs";

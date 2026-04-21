@@ -11,6 +11,7 @@
     "docker:build": "docker build -t vega-memory .",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
+    "lint:readonly-guard": "npx -y -p eslint@8.57.0 -p @typescript-eslint/parser@7.18.0 -c 'ESLINT_BIN=\"$(command -v eslint)\"; PARSER=\"$(cd \"$(dirname \"$ESLINT_BIN\")/..\" && pwd)/@typescript-eslint/parser/dist/index.js\"; eslint src/retrieval/sources/host-memory-file.ts src/retrieval/sources/host-memory-file-fts.ts src/retrieval/sources/host-memory-file-paths.ts src/retrieval/sources/host-memory-file-parser.ts --no-eslintrc --config .eslintrc.cjs --resolve-plugins-relative-to node_modules --parser \"$PARSER\"'",
     "test": "node --test dist/tests/*.test.js dist/tests/**/*.test.js"
   },
   "dependencies": {
