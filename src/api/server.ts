@@ -435,7 +435,7 @@ export function createAPIServer(
   app.use(["/ingest_event", "/context_resolve", "/usage_ack"], requireAuthorizedHttpRoute);
   const ingestHandler = createIngestEventHttpHandler(db);
   app.post("/ingest_event", (req, res) => {
-    const flag = loadFeatureFlagRegistry(DEFAULT_FEATURE_FLAG_REGISTRY_PATH).find(({ id }) => id === "canary.api-ingest-v2");
+    const flag = loadFeatureFlagRegistry(DEFAULT_FEATURE_FLAG_REGISTRY_PATH).find(({ id }) => id === "canary-api-ingest-v2");
     const variant = flag === undefined ? "off" : evaluateFeatureFlag(flag, { surface: extractSurfaceFromHeader(req) || "unknown", intent: "ingest" }).variant;
     res.setHeader("X-Vega-Canary", variant === "on" ? "api-ingest-v2-on" : "off");
     return ingestHandler(req, res);
