@@ -30,6 +30,8 @@ function createCandidate(
     promotion_score: 0,
     visibility_gated: true,
     candidate_state: "pending",
+    raw_dedup_key: null,
+    semantic_fingerprint: null,
     created_at: NOW - 100,
     updated_at: NOW - 100,
     ...overrides
@@ -106,7 +108,7 @@ test("evaluator leaves ack history undefined when no ack-capable store is config
 
 test("evaluator forwards recent sufficient ack history when the store exposes a listRecent reader", () => {
   const policy = createDefaultPromotionPolicy({
-    age_threshold_ms: 100_000
+    rules: { age_threshold_ms: 100_000 }
   });
   const ackStore = {
     put() {

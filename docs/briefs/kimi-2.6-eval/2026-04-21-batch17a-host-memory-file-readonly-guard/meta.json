@@ -1,0 +1,9 @@
+{
+  "task_id": "2026-04-21-batch17a-host-memory-file-readonly-guard",
+  "brief_path": "/Users/johnmacmini/workspace/vega-memory/docs/briefs/2026-04-21-batch17a-host-memory-file-readonly-guard.md",
+  "result_path": "/Users/johnmacmini/workspace/vega-memory/docs/briefs/kimi-2.6-eval/2026-04-21-batch17a-host-memory-file-readonly-guard/result.md",
+  "prompt_path": "/Users/johnmacmini/workspace/vega-memory/docs/briefs/kimi-2.6-eval/2026-04-21-batch17a-host-memory-file-readonly-guard/prompt.txt",
+  "prepared_at_epoch": 1776740046,
+  "prepared_at_iso": "2026-04-21T02:54:06Z",
+  "runner": "kimi-2.6"
+}

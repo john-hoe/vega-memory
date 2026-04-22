@@ -1,11 +1,11 @@
-import type { HostEventEnvelopeV1 } from "../core/contracts/envelope.js";
+import type { HostEventEnvelopeTransportV1 } from "../core/contracts/envelope.js";
 import type { IntentRequest } from "../core/contracts/intent.js";
 import type { UsageAck } from "../core/contracts/usage-ack.js";
 import type { IngestEventResponse } from "../ingestion/ingest-event-handler.js";
 import type { ContextResolveResponse } from "../retrieval/orchestrator.js";
 import type { UsageAckResponse } from "../usage/usage-ack-handler.js";
 
-export type IngestEventRequest = HostEventEnvelopeV1;
+export type IngestEventRequest = HostEventEnvelopeTransportV1;
 export type ContextResolveRequest = IntentRequest;
 export type UsageAckRequest = UsageAck;
 

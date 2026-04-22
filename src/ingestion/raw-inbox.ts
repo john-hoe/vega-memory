@@ -1,5 +1,5 @@
-import type { HostEventEnvelopeV1 } from "../core/contracts/envelope.js";
-import { HOST_EVENT_ENVELOPE_V1 } from "../core/contracts/envelope.js";
+import type { HostEventEnvelopeTransportV1 } from "../core/contracts/envelope.js";
+import { HOST_EVENT_ENVELOPE_TRANSPORT_V1 } from "../core/contracts/envelope.js";
 import type { DatabaseAdapter } from "../db/adapter.js";
 
 export const RAW_INBOX_TABLE = "raw_inbox";
@@ -120,8 +120,8 @@ export function applyRawInboxMigration(db: DatabaseAdapter): void {
   }
 }
 
-export function insertRawEvent(db: DatabaseAdapter, envelope: HostEventEnvelopeV1): InsertResult {
-  const parsed = HOST_EVENT_ENVELOPE_V1.parse(envelope);
+export function insertRawEvent(db: DatabaseAdapter, envelope: HostEventEnvelopeTransportV1): InsertResult {
+  const parsed = HOST_EVENT_ENVELOPE_TRANSPORT_V1.parse(envelope);
   const selectByEventId = db.prepare<[string], EventIdRow>(
     `SELECT received_at FROM ${RAW_INBOX_TABLE} WHERE event_id = ?`
   );

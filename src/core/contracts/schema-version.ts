@@ -1,7 +1,7 @@
 import type { ZodType } from "zod";
 
 import { BUNDLE_SCHEMA } from "./bundle.js";
-import { HOST_EVENT_ENVELOPE_V1 } from "./envelope.js";
+import { HOST_EVENT_ENVELOPE_TRANSPORT_V1 } from "./envelope.js";
 
 export interface VersionedValidator<T> {
   version: string;
@@ -65,7 +65,7 @@ export function createDefaultEnvelopeDispatcher(): VersionedDispatcher {
   const dispatcher = new VersionedDispatcher();
   dispatcher.register({
     version: "1.0",
-    schema: HOST_EVENT_ENVELOPE_V1
+    schema: HOST_EVENT_ENVELOPE_TRANSPORT_V1
   });
   return dispatcher;
 }

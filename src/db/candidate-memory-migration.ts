@@ -26,10 +26,12 @@ const CANDIDATE_MEMORY_DDL = `
     promotion_score REAL NOT NULL DEFAULT 0,
     visibility_gated INTEGER NOT NULL DEFAULT 1,
       candidate_state TEXT NOT NULL DEFAULT '${DEFAULT_CANDIDATE_STATE}',
-      source_kind TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )
+    source_kind TEXT,
+    raw_dedup_key TEXT,
+    semantic_fingerprint TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )
 `;
 
 // Columns that a pre-existing partial schema may be missing. Each entry must
@@ -44,13 +46,17 @@ const ADDITIVE_COLUMNS: ReadonlyArray<readonly [string, string]> = [
     "candidate_state",
     `candidate_state TEXT NOT NULL DEFAULT '${DEFAULT_CANDIDATE_STATE}'`
   ],
-  ["source_kind", "source_kind TEXT"]
+  ["source_kind", "source_kind TEXT"],
+  ["raw_dedup_key", "raw_dedup_key TEXT"],
+  ["semantic_fingerprint", "semantic_fingerprint TEXT"]
 ];
 
 const CANDIDATE_MEMORY_INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_candidate_memories_project_created ON ${CANDIDATE_MEMORIES_TABLE}(project, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_candidate_memories_type ON ${CANDIDATE_MEMORIES_TABLE}(type)`,
-  `CREATE INDEX IF NOT EXISTS idx_candidate_memories_promotion_score ON ${CANDIDATE_MEMORIES_TABLE}(promotion_score DESC)`
+  `CREATE INDEX IF NOT EXISTS idx_candidate_memories_promotion_score ON ${CANDIDATE_MEMORIES_TABLE}(promotion_score DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_candidate_memories_raw_dedup_key ON ${CANDIDATE_MEMORIES_TABLE}(raw_dedup_key)`,
+  `CREATE INDEX IF NOT EXISTS idx_candidate_memories_semantic_fingerprint ON ${CANDIDATE_MEMORIES_TABLE}(semantic_fingerprint)`
 ] as const;
 
 export function applyCandidateMemoryMigration(db: DatabaseAdapter): void {

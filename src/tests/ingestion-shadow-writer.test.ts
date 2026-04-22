@@ -125,7 +125,7 @@ test("shadow writer returns an error outcome instead of throwing", () => {
     assert.equal(outcome.executed, true);
     assert.equal(outcome.accepted, false);
     assert.equal(outcome.reason, "error");
-    assert.match(outcome.error ?? "", /surface/i);
+    assert.match(outcome.error ?? "", /raw_inbox|no such table/i);
   } finally {
     if (previous === undefined) {
       delete process.env[FEATURE_FLAG];

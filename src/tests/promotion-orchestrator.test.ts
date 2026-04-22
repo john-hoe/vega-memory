@@ -110,7 +110,7 @@ test("promoteManual promotes the candidate, preserves the id, and records audit 
         memory_id: candidate.id,
         action: "promote",
         trigger: "manual",
-        from_state: "candidate",
+        from_state: "pending",
         to_state: "promoted",
         policy_name: "test-policy",
         policy_version: "v-test",
@@ -145,10 +145,15 @@ test("demoteManual reuses the same id when moving promoted memories back to held
     assert.equal(harness.repository.getMemory(candidate.id), null);
     assert.equal(harness.candidateRepository.findById(candidate.id)?.id, candidate.id);
     assert.equal(harness.candidateRepository.findById(candidate.id)?.candidate_state, "held");
+    const audits = harness.auditStore.listByMemory(candidate.id);
     assert.deepEqual(
-      harness.auditStore.listByMemory(candidate.id).map((entry) => entry.action),
+      audits.map((entry) => entry.action),
       ["demote", "promote"]
     );
+    assert.equal(audits[0]?.from_state, "promoted");
+    assert.equal(audits[0]?.to_state, "held");
+    assert.equal(audits[1]?.from_state, "pending");
+    assert.equal(audits[1]?.to_state, "promoted");
   } finally {
     harness.close();
   }
@@ -172,7 +177,10 @@ test("evaluateAndAct marks candidates ready on policy promote without promoting 
     assert.equal(result.status, "kept");
     assert.equal(harness.repository.getMemory(candidate.id), null);
     assert.equal(harness.candidateRepository.findById(candidate.id)?.candidate_state, "ready");
-    assert.equal(harness.auditStore.listByMemory(candidate.id)[0]?.action, "promote");
+    const audit = harness.auditStore.listByMemory(candidate.id)[0];
+    assert.equal(audit?.action, "promote");
+    assert.equal(audit?.from_state, "pending");
+    assert.equal(audit?.to_state, "ready");
   } finally {
     harness.close();
   }
@@ -306,8 +314,8 @@ test("promoteManual keeps candidates with invalid memory types and records an au
       memory_id: candidate.id,
       action: "keep",
       trigger: "manual",
-      from_state: "candidate",
-      to_state: "candidate",
+      from_state: "pending",
+      to_state: "pending",
       policy_name: "test-policy",
       policy_version: "v-test",
       reason: "invalid_type",

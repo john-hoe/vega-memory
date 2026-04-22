@@ -22,25 +22,32 @@ claude-code-vega/
   .env.example
 ```
 
-Entry-point sketch:
+Entry-point sketch — host is thin; Vega owns memory intelligence:
 
 ```ts
-import { VegaClient } from "vega-memory";
+import { createEnvelopeBuilder, validateTransportEnvelope } from "vega-memory";
 
-const client = new VegaClient({
-  baseUrl: process.env.VEGA_BASE_URL ?? "http://127.0.0.1:3271",
-  apiKey: process.env.VEGA_API_KEY
-});
+export async function onClaudeTurn(rawEvent, sessionId) {
+  // Host responsibility: build a transport envelope
+  const envelope = createEnvelopeBuilder({
+    surface: "claude",
+    session_id: sessionId,
+    role: rawEvent.role,
+    event_type: rawEvent.type,
+    project: process.env.VEGA_PROJECT ?? null,
+    cwd: process.cwd()
+  })
+    .setPayload(rawEvent.payload)
+    .build();
 
-export async function onClaudeTurn(envelope, intentRequest) {
-  await client.ingestEvent(envelope);
-  const bundle = await client.contextResolve(intentRequest);
-  return { bundle, ack: (sufficiency) => client.usageAck({
-    checkpoint_id: bundle.checkpoint_id,
-    bundle_digest: bundle.bundle_digest,
-    sufficiency,
-    host_tier: "T1"
-  }) };
+  // Host responsibility: validate before sending
+  const v = validateTransportEnvelope(envelope);
+  if (!v.valid) throw new Error(`Invalid envelope: ${v.errors.join(", ")}`);
+
+  // Host responsibility: store / retrieve / use
+  await vegaClient.ingestEvent(envelope);
+  const bundle = await vegaClient.contextResolve(rawEvent.intent);
+  return { bundle };
 }
 ```
 

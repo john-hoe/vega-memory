@@ -1,0 +1,24 @@
+你现在要处理一份 brief。
+
+Brief 路径：
+/Users/johnmacmini/workspace/vega-memory/docs/briefs/2026-04-21-batch20a-canary-rollout-framework.md
+
+结果文件：
+/Users/johnmacmini/workspace/vega-memory/docs/briefs/glm-5.1-eval/2026-04-21-batch20a-canary-rollout-framework/result.md
+
+要求：
+1. 先读取 brief 原文。
+2. 不要扩 scope。
+3. 不要修改原始 brief 文件。
+4. 如果这是 [PLANNING] brief，只输出执行计划，不写代码。
+5. 如果这是叶子 brief，就按 brief 执行。
+6. 把最终结果写入：
+   /Users/johnmacmini/workspace/vega-memory/docs/briefs/glm-5.1-eval/2026-04-21-batch20a-canary-rollout-framework/result.md
+7. 最终结果必须包含：
+   - task id
+   - changed files
+   - commands run
+   - acceptance criteria status
+   - remaining risks
+8. 如果 brief 有歧义，先指出，再给出最小修正方案。
+9. 不允许跳过验证命令，不允许假设测试通过。

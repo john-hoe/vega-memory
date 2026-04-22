@@ -24,6 +24,8 @@ function createCandidate(overrides: Partial<CandidateMemoryRecord> = {}): Candid
     promotion_score: 0,
     visibility_gated: true,
     candidate_state: "pending",
+    raw_dedup_key: null,
+    semantic_fingerprint: null,
     created_at: NOW,
     updated_at: NOW,
     ...overrides
@@ -77,7 +79,7 @@ test("unrelated acks cannot promote a candidate with no lineage-bound validation
     const candidate = createCandidate();
     const evaluator = createPromotionEvaluator({
       policy: createDefaultPromotionPolicy({
-        age_threshold_ms: 1_000_000
+        rules: { age_threshold_ms: 1_000_000 }
       }),
       ackStore: createAckStore(db),
       now: () => NOW + 100
@@ -120,7 +122,7 @@ test("lineage-bound acks promote once three sufficient sessions validate the sam
     const candidate = createCandidate();
     const evaluator = createPromotionEvaluator({
       policy: createDefaultPromotionPolicy({
-        age_threshold_ms: 1_000_000
+        rules: { age_threshold_ms: 1_000_000 }
       }),
       ackStore: createAckStore(db),
       now: () => NOW + 100
@@ -164,7 +166,7 @@ test("vega_memory lineage promotes when acks bind to promoted memory id", () => 
     const candidate = createCandidate();
     const evaluator = createPromotionEvaluator({
       policy: createDefaultPromotionPolicy({
-        age_threshold_ms: 1_000_000
+        rules: { age_threshold_ms: 1_000_000 }
       }),
       ackStore: createAckStore(db),
       now: () => NOW + 100
@@ -208,7 +210,7 @@ test("mixed lineage and unrelated acks only count the lineage-bound subset", () 
     const candidate = createCandidate();
     const evaluator = createPromotionEvaluator({
       policy: createDefaultPromotionPolicy({
-        age_threshold_ms: 1_000_000
+        rules: { age_threshold_ms: 1_000_000 }
       }),
       ackStore: createAckStore(db),
       now: () => NOW + 100

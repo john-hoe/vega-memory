@@ -22,6 +22,8 @@ function createCandidate(
     promotion_score: 0,
     visibility_gated: true,
     candidate_state: "pending",
+    raw_dedup_key: null,
+    semantic_fingerprint: null,
     created_at: NOW - 1_000,
     updated_at: NOW - 1_000,
     ...overrides
@@ -70,7 +72,7 @@ test("manual trigger demotes already-promoted memories through the same policy e
 
 test("discarded candidates short-circuit to keep before age and ack rules", () => {
   const policy = createDefaultPromotionPolicy({
-    age_threshold_ms: 1
+    rules: { age_threshold_ms: 1 }
   });
 
   const decision = policy.decide({
@@ -93,7 +95,7 @@ test("discarded candidates short-circuit to keep before age and ack rules", () =
 
 test("old enough candidates are promoted by the age rule", () => {
   const policy = createDefaultPromotionPolicy({
-    age_threshold_ms: 7 * 24 * 60 * 60 * 1_000
+    rules: { age_threshold_ms: 7 * 24 * 60 * 60 * 1_000 }
   });
 
   const decision = policy.decide({
@@ -111,7 +113,7 @@ test("old enough candidates are promoted by the age rule", () => {
 
 test("ack signal promotes younger candidates when the distinct-session threshold is met", () => {
   const policy = createDefaultPromotionPolicy({
-    age_threshold_ms: 30 * 24 * 60 * 60 * 1_000
+    rules: { age_threshold_ms: 30 * 24 * 60 * 60 * 1_000 }
   });
 
   const decision = policy.decide({
@@ -135,7 +137,7 @@ test("ack signal promotes younger candidates when the distinct-session threshold
 
 test("fallback stays on hold when neither age nor ack rules say promote", () => {
   const policy = createDefaultPromotionPolicy({
-    age_threshold_ms: 30 * 24 * 60 * 60 * 1_000
+    rules: { age_threshold_ms: 30 * 24 * 60 * 60 * 1_000 }
   });
 
   const decision = policy.decide({

@@ -1,7 +1,13 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 
-import { parseEnvelope, safeParseEnvelope } from "../core/contracts/envelope.js";
+import {
+  parseEnvelope,
+  safeParseEnvelope,
+  safeParseTransportEnvelope,
+  parseTransportEnvelope
+} from "../core/contracts/envelope.js";
+import { normalizeEnvelope } from "../ingestion/normalize-envelope.js";
 
 const createEnvelope = (): Record<string, unknown> => ({
   schema_version: "1.0",
@@ -32,7 +38,7 @@ const createEnvelope = (): Record<string, unknown> => ({
   source_kind: "vega_memory"
 });
 
-describe("HOST_EVENT_ENVELOPE_V1", () => {
+describe("HOST_EVENT_ENVELOPE_V1 (canonical)", () => {
   it("accepts a complete valid envelope", () => {
     const result = safeParseEnvelope(createEnvelope());
 
@@ -91,5 +97,109 @@ describe("HOST_EVENT_ENVELOPE_V1", () => {
 
     assert.equal(missingResult.success, true);
     assert.equal(invalidResult.success, false);
+  });
+});
+
+describe("HOST_EVENT_ENVELOPE_TRANSPORT_V1", () => {
+  it("accepts free-string surface, role, and event_type", () => {
+    const envelope = createEnvelope();
+    envelope.surface = "claude-code";
+    envelope.role = "developer";
+    envelope.event_type = "custom_event";
+
+    const result = safeParseTransportEnvelope(envelope);
+
+    assert.equal(result.success, true);
+    if (!result.success) {
+      assert.fail("expected safeParseTransportEnvelope to succeed");
+    }
+
+    assert.equal(result.data.surface, "claude-code");
+    assert.equal(result.data.role, "developer");
+    assert.equal(result.data.event_type, "custom_event");
+  });
+
+  it("rejects a non-uuid event_id at transport level", () => {
+    const envelope = createEnvelope();
+    envelope.event_id = "not-a-uuid";
+
+    const result = safeParseTransportEnvelope(envelope);
+
+    assert.equal(result.success, false);
+  });
+
+  it("preserves source_kind validation at transport level", () => {
+    const withoutSourceKind = createEnvelope();
+    delete withoutSourceKind.source_kind;
+
+    const missingResult = safeParseTransportEnvelope(withoutSourceKind);
+
+    const invalidSourceKind = createEnvelope();
+    invalidSourceKind.source_kind = "external";
+
+    const invalidResult = safeParseTransportEnvelope(invalidSourceKind);
+
+    assert.equal(missingResult.success, true);
+    assert.equal(invalidResult.success, false);
+  });
+});
+
+describe("normalizeEnvelope", () => {
+  it("passes through canonical values unchanged", () => {
+    const envelope = parseTransportEnvelope(createEnvelope());
+    const normalized = normalizeEnvelope(envelope);
+
+    assert.equal(normalized.surface, "claude");
+    assert.equal(normalized.role, "user");
+    assert.equal(normalized.event_type, "message");
+    assert.equal(normalized.warnings.length, 0);
+  });
+
+  it("falls back unknown surface to 'unknown' with warning", () => {
+    const envelope = parseTransportEnvelope({
+      ...createEnvelope(),
+      surface: "claude-code"
+    });
+    const normalized = normalizeEnvelope(envelope);
+
+    assert.equal(normalized.surface, "unknown");
+    assert.equal(normalized.warnings.length, 1);
+    assert.ok(normalized.warnings[0]?.includes("claude-code"));
+  });
+
+  it("falls back unknown role to 'unknown' with warning", () => {
+    const envelope = parseTransportEnvelope({
+      ...createEnvelope(),
+      role: "developer"
+    });
+    const normalized = normalizeEnvelope(envelope);
+
+    assert.equal(normalized.role, "unknown");
+    assert.equal(normalized.warnings.length, 1);
+    assert.ok(normalized.warnings[0]?.includes("developer"));
+  });
+
+  it("falls back unknown event_type to 'unknown' with warning", () => {
+    const envelope = parseTransportEnvelope({
+      ...createEnvelope(),
+      event_type: "custom_event"
+    });
+    const normalized = normalizeEnvelope(envelope);
+
+    assert.equal(normalized.event_type, "unknown");
+    assert.equal(normalized.warnings.length, 1);
+    assert.ok(normalized.warnings[0]?.includes("custom_event"));
+  });
+
+  it("accumulates multiple warnings for multiple unknown fields", () => {
+    const envelope = parseTransportEnvelope({
+      ...createEnvelope(),
+      surface: "claude-code",
+      role: "developer",
+      event_type: "custom_event"
+    });
+    const normalized = normalizeEnvelope(envelope);
+
+    assert.equal(normalized.warnings.length, 3);
   });
 });

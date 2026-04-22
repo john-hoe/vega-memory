@@ -1,2 +1,1 @@
-Progress: [░░░░░] 0% (0/3 tasks completed)
-Next: inspect current runtime gaps around wiki synthesis and dashboard visibility.
+Next: review the current Phase 5 worktree, stage only the intended Phase 5 code/spec/test/status changes (excluding junk like .DS_Store), create one intentional Lore commit, then push `main` to the GitHub `john-hoe/vega-memory` repository.

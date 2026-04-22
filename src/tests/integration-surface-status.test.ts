@@ -9,7 +9,8 @@ import { buildIntegrationSurfaceStatuses } from "../core/integration-surface-sta
 import type { Memory } from "../core/types.js";
 import { Repository } from "../db/repository.js";
 
-const timestamp = "2026-04-14T08:00:00.000Z";
+const recentTimestamp = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000).toISOString();
+const staleTimestamp = new Date(Date.now() - 40 * 24 * 60 * 60 * 1_000).toISOString();
 
 const createConfig = (dbPath: string, overrides: Partial<VegaConfig> = {}): VegaConfig => ({
   dbPath,
@@ -42,9 +43,9 @@ const createStoredMemory = (id: string, overrides: Partial<Memory> = {}): Memory
   importance: 0.5,
   source: "explicit",
   tags: ["status"],
-  created_at: timestamp,
-  updated_at: timestamp,
-  accessed_at: timestamp,
+  created_at: recentTimestamp,
+  updated_at: recentTimestamp,
+  accessed_at: recentTimestamp,
   access_count: 0,
   status: "active",
   verified: "verified",
@@ -90,7 +91,7 @@ test("integration surface statuses treat tagged recent activity as active and le
     );
     repository.createMemory(
       createStoredMemory("legacy-memory", {
-        updated_at: "2026-03-20T08:00:00.000Z",
+        updated_at: staleTimestamp,
         source_context: {
           actor: "legacy",
           channel: "mcp",
@@ -101,7 +102,7 @@ test("integration surface statuses treat tagged recent activity as active and le
       })
     );
     repository.logPerformance({
-      timestamp,
+      timestamp: recentTimestamp,
       tenant_id: null,
       operation: "recall",
       detail: JSON.stringify({

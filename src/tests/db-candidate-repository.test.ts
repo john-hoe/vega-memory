@@ -108,8 +108,10 @@ test("list sorts by created_at desc and supports project, type, and since filter
       visibility_gated,
       candidate_state,
       created_at,
-      updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      updated_at,
+      raw_dedup_key,
+      semantic_fingerprint
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       "cand-1",
       "first",
       "observation",
@@ -122,7 +124,9 @@ test("list sorts by created_at desc and supports project, type, and since filter
       1,
       "held",
       1_000,
-      1_000
+      1_000,
+      null,
+      null
     );
     db.run(
       `INSERT INTO ${CANDIDATE_MEMORIES_TABLE} (
@@ -138,8 +142,10 @@ test("list sorts by created_at desc and supports project, type, and since filter
       visibility_gated,
       candidate_state,
       created_at,
-      updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      updated_at,
+      raw_dedup_key,
+      semantic_fingerprint
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       "cand-2",
       "second",
       "pitfall",
@@ -152,7 +158,9 @@ test("list sorts by created_at desc and supports project, type, and since filter
       0,
       "ready",
       2_000,
-      2_000
+      2_000,
+      null,
+      null
     );
     db.run(
       `INSERT INTO ${CANDIDATE_MEMORIES_TABLE} (
@@ -168,8 +176,10 @@ test("list sorts by created_at desc and supports project, type, and since filter
       visibility_gated,
       candidate_state,
       created_at,
-      updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      updated_at,
+      raw_dedup_key,
+      semantic_fingerprint
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       "cand-3",
       "third",
       "observation",
@@ -182,7 +192,9 @@ test("list sorts by created_at desc and supports project, type, and since filter
       0,
       "discarded",
       3_000,
-      3_000
+      3_000,
+      null,
+      null
     );
 
     assert.deepEqual(repository.list(), [
@@ -199,6 +211,8 @@ test("list sorts by created_at desc and supports project, type, and since filter
         visibility_gated: false,
         candidate_state: "discarded",
         source_kind: "vega_memory",
+        raw_dedup_key: null,
+        semantic_fingerprint: null,
         created_at: 3_000,
         updated_at: 3_000
       },
@@ -215,6 +229,8 @@ test("list sorts by created_at desc and supports project, type, and since filter
         visibility_gated: false,
         candidate_state: "ready",
         source_kind: "vega_memory",
+        raw_dedup_key: null,
+        semantic_fingerprint: null,
         created_at: 2_000,
         updated_at: 2_000
       },
@@ -231,6 +247,8 @@ test("list sorts by created_at desc and supports project, type, and since filter
         visibility_gated: true,
         candidate_state: "held",
         source_kind: "vega_memory",
+        raw_dedup_key: null,
+        semantic_fingerprint: null,
         created_at: 1_000,
         updated_at: 1_000
       }

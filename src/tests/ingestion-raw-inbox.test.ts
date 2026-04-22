@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { HostEventEnvelopeV1 } from "../core/contracts/envelope.js";
+import type { HostEventEnvelopeTransportV1 } from "../core/contracts/envelope.js";
 import { SQLiteAdapter } from "../db/sqlite-adapter.js";
 import {
   applyRawInboxMigration,
@@ -11,7 +11,7 @@ import {
   RAW_INBOX_TABLE
 } from "../ingestion/raw-inbox.js";
 
-const createEnvelope = (overrides: Partial<HostEventEnvelopeV1> = {}): HostEventEnvelopeV1 => ({
+const createEnvelope = (overrides: Partial<HostEventEnvelopeTransportV1> = {}): HostEventEnvelopeTransportV1 => ({
   schema_version: "1.0",
   event_id: "11111111-1111-4111-8111-111111111111",
   surface: "codex",
@@ -215,22 +215,29 @@ test("insertRawEvent and queryRawInbox preserve source_kind and artifacts payloa
   }
 });
 
-test("insertRawEvent throws when the envelope fails schema validation", () => {
+test("insertRawEvent stores raw transport values without normalization", () => {
   const db = new SQLiteAdapter(":memory:");
 
   try {
     applyRawInboxMigration(db);
 
-    assert.throws(
-      () =>
-        insertRawEvent(
-          db,
-          createEnvelope({
-            surface: "invalid-surface" as never
-          })
-        ),
-      /surface/i
+    const result = insertRawEvent(
+      db,
+      createEnvelope({
+        event_id: "77777777-7777-4777-8777-777777777777",
+        surface: "claude-code",
+        role: "developer",
+        event_type: "custom_event"
+      })
     );
+
+    assert.equal(result.accepted, true);
+
+    const rows = queryRawInbox(db, { event_id: "77777777-7777-4777-8777-777777777777" });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.surface, "claude-code");
+    assert.equal(rows[0]?.role, "developer");
+    assert.equal(rows[0]?.event_type, "custom_event");
   } finally {
     db.close();
   }

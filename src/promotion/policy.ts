@@ -1,8 +1,25 @@
 import type { CandidateMemoryRecord } from "../db/candidate-repository.js";
 import type { AckRecord } from "../usage/ack-store.js";
+import {
+  createJudgmentRules,
+  mergeJudgmentRules,
+  DEFAULT_JUDGMENT_RULES,
+  type JudgmentRules,
+  type JudgmentRulesOverride
+} from "./judgment-rules.js";
 
 export type PromotionAction = "promote" | "hold" | "discard" | "keep" | "demote";
 export type PromotionTrigger = "manual" | "policy" | "sweep";
+
+/** Candidate lifecycle states stored in the candidate table. */
+export type CandidateState = "pending" | "held" | "ready" | "discarded";
+
+/** Audit vocabulary for the from/to states of a promotion decision.
+ *  Includes the candidate lifecycle states plus the promoted state. */
+export type PromotionAuditState = CandidateState | "promoted";
+
+/** Current state used by the policy evaluator.
+ *  "candidate" means any candidate lifecycle state; "promoted" means already promoted. */
 export type PromotionCurrentState = "candidate" | "promoted";
 
 export interface PromotionDecision {
@@ -34,10 +51,6 @@ export interface PromotionPolicy {
 
 export const DEFAULT_POLICY_NAME = "default";
 export const DEFAULT_POLICY_VERSION = "v1";
-
-const DEFAULT_AGE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1_000;
-const DEFAULT_MIN_SUFFICIENT_ACKS = 3;
-const DEFAULT_MIN_DISTINCT_SESSIONS = 2;
 
 function createDecision(action: PromotionAction, reason: string): PromotionDecision {
   return {
@@ -134,19 +147,18 @@ function createAckRule(
   };
 }
 
-export function createDefaultPromotionPolicy(options: {
-  age_threshold_ms?: number;
-  min_sufficient_acks?: number;
-  min_distinct_sessions?: number;
-} = {}): PromotionPolicy {
-  const ageThresholdMs = options.age_threshold_ms ?? DEFAULT_AGE_THRESHOLD_MS;
-  const minSufficientAcks = options.min_sufficient_acks ?? DEFAULT_MIN_SUFFICIENT_ACKS;
-  const minDistinctSessions = options.min_distinct_sessions ?? DEFAULT_MIN_DISTINCT_SESSIONS;
+export function createDefaultPromotionPolicy(
+  overrides: import("./judgment-rules.js").JudgmentRulesOverride = {}
+): PromotionPolicy {
+  const judgmentRules = createJudgmentRules(overrides);
   const rules: PromotionRule[] = [
     createManualRule(),
     createDiscardedRule(),
-    createAgeRule(ageThresholdMs),
-    createAckRule(minSufficientAcks, minDistinctSessions)
+    createAgeRule(judgmentRules.rules.age_threshold_ms),
+    createAckRule(
+      judgmentRules.rules.min_sufficient_acks,
+      judgmentRules.rules.min_distinct_sessions
+    )
   ];
 
   return {
@@ -165,3 +177,6 @@ export function createDefaultPromotionPolicy(options: {
     }
   };
 }
+
+export { createJudgmentRules, mergeJudgmentRules, DEFAULT_JUDGMENT_RULES };
+export type { JudgmentRules, JudgmentRulesOverride };

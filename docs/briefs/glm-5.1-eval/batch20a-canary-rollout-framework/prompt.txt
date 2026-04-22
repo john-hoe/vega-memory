@@ -1,0 +1,28 @@
+在 /Users/johnmacmini/workspace/vega-memory 中执行这份 brief：
+
+/Users/johnmacmini/workspace/vega-memory/docs/briefs/2026-04-21-batch20a-canary-rollout-framework.md
+
+要求：
+1. 严格按 brief 执行，不要扩 scope。
+2. 不要修改原始 brief 文件。
+3. 把结果写到：
+   /Users/johnmacmini/workspace/vega-memory/docs/briefs/glm-5.1-eval/batch20a-canary-rollout-framework/result.md
+4. 不得读取、引用、总结或借鉴：
+   /Users/johnmacmini/workspace/vega-memory/docs/briefs/kimi-2.6-eval/**
+   /Users/johnmacmini/workspace/kimi-2.6-eval-hidden/**
+5. 所有结论必须以实际文件、grep、build、test 结果为准。
+6. 只有在以下全部满足时，才允许写 sealed：
+   - npx tsc --noEmit exit 0
+   - npm run build exit 0
+   - npm test exit 0
+   - acceptance criteria 中的 grep/diff 条件实际满足
+
+result.md 必须包含：
+- task id
+- changed files
+- commands run
+- acceptance criteria status
+- remaining risks
+- final verdict（sealed / not sealed）
+
+如果发现 brief、实现、验收之间有矛盾，先指出，再做最小修正。

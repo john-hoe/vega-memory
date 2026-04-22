@@ -1,5 +1,5 @@
-import type { HostEventEnvelopeV1 } from "../core/contracts/envelope.js";
-import { HOST_EVENT_ENVELOPE_V1 } from "../core/contracts/envelope.js";
+import type { HostEventEnvelopeTransportV1 } from "../core/contracts/envelope.js";
+import { HOST_EVENT_ENVELOPE_TRANSPORT_V1 } from "../core/contracts/envelope.js";
 import { createLogger } from "../core/logging/index.js";
 import type { DatabaseAdapter } from "../db/adapter.js";
 import { queryRawInbox, type RawInboxFilter } from "./raw-inbox.js";
@@ -12,7 +12,7 @@ export interface ReplayOptions {
 }
 
 export interface ReplayedEvent {
-  envelope: HostEventEnvelopeV1;
+  envelope: HostEventEnvelopeTransportV1;
   received_at: string;
   replay_metadata: {
     replayed_at: string;
@@ -32,14 +32,14 @@ const parseJsonRecord = (value: string): Record<string, unknown> => {
   return parsed as Record<string, unknown>;
 };
 
-const parseArtifacts = (value: string, eventId: string): HostEventEnvelopeV1["artifacts"] => {
+const parseArtifacts = (value: string, eventId: string): HostEventEnvelopeTransportV1["artifacts"] => {
   try {
     const parsed = JSON.parse(value) as unknown;
     if (!Array.isArray(parsed)) {
       throw new Error("expected JSON array");
     }
 
-    return parsed as HostEventEnvelopeV1["artifacts"];
+    return parsed as HostEventEnvelopeTransportV1["artifacts"];
   } catch (error) {
     logger.warn("Falling back to empty artifacts during replay", {
       event_id: eventId,
@@ -83,7 +83,7 @@ export function replayFromRawInbox(
         artifacts: parseArtifacts(row.artifacts_json, row.event_id),
         source_kind: row.source_kind ?? undefined
       };
-      const parsed = HOST_EVENT_ENVELOPE_V1.safeParse(envelope);
+      const parsed = HOST_EVENT_ENVELOPE_TRANSPORT_V1.safeParse(envelope);
 
       if (!parsed.success) {
         logger.warn("Skipping invalid raw inbox row during replay", {

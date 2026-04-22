@@ -1,0 +1,9 @@
+{
+  "task_id": "p5-003.1.1.2",
+  "brief_path": "/Users/johnmacmini/workspace/vega-memory/docs/briefs/phase5-glm/p5-003.1.1.2-brief.md",
+  "result_path": "/Users/johnmacmini/workspace/vega-memory/docs/briefs/glm-5.1-eval/p5-003.1.1.2/result.md",
+  "prompt_path": "/Users/johnmacmini/workspace/vega-memory/docs/briefs/glm-5.1-eval/p5-003.1.1.2/prompt.txt",
+  "prepared_at_epoch": 1776743061,
+  "prepared_at_iso": "2026-04-21T03:44:21Z",
+  "runner": "glm-5.1"
+}

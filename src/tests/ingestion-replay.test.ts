@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { HOST_EVENT_ENVELOPE_V1, type HostEventEnvelopeV1 } from "../core/contracts/envelope.js";
+import { HOST_EVENT_ENVELOPE_TRANSPORT_V1, type HostEventEnvelopeTransportV1 } from "../core/contracts/envelope.js";
 import { SQLiteAdapter } from "../db/sqlite-adapter.js";
 import {
   applyRawInboxMigration,
@@ -9,7 +9,7 @@ import {
 } from "../ingestion/raw-inbox.js";
 import { replayFromRawInbox } from "../ingestion/replay.js";
 
-const createEnvelope = (overrides: Partial<HostEventEnvelopeV1> = {}): HostEventEnvelopeV1 => ({
+const createEnvelope = (overrides: Partial<HostEventEnvelopeTransportV1> = {}): HostEventEnvelopeTransportV1 => ({
   schema_version: "1.0",
   event_id: "33333333-3333-4333-8333-333333333333",
   surface: "cli",
@@ -59,7 +59,7 @@ test("replayFromRawInbox rebuilds envelopes for stored raw events", () => {
 
     assert.equal(replayed.length, 2);
     for (const event of replayed) {
-      assert.equal(HOST_EVENT_ENVELOPE_V1.safeParse(event.envelope).success, true);
+      assert.equal(HOST_EVENT_ENVELOPE_TRANSPORT_V1.safeParse(event.envelope).success, true);
       assert.equal(typeof event.received_at, "string");
       assert.equal(typeof event.replay_metadata.replayed_at, "string");
     }

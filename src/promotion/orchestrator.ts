@@ -7,6 +7,8 @@ import type { Memory } from "../core/types.js";
 import type { PromotionAuditStore } from "./audit-store.js";
 import type { PromotionEvaluator } from "./evaluator.js";
 import type {
+  CandidateState,
+  PromotionAuditState,
   PromotionCurrentState,
   PromotionDecision,
   PromotionTrigger
@@ -60,6 +62,8 @@ function createCandidateProjection(memory: Memory, reason?: string): CandidateMe
     promotion_score: 0,
     visibility_gated: true,
     candidate_state: "held",
+    raw_dedup_key: null,
+    semantic_fingerprint: null,
     created_at: Number.isFinite(Date.parse(memory.created_at))
       ? Date.parse(memory.created_at)
       : Date.now(),
@@ -69,7 +73,7 @@ function createCandidateProjection(memory: Memory, reason?: string): CandidateMe
   };
 }
 
-function mapDecisionToCandidateState(decision: PromotionDecision): "held" | "ready" | "discarded" | undefined {
+function mapDecisionToCandidateState(decision: PromotionDecision): CandidateState | undefined {
   switch (decision.action) {
     case "hold":
       return "held";
@@ -82,8 +86,11 @@ function mapDecisionToCandidateState(decision: PromotionDecision): "held" | "rea
   }
 }
 
-function resolveKeptState(current_state: PromotionCurrentState): PromotionCurrentState {
-  return current_state === "promoted" ? "promoted" : "candidate";
+function resolveAuditState(current_state: PromotionCurrentState, candidateState?: CandidateState): PromotionAuditState {
+  if (current_state === "promoted") {
+    return "promoted";
+  }
+  return candidateState ?? "pending";
 }
 
 export function createPromotionOrchestrator(
@@ -123,7 +130,7 @@ export function createPromotionOrchestrator(
           memory_id: candidate.id,
           action: "promote",
           trigger,
-          from_state: "candidate",
+          from_state: candidate.candidate_state,
           to_state: "promoted",
           policy_name: decision.policy_name,
           policy_version: decision.policy_version,
@@ -152,8 +159,8 @@ export function createPromotionOrchestrator(
         memory_id: candidate.id,
         action: "keep",
         trigger,
-        from_state: "candidate",
-        to_state: "candidate",
+        from_state: candidate.candidate_state,
+        to_state: candidate.candidate_state,
         policy_name: decision.policy_name,
         policy_version: decision.policy_version,
         reason: keptDecision.reason,
@@ -227,7 +234,7 @@ export function createPromotionOrchestrator(
           action: "demote",
           trigger: "manual",
           from_state: "promoted",
-          to_state: "candidate",
+          to_state: "held",
           policy_name: decision.policy_name,
           policy_version: decision.policy_version,
           reason: reason ?? decision.reason,
@@ -271,12 +278,15 @@ export function createPromotionOrchestrator(
           throw new Error(`Failed to update candidate state for ${candidate.id}`);
         }
 
+        const fromState = candidate.candidate_state;
+        const toState = resolveAuditState("candidate", nextState ?? candidate.candidate_state);
+
         return options.auditStore.put({
           memory_id: candidate.id,
           action: decision.action,
           trigger,
-          from_state: "candidate",
-          to_state: resolveKeptState("candidate"),
+          from_state: fromState,
+          to_state: toState,
           policy_name: decision.policy_name,
           policy_version: decision.policy_version,
           reason: decision.reason,

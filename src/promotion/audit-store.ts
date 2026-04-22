@@ -1,15 +1,15 @@
 import { v4 as uuidv4 } from "uuid";
 
 import type { DatabaseAdapter } from "../db/adapter.js";
-import type { PromotionAction, PromotionCurrentState, PromotionTrigger } from "./policy.js";
+import type { PromotionAction, PromotionAuditState, PromotionTrigger } from "./policy.js";
 
 export interface PromotionAuditEntry {
   id: string;
   memory_id: string;
-  action: PromotionAction | "demote";
+  action: PromotionAction;
   trigger: PromotionTrigger;
-  from_state: PromotionCurrentState;
-  to_state: PromotionCurrentState;
+  from_state: PromotionAuditState;
+  to_state: PromotionAuditState;
   policy_name: string;
   policy_version: string;
   reason: string;

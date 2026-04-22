@@ -89,7 +89,7 @@ test("HTTP handler returns deduped on a repeated event_id", async () => {
   }
 });
 
-test("HTTP handler returns 400 for an invalid envelope", async () => {
+test("HTTP handler accepts non-canonical surface, role, and event_type", async () => {
   const db = new SQLiteAdapter(":memory:");
 
   try {
@@ -102,15 +102,20 @@ test("HTTP handler returns 400 for an invalid envelope", async () => {
       {
         body: {
           ...createEnvelope(),
-          surface: "claude-code"
+          event_id: "77777777-7777-4777-8777-777777777777",
+          surface: "claude-code",
+          role: "developer",
+          event_type: "custom_event"
         }
       } as never,
       response as never
     );
 
-    assert.equal(response.statusCode, 400);
-    assert.equal((response.body as { error?: string }).error, "ValidationError");
-    assert.match(String((response.body as { detail?: unknown }).detail), /surface/i);
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body, {
+      accepted_event_id: "77777777-7777-4777-8777-777777777777",
+      staged_in: "raw_inbox"
+    });
   } finally {
     db.close();
   }
@@ -134,22 +139,25 @@ test("MCP tool invoke returns IngestEventResponse for a valid envelope", async (
   }
 });
 
-test("MCP tool invoke throws for an invalid envelope", async () => {
+test("MCP tool invoke accepts non-canonical surface, role, and event_type", async () => {
   const db = new SQLiteAdapter(":memory:");
 
   try {
     applyRawInboxMigration(db);
 
     const tool = createIngestEventMcpTool(db);
+    const result = await tool.invoke({
+      ...createEnvelope(),
+      event_id: "88888888-8888-4888-8888-888888888888",
+      surface: "claude-code",
+      role: "developer",
+      event_type: "custom_event"
+    });
 
-    await assert.rejects(
-      async () =>
-        tool.invoke({
-          ...createEnvelope(),
-          surface: "claude-code"
-        }),
-      /surface/i
-    );
+    assert.deepEqual(result, {
+      accepted_event_id: "88888888-8888-4888-8888-888888888888",
+      staged_in: "raw_inbox"
+    });
   } finally {
     db.close();
   }

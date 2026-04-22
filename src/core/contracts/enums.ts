@@ -1,12 +1,12 @@
-export const SURFACES = ["claude", "codex", "cursor", "opencode", "hermes", "api", "cli"] as const;
+export const SURFACES = ["claude", "codex", "cursor", "opencode", "hermes", "api", "cli", "unknown"] as const;
 
 export type Surface = (typeof SURFACES)[number];
 
-export const ROLES = ["user", "assistant", "system", "tool"] as const;
+export const ROLES = ["user", "assistant", "system", "tool", "unknown"] as const;
 
 export type Role = (typeof ROLES)[number];
 
-export const EVENT_TYPES = ["message", "tool_call", "tool_result", "decision", "state_change"] as const;
+export const EVENT_TYPES = ["message", "tool_call", "tool_result", "decision", "state_change", "unknown"] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
 

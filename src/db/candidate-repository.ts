@@ -25,6 +25,8 @@ export interface CandidateMemoryRecord {
   visibility_gated: boolean;
   candidate_state: CandidateState;
   source_kind?: SourceKind | null;
+  raw_dedup_key: string | null;
+  semantic_fingerprint: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -41,6 +43,8 @@ export interface CandidateMemoryCreateInput {
   visibility_gated?: boolean;
   candidate_state?: CandidateState;
   source_kind?: SourceKind;
+  raw_dedup_key?: string | null;
+  semantic_fingerprint?: string | null;
 }
 
 export interface CandidateQuery {
@@ -50,12 +54,16 @@ export interface CandidateQuery {
   since?: number;
   visibility_gated?: boolean;    // When set, filter to rows matching this flag BEFORE LIMIT.
   state?: CandidateState;
+  raw_dedup_key?: string | null;
+  semantic_fingerprint?: string | null;
 }
 
 export interface CandidateRepository {
   create(input: CandidateMemoryCreateInput): CandidateMemoryRecord;
   findById(id: string): CandidateMemoryRecord | undefined;
   list(query?: CandidateQuery): CandidateMemoryRecord[];
+  findByRawDedupKey(raw_dedup_key: string): CandidateMemoryRecord | undefined;
+  findBySemanticFingerprint(semantic_fingerprint: string): CandidateMemoryRecord | undefined;
   delete(id: string): boolean;
   updateState(id: string, state: CandidateState): boolean;
   size(): number;
@@ -78,6 +86,8 @@ interface CandidateMemoryRow {
   visibility_gated: number;
   candidate_state: CandidateState;
   source_kind: SourceKind | null;
+  raw_dedup_key: string | null;
+  semantic_fingerprint: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -126,6 +136,8 @@ function toRecord(row: CandidateMemoryRow): CandidateMemoryRecord | undefined {
       visibility_gated: row.visibility_gated === 1,
       candidate_state: row.candidate_state ?? DEFAULT_CANDIDATE_STATE,
       source_kind: row.source_kind ?? DEFAULT_CANDIDATE_SOURCE_KIND,
+      raw_dedup_key: row.raw_dedup_key ?? null,
+      semantic_fingerprint: row.semantic_fingerprint ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at
     };
@@ -151,7 +163,7 @@ export function createCandidateRepository(
   const now = options.now ?? (() => Date.now());
 
   const insertStatement = db.prepare<
-    [string, string, string, string | null, string, string, string, number | null, number, number, CandidateState, SourceKind, number, number],
+    [string, string, string, string | null, string, string, string, number | null, number, number, CandidateState, SourceKind, string | null, string | null, number, number],
     never
   >(
     `INSERT INTO ${CANDIDATE_MEMORIES_TABLE} (
@@ -167,9 +179,11 @@ export function createCandidateRepository(
       visibility_gated,
       candidate_state,
       source_kind,
+      raw_dedup_key,
+      semantic_fingerprint,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const findStatement = db.prepare<[string], CandidateMemoryRow>(
     `SELECT
@@ -185,10 +199,58 @@ export function createCandidateRepository(
       visibility_gated,
       candidate_state,
       source_kind,
+      raw_dedup_key,
+      semantic_fingerprint,
       created_at,
       updated_at
     FROM ${CANDIDATE_MEMORIES_TABLE}
     WHERE id = ?`
+  );
+  const findByRawDedupKeyStatement = db.prepare<[string], CandidateMemoryRow>(
+    `SELECT
+      id,
+      content,
+      type,
+      project,
+      tags,
+      metadata,
+      extraction_source,
+      extraction_confidence,
+      promotion_score,
+      visibility_gated,
+      candidate_state,
+      source_kind,
+      raw_dedup_key,
+      semantic_fingerprint,
+      created_at,
+      updated_at
+    FROM ${CANDIDATE_MEMORIES_TABLE}
+    WHERE raw_dedup_key = ?
+    ORDER BY created_at DESC
+    LIMIT 1`
+  );
+  const findBySemanticFingerprintStatement = db.prepare<[string], CandidateMemoryRow>(
+    `SELECT
+      id,
+      content,
+      type,
+      project,
+      tags,
+      metadata,
+      extraction_source,
+      extraction_confidence,
+      promotion_score,
+      visibility_gated,
+      candidate_state,
+      source_kind,
+      raw_dedup_key,
+      semantic_fingerprint,
+      created_at,
+      updated_at
+    FROM ${CANDIDATE_MEMORIES_TABLE}
+    WHERE semantic_fingerprint = ?
+    ORDER BY created_at DESC
+    LIMIT 1`
   );
   const updateStateStatement = db.prepare<[CandidateState, number, string], never>(
     `UPDATE ${CANDIDATE_MEMORIES_TABLE}
@@ -213,6 +275,8 @@ export function createCandidateRepository(
         visibility_gated: input.visibility_gated ?? true,
         candidate_state: input.candidate_state ?? DEFAULT_CANDIDATE_STATE,
         source_kind: input.source_kind ?? DEFAULT_CANDIDATE_SOURCE_KIND,
+        raw_dedup_key: input.raw_dedup_key ?? null,
+        semantic_fingerprint: input.semantic_fingerprint ?? null,
         created_at,
         updated_at: created_at
       };
@@ -230,6 +294,8 @@ export function createCandidateRepository(
         record.visibility_gated ? 1 : 0,
         record.candidate_state,
         record.source_kind ?? DEFAULT_CANDIDATE_SOURCE_KIND,
+        record.raw_dedup_key,
+        record.semantic_fingerprint,
         record.created_at,
         record.updated_at
       );
@@ -273,6 +339,24 @@ export function createCandidateRepository(
         params.push(query.state);
       }
 
+      if (query.raw_dedup_key !== undefined) {
+        if (query.raw_dedup_key === null) {
+          clauses.push("raw_dedup_key IS NULL");
+        } else {
+          clauses.push("raw_dedup_key = ?");
+          params.push(query.raw_dedup_key);
+        }
+      }
+
+      if (query.semantic_fingerprint !== undefined) {
+        if (query.semantic_fingerprint === null) {
+          clauses.push("semantic_fingerprint IS NULL");
+        } else {
+          clauses.push("semantic_fingerprint = ?");
+          params.push(query.semantic_fingerprint);
+        }
+      }
+
       const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
       const rows = db.all<CandidateMemoryRow>(
         `SELECT
@@ -287,6 +371,9 @@ export function createCandidateRepository(
           promotion_score,
           visibility_gated,
           candidate_state,
+          source_kind,
+          raw_dedup_key,
+          semantic_fingerprint,
           created_at,
           updated_at
         FROM ${CANDIDATE_MEMORIES_TABLE}
@@ -301,6 +388,14 @@ export function createCandidateRepository(
         const record = toRecord(row);
         return record === undefined ? [] : [record];
       });
+    },
+    findByRawDedupKey(raw_dedup_key): CandidateMemoryRecord | undefined {
+      const row = findByRawDedupKeyStatement.get(raw_dedup_key);
+      return row === undefined ? undefined : toRecord(row);
+    },
+    findBySemanticFingerprint(semantic_fingerprint): CandidateMemoryRecord | undefined {
+      const row = findBySemanticFingerprintStatement.get(semantic_fingerprint);
+      return row === undefined ? undefined : toRecord(row);
     },
     delete(id): boolean {
       const exists =

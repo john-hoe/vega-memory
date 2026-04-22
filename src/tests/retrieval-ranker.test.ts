@@ -76,7 +76,9 @@ test("demote_ids applies the 0.3x followup penalty when the composite key matche
   const [baseline] = rank([record], request);
   const [demoted] = rank([record], request, undefined, new Set([recordKey(record.source_kind, record.id)]));
 
-  assert.equal(demoted?.final_score, (baseline?.final_score ?? 0) * 0.3);
+  const expected = (baseline?.final_score ?? 0) * 0.3;
+  const actual = demoted?.final_score ?? 0;
+  assert.ok(Math.abs(actual - expected) < 1e-9);
 });
 
 test("bare ids do not trigger demotion without the source-kind prefix", () => {
