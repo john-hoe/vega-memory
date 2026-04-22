@@ -1,1 +1,1 @@
-Next: review the current Phase 5 worktree, stage only the intended Phase 5 code/spec/test/status changes (excluding junk like .DS_Store), create one intentional Lore commit, then push `main` to the GitHub `john-hoe/vega-memory` repository.
+Next: Phase 5 closeout is published. Continue only with later-phase work: Phase 6 retrieval feedback or the remaining deferred derivation/governance items.

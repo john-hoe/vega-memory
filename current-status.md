@@ -16,3 +16,9 @@ Independent verification completed:
 - `grep -c 'schema 变更\|pipeline bug\|手动' docs/specs/raw-replay.md` → `4`
 - `grep -c 'CRUD\|read.*append\|append.*only\|拒绝' docs/specs/raw-archive-audit.md` → `19`
 - `grep -c 'wiki.*≥200\|fact.*可验证\|insight.*可操作' docs/specs/derived-pipeline.md` → `3`
+
+GitHub publish completed:
+- branch: `main`
+- remote: `origin`
+- pushed commit: `26ee957`
+- push result: `6f66bf9..26ee957  main -> main`
