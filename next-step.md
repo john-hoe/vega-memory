@@ -1,1 +1,1 @@
-Next: reproduce and fix GitHub audit issues `#62` and `#64` in `john-hoe/vega-memory` by (1) making CLI health/regression return a non-zero exit code for degraded/unhealthy reports, and (2) refreshing the production lockfile away from vulnerable `hono` / `@hono/node-server` versions, then verify with targeted tests plus a full build/test/audit check.
+Next: Phase 5 audit issue closeout is complete. Continue only with newer open audit items if needed, starting from the remaining GitHub issue backlog.

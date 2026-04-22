@@ -91,12 +91,11 @@ test("CLI health --regression --json includes regression guard data", () => {
   const dbPath = join(tempDir, "memory.db");
 
   try {
-    const output = JSON.parse(
-      runCli(["health", "--regression", "--json"], {
-        VEGA_DB_PATH: dbPath,
-        OLLAMA_BASE_URL: "http://localhost:99999"
-      })
-    ) as {
+    const result = runCliWithStatus(["health", "--regression", "--json"], {
+      VEGA_DB_PATH: dbPath,
+      OLLAMA_BASE_URL: "http://localhost:99999"
+    });
+    const output = JSON.parse(result.stdout) as {
       status: string;
       regression_guard: {
         status: string;
@@ -106,6 +105,7 @@ test("CLI health --regression --json includes regression guard data", () => {
       };
     };
 
+    assert.equal(result.status, 1);
     assert.equal(typeof output.status, "string");
     assert.equal(typeof output.regression_guard.status, "string");
     assert.equal(output.regression_guard.thresholds.max_session_start_token, 2500);

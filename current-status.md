@@ -26,10 +26,17 @@ GitHub publish completed:
 Post-publish Phase 5 audit fixes (2026-04-22):
 - Issue `#65`: `ingest_event` no longer stops at `raw_inbox`; runtime now materializes candidates during ingest via `src/ingestion/pipeline.ts` and wires the candidate/policy services through HTTP + MCP `ingest_event`.
 - Issue `#66`: promotion runtime no longer only exposes manual action; MCP now exposes `candidate_evaluate` + `candidate_sweep`, and app/MCP policy initialization accepts env-driven judgment-rules overrides via `resolveJudgmentRulesOverrideFromEnv(...)`.
+- Issue `#62`: CLI `health` / `regression` now returns exit code `1` for `degraded` / `unhealthy` health reports, so automation can fail closed on regressions.
+- Issue `#64`: production lockfile refreshed; `npm audit --omit=dev --json` is now clean with `@hono/node-server@1.19.14` and `hono@4.12.14` in the resolved tree.
 - Independent verification after the fix:
   - `npm run build` → pass
   - `node --test dist/tests/ingestion-pipeline.test.js dist/tests/ingestion-ingest-event-handler.test.js dist/tests/mcp-candidate-tools.test.js dist/tests/wiring-integration.test.js dist/tests/judgment-rules.test.js` → `47 passed / 0 failed`
-  - `npm test` → `1350 passed / 0 failed`
+  - `node --test dist/tests/cli.test.js dist/tests/e2e.test.js` → `39 passed / 0 failed`
+  - `npm test` → `1351 passed / 0 failed`
+
+GitHub issue closeout completed:
+- Closed issues: `#62`, `#64`, `#65`, `#66`
+- Closeout commit referenced in issue comments: `5d824f6`
 
 2026-04-22 audit kickoff:
 - scope: end-to-end repo review/audit for `john-hoe/vega-memory`

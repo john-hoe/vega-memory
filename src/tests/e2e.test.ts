@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -322,8 +322,8 @@ test("E2E: Vega Memory System", async (t) => {
       assert.equal(auditLog.some((entry) => entry.action === "update"), true);
     });
 
-    await t.test("CLI health command runs without error", () => {
-      const output = execFileSync(
+    await t.test("CLI health command exits non-zero for degraded local setups while still printing health details", () => {
+      const result = spawnSync(
         process.execPath,
         ["--input-type=module", "-e", cliBootstrap, "--", "health"],
         {
@@ -337,7 +337,9 @@ test("E2E: Vega Memory System", async (t) => {
         }
       );
 
-      assert.match(output, /memory count:/i);
+      assert.equal(result.status, 1);
+      assert.match(result.stdout ?? "", /memory count:/i);
+      assert.match(result.stdout ?? "", /status: degraded/i);
     });
 
     await t.test("HTTP API memory lifecycle supports store, recall, update, list, and delete", async () => {
