@@ -65,17 +65,22 @@ import { IngestionService } from "../ingestion/service.js";
 import { publishWikiPages } from "../publishing/service.js";
 import {
   CANDIDATE_CREATE_SCHEMA,
+  CANDIDATE_EVALUATE_SCHEMA,
   CANDIDATE_DEMOTE_SCHEMA,
   CANDIDATE_LIST_SCHEMA,
   CANDIDATE_PROMOTE_SCHEMA,
+  CANDIDATE_SWEEP_SCHEMA,
   createCandidateCreateMcpTool,
+  createCandidateEvaluateMcpTool,
   createCandidateDemoteMcpTool,
   createCandidateListMcpTool,
   createCandidatePromoteMcpTool,
+  createCandidateSweepMcpTool,
   createDefaultPromotionPolicy,
   createPromotionAuditStore,
   createPromotionEvaluator,
-  createPromotionOrchestrator
+  createPromotionOrchestrator,
+  resolveJudgmentRulesOverrideFromEnv
 } from "../promotion/index.js";
 import {
   CIRCUIT_BREAKER_RESET_INPUT_SCHEMA,
@@ -838,7 +843,9 @@ export function createMCPServer({
   const promotionAuditStore = !activeRepository.db.isPostgres
     ? createPromotionAuditStore(activeRepository.db)
     : undefined;
-  const promotionPolicy = createDefaultPromotionPolicy();
+  const promotionPolicy = createDefaultPromotionPolicy(
+    resolveJudgmentRulesOverrideFromEnv(process.env)
+  );
   const promotionEvaluator =
     candidateRepository !== undefined
       ? createPromotionEvaluator({
@@ -953,7 +960,10 @@ export function createMCPServer({
     checkpoint_failure_store: checkpointFailureStore,
     circuit_breaker: circuitBreaker
   });
-  const ingestEventTool = createIngestEventMcpTool(activeRepository.db);
+  const ingestEventTool = createIngestEventMcpTool(activeRepository.db, {
+    candidateRepository,
+    promotionOrchestrator
+  });
   const contextResolveTool = createContextResolveMcpTool(retrievalOrchestrator);
   const usageAckTool = createUsageAckMcpTool(
     ackStore,
@@ -975,6 +985,8 @@ export function createMCPServer({
   const candidateListTool = createCandidateListMcpTool(candidateRepository);
   const candidatePromoteTool = createCandidatePromoteMcpTool(promotionOrchestrator);
   const candidateDemoteTool = createCandidateDemoteMcpTool(promotionOrchestrator);
+  const candidateEvaluateTool = createCandidateEvaluateMcpTool(promotionOrchestrator);
+  const candidateSweepTool = createCandidateSweepMcpTool(promotionOrchestrator);
   const reconciliationRunTool = createReconciliationRunMcpTool(
     !activeRepository.db.isPostgres
       ? new ReconciliationOrchestrator({
@@ -2811,7 +2823,9 @@ export function createMCPServer({
     candidateCreateTool,
     candidateListTool,
     candidatePromoteTool,
-    candidateDemoteTool
+    candidateDemoteTool,
+    candidateEvaluateTool,
+    candidateSweepTool
   ]) {
     const inputSchema =
       tool.name === "candidate_create"
@@ -2820,7 +2834,11 @@ export function createMCPServer({
           ? CANDIDATE_LIST_SCHEMA.shape
           : tool.name === "candidate_promote"
             ? CANDIDATE_PROMOTE_SCHEMA.shape
-            : CANDIDATE_DEMOTE_SCHEMA.shape;
+            : tool.name === "candidate_demote"
+              ? CANDIDATE_DEMOTE_SCHEMA.shape
+              : tool.name === "candidate_evaluate"
+                ? CANDIDATE_EVALUATE_SCHEMA.shape
+                : CANDIDATE_SWEEP_SCHEMA.shape;
 
     candidateToolRegistrar.registerTool(
       tool.name,
@@ -2840,6 +2858,11 @@ export function createMCPServer({
               "records" in result &&
               Array.isArray((result as { records?: unknown }).records)
                 ? (result as { records: unknown[] }).records.length
+                : typeof result === "object" &&
+                    result !== null &&
+                    "results" in result &&
+                    Array.isArray((result as { results?: unknown }).results)
+                  ? (result as { results: unknown[] }).results.length
                 : 1
           };
         })

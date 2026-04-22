@@ -21,9 +21,11 @@ import { SQLiteAdapter } from "../db/sqlite-adapter.js";
 import { createIngestEventMcpTool } from "../ingestion/ingest-event-handler.js";
 import {
   createCandidateCreateMcpTool,
+  createCandidateEvaluateMcpTool,
   createCandidateDemoteMcpTool,
   createCandidateListMcpTool,
-  createCandidatePromoteMcpTool
+  createCandidatePromoteMcpTool,
+  createCandidateSweepMcpTool
 } from "../promotion/candidate-mcp-tools.js";
 import {
   createCircuitBreakerResetMcpTool,
@@ -232,6 +234,8 @@ test("ingest_event, context.resolve, usage.ack, and candidate MCP factories expo
     const candidateListTool = createCandidateListMcpTool(undefined);
     const candidatePromoteTool = createCandidatePromoteMcpTool(undefined);
     const candidateDemoteTool = createCandidateDemoteMcpTool(undefined);
+    const candidateEvaluateTool = createCandidateEvaluateMcpTool(undefined);
+    const candidateSweepTool = createCandidateSweepMcpTool(undefined);
 
     assert.equal(ingestEventTool.name, "ingest_event");
     assert.equal(contextResolveTool.name, "context.resolve");
@@ -242,6 +246,8 @@ test("ingest_event, context.resolve, usage.ack, and candidate MCP factories expo
     assert.equal(candidateListTool.name, "candidate_list");
     assert.equal(candidatePromoteTool.name, "candidate_promote");
     assert.equal(candidateDemoteTool.name, "candidate_demote");
+    assert.equal(candidateEvaluateTool.name, "candidate_evaluate");
+    assert.equal(candidateSweepTool.name, "candidate_sweep");
   } finally {
     db.close();
   }
@@ -559,6 +565,8 @@ test("MCP server registers candidate promotion tools", async () => {
     assert.equal(typeof tools["candidate_list"]?.handler, "function");
     assert.equal(typeof tools["candidate_promote"]?.handler, "function");
     assert.equal(typeof tools["candidate_demote"]?.handler, "function");
+    assert.equal(typeof tools["candidate_evaluate"]?.handler, "function");
+    assert.equal(typeof tools["candidate_sweep"]?.handler, "function");
   } finally {
     await harness.cleanup();
   }

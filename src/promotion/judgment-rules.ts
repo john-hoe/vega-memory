@@ -26,6 +26,53 @@ export interface JudgmentRulesOverride {
   rules?: Partial<JudgmentRuleConfig>;
 }
 
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+export function resolveJudgmentRulesOverrideFromEnv(
+  env: NodeJS.ProcessEnv
+): JudgmentRulesOverride {
+  const override: JudgmentRulesOverride = {};
+  const rules: Partial<JudgmentRuleConfig> = {};
+
+  const name = env.VEGA_PROMOTION_RULESET_NAME?.trim();
+  if (name) {
+    override.name = name;
+  }
+
+  const version = env.VEGA_PROMOTION_RULESET_VERSION?.trim();
+  if (version) {
+    override.version = version;
+  }
+
+  const ageThresholdMs = parsePositiveInteger(env.VEGA_PROMOTION_AGE_THRESHOLD_MS);
+  if (ageThresholdMs !== undefined) {
+    rules.age_threshold_ms = ageThresholdMs;
+  }
+
+  const minSufficientAcks = parsePositiveInteger(env.VEGA_PROMOTION_MIN_SUFFICIENT_ACKS);
+  if (minSufficientAcks !== undefined) {
+    rules.min_sufficient_acks = minSufficientAcks;
+  }
+
+  const minDistinctSessions = parsePositiveInteger(env.VEGA_PROMOTION_MIN_DISTINCT_SESSIONS);
+  if (minDistinctSessions !== undefined) {
+    rules.min_distinct_sessions = minDistinctSessions;
+  }
+
+  if (Object.keys(rules).length > 0) {
+    override.rules = rules;
+  }
+
+  return override;
+}
+
 export function createJudgmentRules(
   overrides: JudgmentRulesOverride = {}
 ): JudgmentRules {

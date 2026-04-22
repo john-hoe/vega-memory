@@ -22,3 +22,34 @@ GitHub publish completed:
 - remote: `origin`
 - pushed commit: `26ee957`
 - push result: `6f66bf9..26ee957  main -> main`
+
+Post-publish Phase 5 audit fixes (2026-04-22):
+- Issue `#65`: `ingest_event` no longer stops at `raw_inbox`; runtime now materializes candidates during ingest via `src/ingestion/pipeline.ts` and wires the candidate/policy services through HTTP + MCP `ingest_event`.
+- Issue `#66`: promotion runtime no longer only exposes manual action; MCP now exposes `candidate_evaluate` + `candidate_sweep`, and app/MCP policy initialization accepts env-driven judgment-rules overrides via `resolveJudgmentRulesOverrideFromEnv(...)`.
+- Independent verification after the fix:
+  - `npm run build` → pass
+  - `node --test dist/tests/ingestion-pipeline.test.js dist/tests/ingestion-ingest-event-handler.test.js dist/tests/mcp-candidate-tools.test.js dist/tests/wiring-integration.test.js dist/tests/judgment-rules.test.js` → `47 passed / 0 failed`
+  - `npm test` → `1350 passed / 0 failed`
+
+2026-04-22 audit kickoff:
+- scope: end-to-end repo review/audit for `john-hoe/vega-memory`
+- output: one GitHub issue per confirmed distinct problem/root cause
+- current phase: coverage mapping + existing issue dedupe before lane-by-lane audit
+
+2026-04-22 audit closeout:
+- coverage completed: repo-wide read audit over source/tests/docs plus baseline verification (`npm run build`, `npm test`, `npm audit --omit=dev`)
+- baseline verification: `npm run build` passed; `npm test` passed (`1342` / `1342`)
+- confirmed findings filed as separate GitHub issues:
+  - `#62` `[audit] health: CLI health/regression command exits 0 even when the report is degraded`
+  - `#63` `[audit] billing: StripeService remains stub-backed even when billing is marked configured`
+  - `#64` `[audit] deps: production lockfile still resolves vulnerable hono and @hono/node-server versions`
+
+2026-04-22 Phase 5 review/audit:
+- scope: reconcile Phase 5 tracking/closeout claims with current implementation, tests, and Phase 5 specs
+- verification run this turn: `npm run build`; `node --test dist/tests/ingestion-pipeline.test.js dist/tests/promotion-orchestrator.test.js dist/tests/judgment-rules.test.js dist/tests/contracts-host-sdk-integration.test.js`
+- confirmed review findings:
+  - layered ingestion spec says Vega-owned ingest continues through candidate extraction/dedup/value judgment/promotion, but the shipped `stageIngestEvent()` path currently stops at `raw_inbox`
+  - Phase 5 closeout claims a judgment-rules override entrypoint and working manual/policy/sweep promotion paths, but runtime wiring only exposes manual candidate actions and always instantiates the default policy with no non-test override source
+- GitHub issues filed:
+  - `#65` `[audit] phase5 ingestion: ingest_event stops at raw_inbox and never materializes candidates`
+  - `#66` `[audit] phase5 promotion: runtime only exposes manual/default policy flow despite closeout claiming override and policy/sweep paths`

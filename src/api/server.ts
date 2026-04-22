@@ -59,7 +59,8 @@ import {
   createDefaultPromotionPolicy,
   createPromotionAuditStore,
   createPromotionEvaluator,
-  createPromotionOrchestrator
+  createPromotionOrchestrator,
+  resolveJudgmentRulesOverrideFromEnv
 } from "../promotion/index.js";
 import {
   createAckStore,
@@ -274,7 +275,9 @@ export function createAPIServer(
       : undefined;
   const candidateRepository = !db.isPostgres ? createCandidateRepository(db) : undefined;
   const promotionAuditStore = !db.isPostgres ? createPromotionAuditStore(db) : undefined;
-  const promotionPolicy = createDefaultPromotionPolicy();
+  const promotionPolicy = createDefaultPromotionPolicy(
+    resolveJudgmentRulesOverrideFromEnv(process.env)
+  );
   const promotionEvaluator =
     candidateRepository !== undefined
       ? createPromotionEvaluator({
@@ -456,7 +459,10 @@ export function createAPIServer(
     app.use(createMcpRouter(activeServices, config, runtimeOptions));
   }
   app.use(["/ingest_event", "/context_resolve", "/usage_ack"], requireAuthorizedHttpRoute);
-  const ingestHandler = createIngestEventHttpHandler(db);
+  const ingestHandler = createIngestEventHttpHandler(db, {
+    candidateRepository,
+    promotionOrchestrator
+  });
   app.post("/ingest_event", (req, res) => {
     const variant = resolveFlagVariant(featureFlags, INGEST_CANARY_FLAG_ID, "off", {
       surface: extractSurfaceFromHeader(req) || "unknown",

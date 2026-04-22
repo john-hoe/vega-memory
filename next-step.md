@@ -1,1 +1,1 @@
-Next: Phase 5 closeout is published. Continue only with later-phase work: Phase 6 retrieval feedback or the remaining deferred derivation/governance items.
+Next: reproduce and fix GitHub audit issues `#62` and `#64` in `john-hoe/vega-memory` by (1) making CLI health/regression return a non-zero exit code for degraded/unhealthy reports, and (2) refreshing the production lockfile away from vulnerable `hono` / `@hono/node-server` versions, then verify with targeted tests plus a full build/test/audit check.

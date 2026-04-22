@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -49,6 +49,30 @@ const runCli = (args: string[], env: NodeJS.ProcessEnv): string =>
     }
   });
 
+const runCliWithStatus = (
+  args: string[],
+  env: NodeJS.ProcessEnv
+): { status: number | null; stdout: string; stderr: string } => {
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", cliBootstrap, "--", ...args],
+    {
+      cwd: projectRoot,
+      encoding: "utf8",
+      env: {
+        ...childBaseEnv,
+        ...env
+      }
+    }
+  );
+
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? ""
+  };
+};
+
 test("CLI help lists core commands", () => {
   const output = runCli(["--help"], {
     VEGA_DB_PATH: ":memory:",
@@ -85,6 +109,24 @@ test("CLI health --regression --json includes regression guard data", () => {
     assert.equal(typeof output.status, "string");
     assert.equal(typeof output.regression_guard.status, "string");
     assert.equal(output.regression_guard.thresholds.max_session_start_token, 2500);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CLI health --regression --json exits non-zero when the report is degraded", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "vega-cli-health-exit-"));
+  const dbPath = join(tempDir, "memory.db");
+
+  try {
+    const result = runCliWithStatus(["health", "--regression", "--json"], {
+      VEGA_DB_PATH: dbPath,
+      OLLAMA_BASE_URL: "http://localhost:99999"
+    });
+
+    assert.equal(result.status, 1);
+    const output = JSON.parse(result.stdout) as { status: string };
+    assert.equal(output.status, "degraded");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

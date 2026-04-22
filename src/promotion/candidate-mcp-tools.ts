@@ -89,6 +89,15 @@ export const CANDIDATE_DEMOTE_SCHEMA = z.object({
   reason: z.string().trim().min(1).optional()
 });
 
+export const CANDIDATE_EVALUATE_SCHEMA = z.object({
+  id: z.string().trim().min(1),
+  actor: z.string().trim().min(1).optional().default("system")
+});
+
+export const CANDIDATE_SWEEP_SCHEMA = z.object({
+  actor: z.string().trim().min(1).optional().default("system")
+});
+
 function toSummary(record: ReturnType<CandidateRepository["findById"]>): CandidateSummary {
   if (record === undefined) {
     throw new Error("Candidate summary requires a record");
@@ -238,6 +247,82 @@ export function createCandidateDemoteMcpTool(
         memory_id: result.memory_id,
         audit_entry_id: result.audit_entry_id,
         reason: result.decision.reason
+      };
+    }
+  };
+}
+
+export function createCandidateEvaluateMcpTool(
+  orchestrator: PromotionOrchestrator | undefined
+): CandidateMcpTool<
+  "candidate_evaluate",
+  | {
+      status: string;
+      memory_id: string;
+      audit_entry_id: string;
+      reason: string;
+    }
+  | { degraded: "promotion_unavailable" }
+> {
+  return {
+    name: "candidate_evaluate",
+    description: "Run the policy trigger against one candidate without forcing a manual promotion.",
+    inputSchema: createInputSchema(CANDIDATE_EVALUATE_SCHEMA),
+    async invoke(request) {
+      if (orchestrator === undefined) {
+        return {
+          degraded: "promotion_unavailable"
+        };
+      }
+
+      const parsed = CANDIDATE_EVALUATE_SCHEMA.parse(request);
+      const result = orchestrator.evaluateAndAct(parsed.id, "policy", parsed.actor);
+
+      return {
+        status: result.status,
+        memory_id: result.memory_id,
+        audit_entry_id: result.audit_entry_id,
+        reason: result.decision.reason
+      };
+    }
+  };
+}
+
+export function createCandidateSweepMcpTool(
+  orchestrator: PromotionOrchestrator | undefined
+): CandidateMcpTool<
+  "candidate_sweep",
+  | {
+      results: Array<{
+        status: string;
+        memory_id: string;
+        audit_entry_id: string;
+        reason: string;
+      }>;
+    }
+  | { degraded: "promotion_unavailable" }
+> {
+  return {
+    name: "candidate_sweep",
+    description: "Run the sweep trigger across all sweep-eligible candidates.",
+    inputSchema: createInputSchema(CANDIDATE_SWEEP_SCHEMA),
+    async invoke(request) {
+      if (orchestrator === undefined) {
+        return {
+          degraded: "promotion_unavailable"
+        };
+      }
+
+      const parsed = CANDIDATE_SWEEP_SCHEMA.parse(request);
+      const results = orchestrator.runSweep(parsed.actor);
+
+      return {
+        results: results.map((result) => ({
+          status: result.status,
+          memory_id: result.memory_id,
+          audit_entry_id: result.audit_entry_id,
+          reason: result.decision.reason
+        }))
       };
     }
   };

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { HostEventEnvelopeV1 } from "../core/contracts/envelope.js";
+import { createCandidateRepository } from "../db/candidate-repository.js";
 import { SQLiteAdapter } from "../db/sqlite-adapter.js";
 import { createIngestEventHttpHandler, createIngestEventMcpTool } from "../ingestion/ingest-event-handler.js";
 import { applyRawInboxMigration } from "../ingestion/raw-inbox.js";
+import type { PromotionTrigger } from "../promotion/policy.js";
 
 const createEnvelope = (overrides: Partial<HostEventEnvelopeV1> = {}): HostEventEnvelopeV1 => ({
   schema_version: "1.0",
@@ -158,6 +160,70 @@ test("MCP tool invoke accepts non-canonical surface, role, and event_type", asyn
       accepted_event_id: "88888888-8888-4888-8888-888888888888",
       staged_in: "raw_inbox"
     });
+  } finally {
+    db.close();
+  }
+});
+
+test("HTTP handler materializes a candidate when candidate services are provided", async () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    applyRawInboxMigration(db);
+    const candidateRepository = createCandidateRepository(db, { now: () => 1_000 });
+    const handler = createIngestEventHttpHandler(db, {
+      candidateRepository
+    });
+    const response = createResponse();
+
+    await handler({ body: createEnvelope() } as never, response as never);
+
+    assert.equal(response.statusCode, 200);
+    const candidates = candidateRepository.list();
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0]?.content, "hello");
+  } finally {
+    db.close();
+  }
+});
+
+test("MCP tool invoke routes newly materialized candidates through the policy trigger when an orchestrator is provided", async () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    applyRawInboxMigration(db);
+    const candidateRepository = createCandidateRepository(db, { now: () => 1_000 });
+    const evaluations: Array<{ id: string; trigger: string; actor?: string }> = [];
+    const tool = createIngestEventMcpTool(db, {
+      candidateRepository,
+      promotionOrchestrator: {
+        evaluateAndAct(id: string, trigger: PromotionTrigger, actor?: string) {
+          evaluations.push({ id, trigger, actor });
+          return {
+            status: "kept",
+            memory_id: id,
+            audit_entry_id: "audit-1",
+            decision: {
+              action: "hold",
+              reason: "held during test",
+              policy_name: "default",
+              policy_version: "v1"
+            }
+          };
+        }
+      } as never
+    });
+
+    await tool.invoke(createEnvelope());
+
+    assert.equal(candidateRepository.size(), 1);
+    assert.deepEqual(evaluations, [
+      {
+        id: candidateRepository.list()[0]!.id,
+        trigger: "policy",
+        actor: "ingest_event"
+      }
+    ]);
   } finally {
     db.close();
   }

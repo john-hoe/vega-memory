@@ -6,6 +6,8 @@ import {
 } from "../core/contracts/envelope.js";
 import { SOURCE_KINDS } from "../core/contracts/enums.js";
 import type { DatabaseAdapter } from "../db/adapter.js";
+import type { CandidateRepository } from "../db/candidate-repository.js";
+import type { PromotionOrchestrator } from "../promotion/orchestrator.js";
 import { stageIngestEvent, type StageIngestEventResult } from "./pipeline.js";
 
 export interface IngestEventResponse {
@@ -18,6 +20,12 @@ export interface IngestEventMcpTool {
   description: string;
   inputSchema: object;
   invoke(envelope: unknown): Promise<IngestEventResponse>;
+}
+
+export interface IngestEventRuntimeOptions {
+  candidateRepository?: CandidateRepository;
+  promotionOrchestrator?: PromotionOrchestrator;
+  policyActor?: string;
 }
 
 const ENVELOPE_INPUT_SCHEMA = {
@@ -92,7 +100,8 @@ const formatValidationDetail = (issues: { path: PropertyKey[]; message: string }
     .join("; ");
 
 export function createIngestEventHttpHandler(
-  db: DatabaseAdapter
+  db: DatabaseAdapter,
+  options: IngestEventRuntimeOptions = {}
 ): (req: Request, res: Response) => Promise<void> {
   return async (req: Request, res: Response): Promise<void> => {
     try {
@@ -106,21 +115,24 @@ export function createIngestEventHttpHandler(
         return;
       }
 
-      res.status(200).json(stageIngestEvent(db, parsed.data));
+      res.status(200).json(stageIngestEvent(db, parsed.data, options));
     } catch {
       res.status(500).json({ error: "InternalError" });
     }
   };
 }
 
-export function createIngestEventMcpTool(db: DatabaseAdapter): IngestEventMcpTool {
+export function createIngestEventMcpTool(
+  db: DatabaseAdapter,
+  options: IngestEventRuntimeOptions = {}
+): IngestEventMcpTool {
   return {
     name: "ingest_event",
     description: "Stages a Host Event Envelope v1 into raw_inbox with idempotent dedupe semantics.",
     inputSchema: ENVELOPE_INPUT_SCHEMA,
     async invoke(envelope: unknown): Promise<IngestEventResponse> {
       const parsed = HOST_EVENT_ENVELOPE_TRANSPORT_V1.parse(envelope);
-      return stageIngestEvent(db, parsed);
+      return stageIngestEvent(db, parsed, options);
     }
   };
 }

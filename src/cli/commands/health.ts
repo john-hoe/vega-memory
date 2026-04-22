@@ -8,6 +8,9 @@ import type { Repository } from "../../db/repository.js";
 const formatMetric = (label: string, metric: RegressionMetricSummary): string =>
   `${label}: latest=${metric.latest ?? "n/a"} avg=${metric.average ?? "n/a"} p95=${metric.p95 ?? "n/a"} p99=${metric.p99 ?? "n/a"} count=${metric.count}`;
 
+const shouldFailHealthCommand = (status: "healthy" | "degraded" | "unhealthy"): boolean =>
+  status === "degraded" || status === "unhealthy";
+
 export function registerHealthCommand(
   program: Command,
   repository: Repository,
@@ -20,9 +23,13 @@ export function registerHealthCommand(
     .option("--regression", "include regression guard metrics")
     .action(async (options: { json?: boolean; regression?: boolean }) => {
       const report = await getHealthReport(repository, config);
+      const shouldFail = shouldFailHealthCommand(report.status);
 
       if (options.json) {
         console.log(JSON.stringify(report, null, 2));
+        if (shouldFail) {
+          process.exitCode = 1;
+        }
         return;
       }
 
@@ -40,6 +47,9 @@ export function registerHealthCommand(
       }
 
       if (!options.regression) {
+        if (shouldFail) {
+          process.exitCode = 1;
+        }
         return;
       }
 
@@ -98,6 +108,10 @@ export function registerHealthCommand(
         for (const violation of regression.violations) {
           console.log(`- ${violation.message}`);
         }
+      }
+
+      if (shouldFail) {
+        process.exitCode = 1;
       }
     });
 }

@@ -4,7 +4,8 @@ import test from "node:test";
 import {
   createJudgmentRules,
   mergeJudgmentRules,
-  DEFAULT_JUDGMENT_RULES
+  DEFAULT_JUDGMENT_RULES,
+  resolveJudgmentRulesOverrideFromEnv
 } from "../promotion/judgment-rules.js";
 
 test("default judgment rules have expected values", () => {
@@ -78,4 +79,34 @@ test("mergeJudgmentRules can override name and version too", () => {
   const merged = mergeJudgmentRules(base, { name: "override", version: "v9" });
   assert.equal(merged.name, "override");
   assert.equal(merged.version, "v9");
+});
+
+test("resolveJudgmentRulesOverrideFromEnv reads supported runtime overrides", () => {
+  const override = resolveJudgmentRulesOverrideFromEnv({
+    VEGA_PROMOTION_RULESET_NAME: "strict",
+    VEGA_PROMOTION_RULESET_VERSION: "v2",
+    VEGA_PROMOTION_AGE_THRESHOLD_MS: "1234",
+    VEGA_PROMOTION_MIN_SUFFICIENT_ACKS: "5",
+    VEGA_PROMOTION_MIN_DISTINCT_SESSIONS: "3"
+  });
+
+  assert.deepEqual(override, {
+    name: "strict",
+    version: "v2",
+    rules: {
+      age_threshold_ms: 1234,
+      min_sufficient_acks: 5,
+      min_distinct_sessions: 3
+    }
+  });
+});
+
+test("resolveJudgmentRulesOverrideFromEnv ignores invalid or non-positive values", () => {
+  const override = resolveJudgmentRulesOverrideFromEnv({
+    VEGA_PROMOTION_AGE_THRESHOLD_MS: "0",
+    VEGA_PROMOTION_MIN_SUFFICIENT_ACKS: "-1",
+    VEGA_PROMOTION_MIN_DISTINCT_SESSIONS: "abc"
+  });
+
+  assert.deepEqual(override, {});
 });

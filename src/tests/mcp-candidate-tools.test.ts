@@ -5,9 +5,11 @@ import { SQLiteAdapter } from "../db/sqlite-adapter.js";
 import { createCandidateRepository } from "../db/candidate-repository.js";
 import {
   createCandidateCreateMcpTool,
+  createCandidateEvaluateMcpTool,
   createCandidateDemoteMcpTool,
   createCandidateListMcpTool,
-  createCandidatePromoteMcpTool
+  createCandidatePromoteMcpTool,
+  createCandidateSweepMcpTool
 } from "../promotion/candidate-mcp-tools.js";
 
 test("candidate_create creates a pending candidate when the repository is available", async () => {
@@ -195,5 +197,101 @@ test("mutation tools throw when the orchestrator rejects an explicit candidate a
         actor: "tester"
       }),
     /CandidateNotFound/
+  );
+});
+
+test("candidate_evaluate and candidate_sweep expose policy and sweep runtime paths", async () => {
+  const calls: Array<{ kind: "evaluate" | "sweep"; id?: string; trigger?: string; actor?: string }> = [];
+  const orchestrator = {
+    evaluateAndAct(id: string, trigger: string, actor?: string) {
+      calls.push({ kind: "evaluate", id, trigger, actor });
+      return {
+        status: "held" as const,
+        memory_id: id,
+        decision: {
+          action: "hold" as const,
+          reason: "policy reviewed candidate",
+          policy_name: "default",
+          policy_version: "v1"
+        },
+        audit_entry_id: "audit-evaluate"
+      };
+    },
+    runSweep(actor?: string) {
+      calls.push({ kind: "sweep", actor });
+      return [
+        {
+          status: "promoted" as const,
+          memory_id: "candidate-1",
+          decision: {
+            action: "promote" as const,
+            reason: "sweep promoted candidate",
+            policy_name: "default",
+            policy_version: "v1"
+          },
+          audit_entry_id: "audit-sweep"
+        }
+      ];
+    }
+  };
+
+  const evaluateTool = createCandidateEvaluateMcpTool(orchestrator as never);
+  const sweepTool = createCandidateSweepMcpTool(orchestrator as never);
+
+  const evaluated = await evaluateTool.invoke({
+    id: "candidate-1",
+    actor: "tester"
+  });
+  const swept = await sweepTool.invoke({
+    actor: "scheduler"
+  });
+
+  assert.deepEqual(evaluated, {
+    status: "held",
+    memory_id: "candidate-1",
+    audit_entry_id: "audit-evaluate",
+    reason: "policy reviewed candidate"
+  });
+  assert.deepEqual(swept, {
+    results: [
+      {
+        status: "promoted",
+        memory_id: "candidate-1",
+        audit_entry_id: "audit-sweep",
+        reason: "sweep promoted candidate"
+      }
+    ]
+  });
+  assert.deepEqual(calls, [
+    {
+      kind: "evaluate",
+      id: "candidate-1",
+      trigger: "policy",
+      actor: "tester"
+    },
+    {
+      kind: "sweep",
+      actor: "scheduler"
+    }
+  ]);
+});
+
+test("candidate_evaluate and candidate_sweep degrade cleanly when promotion runtime is unavailable", async () => {
+  const evaluateTool = createCandidateEvaluateMcpTool(undefined);
+  const sweepTool = createCandidateSweepMcpTool(undefined);
+
+  assert.deepEqual(
+    await evaluateTool.invoke({
+      id: "candidate-1"
+    }),
+    {
+      degraded: "promotion_unavailable"
+    }
+  );
+  assert.deepEqual(
+    await sweepTool.invoke({}),
+    {
+      degraded: "promotion_unavailable"
+    }
   );
 });
