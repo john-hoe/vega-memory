@@ -4,5 +4,7 @@ export * from "./envelope-builder.js";
 export * from "./envelope-validator.js";
 export * from "./bundle.js";
 export * from "./usage-ack.js";
+export * from "./usage-checkpoint.js";
+export * from "./usage-fallback.js";
 export * from "./checkpoint-record.js";
 export * from "./intent.js";

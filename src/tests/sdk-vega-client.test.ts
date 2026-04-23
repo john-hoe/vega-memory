@@ -4,6 +4,7 @@ import test from "node:test";
 import type { HostEventEnvelopeV1 } from "../core/contracts/envelope.js";
 import type { IntentRequest } from "../core/contracts/intent.js";
 import type { UsageAck } from "../core/contracts/usage-ack.js";
+import type { UsageCheckpoint } from "../core/contracts/usage-checkpoint.js";
 import { VegaClient, VegaClientError } from "../sdk/vega-client.js";
 
 const createClient = () =>
@@ -57,6 +58,14 @@ const createAck = (): UsageAck => ({
   bundle_digest: "bundle-1",
   sufficiency: "sufficient",
   host_tier: "T2"
+});
+
+const createUsageCheckpoint = (): UsageCheckpoint => ({
+  bundle_id: "bundle-1",
+  checkpoint_id: "checkpoint-1",
+  decision_state: "sufficient",
+  used_items: ["wiki:wiki-1", "vega_memory:mem-1"],
+  working_summary: "Host consumed bundle and identified next steps for implementation."
 });
 
 test("VegaClient.ingestEvent posts envelopes and returns the accepted event response", async () => {
@@ -113,6 +122,64 @@ test("VegaClient.usageAck posts usage acknowledgements and returns ack responses
   });
 });
 
+test("VegaClient.usageAck posts P7-011 memory feedback acknowledgements", async () => {
+  await withFetchStub((async (input, init) => {
+    assert.equal(String(input), "https://vega.example/usage_ack");
+    assert.deepEqual(JSON.parse(String(init?.body)), {
+      memory_id: "memory-1",
+      ack_type: "accepted",
+      context: {
+        query: "phase7 local code audit",
+        intent: "lookup",
+        surface: "codex"
+      },
+      session_id: "session-1",
+      event_id: "22222222-2222-4222-8222-222222222222",
+      ts: "2026-04-23T08:00:00.000Z"
+    });
+    return new Response(JSON.stringify({
+      ack: true,
+      event_id: "22222222-2222-4222-8222-222222222222",
+      memory_id: "memory-1",
+      idempotent: false,
+      counters: { accepted: 1, rejected: 0, reranked: 0, total: 1 },
+      bounded_surfaces: ["retrieval_prior", "ranking_bias", "value_judgment_stats"]
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }) as typeof fetch, async () => {
+    const result = await createClient().usageAck({
+      memory_id: "memory-1",
+      ack_type: "accepted",
+      context: {
+        query: "phase7 local code audit",
+        intent: "lookup",
+        surface: "codex"
+      },
+      session_id: "session-1",
+      event_id: "22222222-2222-4222-8222-222222222222",
+      ts: "2026-04-23T08:00:00.000Z"
+    });
+    assert.equal(result.ack, true);
+    assert.equal((result as { memory_id?: string }).memory_id, "memory-1");
+  });
+});
+
+test("VegaClient.usageCheckpoint posts usage checkpoints and returns accepted responses", async () => {
+  await withFetchStub((async (input, init) => {
+    assert.equal(String(input), "https://vega.example/usage_checkpoint");
+    assert.deepEqual(JSON.parse(String(init?.body)), createUsageCheckpoint());
+    return new Response(JSON.stringify({ accepted: true, checkpoint_id: "checkpoint-1", decision_state: "sufficient" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }) as typeof fetch, async () => {
+    const result = await createClient().usageCheckpoint(createUsageCheckpoint());
+    assert.deepEqual(result, { accepted: true, checkpoint_id: "checkpoint-1", decision_state: "sufficient" });
+  });
+});
+
 test("VegaClient retries 5xx responses and returns the first later success", async () => {
   let attempts = 0;
 
@@ -128,6 +195,35 @@ test("VegaClient retries 5xx responses and returns the first later success", asy
     const result = await createClient().usageAck(createAck());
     assert.deepEqual(result, { ack: true });
     assert.equal(attempts, 3);
+  });
+});
+
+test("VegaClient.usageFallback posts usage fallback requests and returns fallback responses", async () => {
+  await withFetchStub((async (input, init) => {
+    assert.equal(String(input), "https://vega.example/usage_fallback");
+    assert.deepEqual(JSON.parse(String(init?.body)), {
+      checkpoint_id: "checkpoint-1",
+      local_exhausted: false
+    });
+    return new Response(JSON.stringify({
+      checkpoint_id: "checkpoint-1",
+      ladder_active: true,
+      current_target: "local_workspace",
+      allowed_sources: ["repo_code", "current_file"],
+      stop_conditions: ["sufficient_facts_for_next_step"],
+      user_decision_required: false
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }) as typeof fetch, async () => {
+    const result = await createClient().usageFallback({
+      checkpoint_id: "checkpoint-1",
+      local_exhausted: false
+    });
+    assert.equal(result.checkpoint_id, "checkpoint-1");
+    assert.equal(result.ladder_active, true);
+    assert.equal(result.current_target, "local_workspace");
   });
 });
 

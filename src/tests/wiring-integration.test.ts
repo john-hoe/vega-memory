@@ -35,7 +35,9 @@ import { createCircuitBreaker } from "../retrieval/circuit-breaker.js";
 import { RAW_INBOX_TABLE, applyRawInboxMigration } from "../ingestion/raw-inbox.js";
 import { SearchEngine } from "../search/engine.js";
 import { createUsageAckHttpHandler, createUsageAckMcpTool } from "../usage/usage-ack-handler.js";
-import { createAckStore } from "../usage/index.js";
+import { createUsageCheckpointHttpHandler, createUsageCheckpointMcpTool } from "../usage/usage-checkpoint-handler.js";
+import { createUsageFallbackHttpHandler, createUsageFallbackMcpTool } from "../usage/usage-fallback-handler.js";
+import { createAckStore, createUsageConsumptionCheckpointStore } from "../usage/index.js";
 
 const projectRoot = process.cwd();
 const cliPath = join(projectRoot, "dist", "cli", "index.js");
@@ -238,6 +240,8 @@ test("ingest_event, context.resolve, usage.ack, and candidate MCP factories expo
       }
     } as never);
     const usageAckTool = createUsageAckMcpTool(createAckStore(db));
+    const usageCheckpointTool = createUsageCheckpointMcpTool(createUsageConsumptionCheckpointStore(db));
+    const usageFallbackTool = createUsageFallbackMcpTool(createUsageConsumptionCheckpointStore(db));
     const circuitBreaker = createCircuitBreaker();
     const circuitBreakerStatusTool = createCircuitBreakerStatusMcpTool(circuitBreaker);
     const circuitBreakerResetTool = createCircuitBreakerResetMcpTool(circuitBreaker);
@@ -251,6 +255,8 @@ test("ingest_event, context.resolve, usage.ack, and candidate MCP factories expo
     assert.equal(ingestEventTool.name, "ingest_event");
     assert.equal(contextResolveTool.name, "context.resolve");
     assert.equal(usageAckTool.name, "usage.ack");
+    assert.equal(usageCheckpointTool.name, "usage.checkpoint");
+    assert.equal(usageFallbackTool.name, "usage.fallback");
     assert.equal(circuitBreakerStatusTool.name, "circuit_breaker_status");
     assert.equal(circuitBreakerResetTool.name, "circuit_breaker_reset");
     assert.equal(candidateCreateTool.name, "candidate_create");
@@ -330,7 +336,7 @@ test("intent request schema allows omitted or empty queries", () => {
   assert.equal(validQuery.success, true);
 });
 
-test("POST /ingest_event, POST /context_resolve, and POST /usage_ack are mounted on the HTTP API", async () => {
+test("POST /ingest_event, POST /context_resolve, POST /usage_ack, POST /usage_checkpoint, and POST /usage_fallback are mounted on the HTTP API", async () => {
   const harness = await createApiHarness();
 
   try {
@@ -355,10 +361,26 @@ test("POST /ingest_event, POST /context_resolve, and POST /usage_ack are mounted
       },
       body: JSON.stringify({})
     });
+    const usageCheckpointResponse = await fetch(`${harness.baseUrl}/usage_checkpoint`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({})
+    });
+    const usageFallbackResponse = await fetch(`${harness.baseUrl}/usage_fallback`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({})
+    });
 
     assert.notEqual(ingestResponse.status, 404);
     assert.notEqual(contextResolveResponse.status, 404);
     assert.notEqual(usageAckResponse.status, 404);
+    assert.notEqual(usageCheckpointResponse.status, 404);
+    assert.notEqual(usageFallbackResponse.status, 404);
   } finally {
     await harness.cleanup();
   }
@@ -418,6 +440,42 @@ test("POST /usage_ack returns 401 without authorization when apiKey is configure
   }
 });
 
+test("POST /usage_checkpoint returns 401 without authorization when apiKey is configured", async () => {
+  const harness = await createApiHarness("top-secret");
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/usage_checkpoint`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({})
+    });
+
+    assert.equal(response.status, 401);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("POST /usage_fallback returns 401 without authorization when apiKey is configured", async () => {
+  const harness = await createApiHarness("top-secret");
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/usage_fallback`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({})
+    });
+
+    assert.equal(response.status, 401);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("POST /usage_ack returns 200 with auth and a valid payload", async () => {
   const harness = await createApiHarness("top-secret");
 
@@ -438,6 +496,75 @@ test("POST /usage_ack returns 200 with auth and a valid payload", async () => {
 
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { ack: true });
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("POST /usage_ack accepts P7-011 memory feedback payloads", async () => {
+  const harness = await createApiHarness("top-secret");
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/usage_ack`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer top-secret",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        memory_id: "memory-1",
+        ack_type: "accepted",
+        context: {
+          query: "phase7 local code audit",
+          intent: "lookup",
+          surface: "codex"
+        },
+        session_id: "session-1",
+        event_id: "22222222-2222-4222-8222-222222222222",
+        ts: "2026-04-23T08:00:00.000Z"
+      })
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ack, true);
+    assert.equal(body.memory_id, "memory-1");
+    assert.equal(body.idempotent, false);
+    assert.deepEqual(body.counters, {
+      accepted: 1,
+      rejected: 0,
+      reranked: 0,
+      total: 1
+    });
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("POST /usage_checkpoint returns 200 with auth and a valid payload", async () => {
+  const harness = await createApiHarness("top-secret");
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/usage_checkpoint`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer top-secret",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        bundle_id: "bundle-1",
+        checkpoint_id: "checkpoint-1",
+        decision_state: "sufficient",
+        used_items: ["wiki:wiki-1", "vega_memory:mem-1"],
+        working_summary: "Host consumed bundle and identified next steps for implementation."
+      })
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.accepted, true);
+    assert.equal(body.checkpoint_id, "checkpoint-1");
+    assert.equal(body.decision_state, "sufficient");
   } finally {
     await harness.cleanup();
   }
@@ -561,6 +688,26 @@ test("MCP server registers usage.ack", async () => {
 
   try {
     assert.equal(typeof getRegisteredTools(harness.server)["usage.ack"]?.handler, "function");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("MCP server registers usage.checkpoint", async () => {
+  const harness = createMcpHarness();
+
+  try {
+    assert.equal(typeof getRegisteredTools(harness.server)["usage.checkpoint"]?.handler, "function");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("MCP server registers usage.fallback", async () => {
+  const harness = createMcpHarness();
+
+  try {
+    assert.equal(typeof getRegisteredTools(harness.server)["usage.fallback"]?.handler, "function");
   } finally {
     await harness.cleanup();
   }

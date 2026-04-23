@@ -36,6 +36,8 @@ import {
 import { HOST_EVENT_ENVELOPE_V1 } from "../core/contracts/envelope.js";
 import { INTENT_REQUEST_SCHEMA } from "../core/contracts/intent.js";
 import { USAGE_ACK_SCHEMA } from "../core/contracts/usage-ack.js";
+import { USAGE_CHECKPOINT_SCHEMA } from "../core/contracts/usage-checkpoint.js";
+import { USAGE_FALLBACK_REQUEST_SCHEMA } from "../core/contracts/usage-fallback.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { ConsolidationApprovalService } from "../core/consolidation-approval.js";
 import { ConsolidationDashboardService } from "../core/consolidation-dashboard.js";
@@ -114,9 +116,17 @@ import {
 import {
   createAckStore,
   createCheckpointFailureStore,
-  createCheckpointStore
+  createCheckpointStore,
+  createUsageConsumptionCheckpointStore
 } from "../usage/index.js";
+import {
+  createFeedbackUsageAckMcpTool,
+  createFeedbackUsageAckStore,
+  isFeedbackUsageAckRequest
+} from "../feedback/usage-ack-handler.js";
 import { createUsageAckMcpTool } from "../usage/usage-ack-handler.js";
+import { createUsageCheckpointMcpTool } from "../usage/usage-checkpoint-handler.js";
+import { createUsageFallbackMcpTool } from "../usage/usage-fallback-handler.js";
 import { CrossReferenceService } from "../wiki/cross-reference.js";
 import { PageManager } from "../wiki/page-manager.js";
 import { reviewWikiPage, WIKI_REVIEW_ACTIONS } from "../wiki/review.js";
@@ -833,6 +843,9 @@ export function createMCPServer({
   const checkpointFailureStore = !activeRepository.db.isPostgres
     ? createCheckpointFailureStore(activeRepository.db)
     : undefined;
+  const usageConsumptionCheckpointStore = !activeRepository.db.isPostgres
+    ? createUsageConsumptionCheckpointStore(activeRepository.db)
+    : undefined;
   const circuitBreaker =
     !activeRepository.db.isPostgres && checkpointStore && ackStore
       ? createCircuitBreaker()
@@ -973,6 +986,14 @@ export function createMCPServer({
     undefined,
     circuitBreaker
   );
+  const feedbackAckStore = !activeRepository.db.isPostgres
+    ? createFeedbackUsageAckStore(activeRepository.db)
+    : undefined;
+  const feedbackAckTool = feedbackAckStore
+    ? createFeedbackUsageAckMcpTool(feedbackAckStore)
+    : undefined;
+  const usageCheckpointTool = createUsageCheckpointMcpTool(usageConsumptionCheckpointStore);
+  const usageFallbackTool = createUsageFallbackMcpTool(usageConsumptionCheckpointStore);
   const circuitBreakerStatusTool = createCircuitBreakerStatusMcpTool(circuitBreaker);
   const circuitBreakerResetTool = createCircuitBreakerResetMcpTool(circuitBreaker);
   const flagHitMetrics = createFlagHitMetricsCollector();
@@ -2244,6 +2265,14 @@ export function createMCPServer({
     },
     async (args: unknown) =>
       runTool(repository, usageAckTool.name, args, observer, async () => {
+        if (isFeedbackUsageAckRequest(args) && feedbackAckTool) {
+          const result = await feedbackAckTool.invoke(args);
+          return {
+            result: result as unknown as Record<string, unknown>,
+            resultCount: 1
+          };
+        }
+
         const checkpointId =
           typeof args === "object" &&
           args !== null &&
@@ -2276,6 +2305,40 @@ export function createMCPServer({
             echoed_source_kinds: variant === "on"
           }
         ).invoke(args);
+
+        return {
+          result: result as unknown as Record<string, unknown>,
+          resultCount: 1
+        };
+      })
+  );
+
+  server.registerTool(
+    usageCheckpointTool.name,
+    {
+      description: usageCheckpointTool.description,
+      inputSchema: USAGE_CHECKPOINT_SCHEMA.shape
+    },
+    async (args: unknown) =>
+      runTool(repository, usageCheckpointTool.name, args, observer, async () => {
+        const result = await usageCheckpointTool.invoke(args);
+
+        return {
+          result,
+          resultCount: 1
+        };
+      })
+  );
+
+  server.registerTool(
+    usageFallbackTool.name,
+    {
+      description: usageFallbackTool.description,
+      inputSchema: USAGE_FALLBACK_REQUEST_SCHEMA.shape
+    },
+    async (args: unknown) =>
+      runTool(repository, usageFallbackTool.name, args, observer, async () => {
+        const result = await usageFallbackTool.invoke(args);
 
         return {
           result,

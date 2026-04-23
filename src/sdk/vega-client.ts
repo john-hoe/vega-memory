@@ -1,13 +1,21 @@
 import type { HostEventEnvelopeTransportV1 } from "../core/contracts/envelope.js";
 import type { IntentRequest } from "../core/contracts/intent.js";
 import type { UsageAck } from "../core/contracts/usage-ack.js";
+import type { UsageCheckpoint } from "../core/contracts/usage-checkpoint.js";
+import type { UsageFallbackRequest, UsageFallbackResponse } from "../core/contracts/usage-fallback.js";
+import type { FeedbackUsageAck, FeedbackUsageAckResponse } from "../feedback/usage-ack-handler.js";
 import type { IngestEventResponse } from "../ingestion/ingest-event-handler.js";
 import type { ContextResolveResponse } from "../retrieval/orchestrator.js";
 import type { UsageAckResponse } from "../usage/usage-ack-handler.js";
+import type { UsageCheckpointResponse } from "../usage/usage-checkpoint-handler.js";
 
 export type IngestEventRequest = HostEventEnvelopeTransportV1;
 export type ContextResolveRequest = IntentRequest;
-export type UsageAckRequest = UsageAck;
+export type UsageAckRequest = UsageAck | FeedbackUsageAck;
+export type UsageAckResult = UsageAckResponse | FeedbackUsageAckResponse;
+export type UsageCheckpointRequest = UsageCheckpoint;
+export type UsageFallbackRequestType = UsageFallbackRequest;
+export type UsageFallbackResponseType = UsageFallbackResponse;
 
 export interface VegaClientOptions {
   baseUrl: string;
@@ -44,8 +52,16 @@ export class VegaClient {
     return this.#request("context_resolve", payload);
   }
 
-  usageAck(payload: UsageAckRequest): Promise<UsageAckResponse> {
+  usageAck(payload: UsageAckRequest): Promise<UsageAckResult> {
     return this.#request("usage_ack", payload);
+  }
+
+  usageCheckpoint(payload: UsageCheckpointRequest): Promise<UsageCheckpointResponse> {
+    return this.#request("usage_checkpoint", payload);
+  }
+
+  usageFallback(payload: UsageFallbackRequestType): Promise<UsageFallbackResponseType> {
+    return this.#request("usage_fallback", payload);
   }
 
   async #request<T>(path: string, payload: unknown): Promise<T> {

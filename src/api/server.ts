@@ -65,10 +65,18 @@ import {
 import {
   createAckStore,
   createCheckpointFailureStore,
-  createCheckpointStore
+  createCheckpointStore,
+  createUsageConsumptionCheckpointStore
 } from "../usage/index.js";
 import { buildPhase8Status } from "../usage/phase8-status.js";
+import {
+  createFeedbackUsageAckHttpHandler,
+  createFeedbackUsageAckStore,
+  isFeedbackUsageAckRequest
+} from "../feedback/usage-ack-handler.js";
 import { createUsageAckHttpHandler } from "../usage/usage-ack-handler.js";
+import { createUsageCheckpointHttpHandler } from "../usage/usage-checkpoint-handler.js";
+import { createUsageFallbackHttpHandler } from "../usage/usage-fallback-handler.js";
 import { searchWikiPages } from "../wiki/search.js";
 import {
   createChangelogNotifier,
@@ -268,6 +276,7 @@ export function createAPIServer(
   const checkpointStore = !db.isPostgres ? createCheckpointStore(db) : undefined;
   const ackStore = !db.isPostgres ? createAckStore(db) : undefined;
   const checkpointFailureStore = !db.isPostgres ? createCheckpointFailureStore(db) : undefined;
+  const usageConsumptionCheckpointStore = !db.isPostgres ? createUsageConsumptionCheckpointStore(db) : undefined;
   const vegaMetrics = createVegaMetrics(metrics, db);
   const circuitBreaker =
     !db.isPostgres && checkpointStore && ackStore
@@ -460,7 +469,7 @@ export function createAPIServer(
   if (config.apiKey !== undefined) {
     app.use(createMcpRouter(activeServices, config, runtimeOptions));
   }
-  app.use(["/ingest_event", "/context_resolve", "/usage_ack"], requireAuthorizedHttpRoute);
+  app.use(["/ingest_event", "/context_resolve", "/usage_ack", "/usage_checkpoint", "/usage_fallback"], requireAuthorizedHttpRoute);
   const ingestHandler = createIngestEventHttpHandler(db, {
     candidateRepository,
     promotionOrchestrator
@@ -474,7 +483,14 @@ export function createAPIServer(
     return ingestHandler(req, res);
   });
   app.post("/context_resolve", createContextResolveHttpHandler(retrievalOrchestrator));
+  const feedbackAckStore = !db.isPostgres ? createFeedbackUsageAckStore(db) : undefined;
   app.post("/usage_ack", async (req, res) => {
+    if (isFeedbackUsageAckRequest(req.body)) {
+      const feedbackHandler = createFeedbackUsageAckHttpHandler(feedbackAckStore);
+      await feedbackHandler(req, res);
+      return;
+    }
+
     const checkpointId =
       typeof req.body === "object" &&
       req.body !== null &&
@@ -509,6 +525,8 @@ export function createAPIServer(
     );
     await handler(req, res);
   });
+  app.post("/usage_checkpoint", createUsageCheckpointHttpHandler(usageConsumptionCheckpointStore, vegaMetrics));
+  app.post("/usage_fallback", createUsageFallbackHttpHandler(usageConsumptionCheckpointStore, vegaMetrics));
   app.use(
     createRouter({
       ...activeServices,
