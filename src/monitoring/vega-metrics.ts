@@ -48,8 +48,20 @@ type HostTierLabel = HostTier;
 export interface VegaMetricsRegistry {
   recordRetrievalCall(surface: Surface, intent: RetrievalIntent): void;
   recordRetrievalNonempty(surface: Surface, intent: RetrievalIntent): void;
+  recordRetrievalObservability(
+    surface: Surface,
+    intent: RetrievalIntent,
+    metrics: {
+      token_efficiency: number;
+      source_utilization: number;
+      bundle_coverage: number;
+    }
+  ): void;
   recordUsageAck(surface: Surface, sufficiency: SufficiencyLabel, host_tier: HostTierLabel): void;
   recordLoopOverride(surface: Surface): void;
+  recordMissingTrigger(surface: Surface | "unknown"): void;
+  recordSkippedBundle(surface: Surface | "unknown"): void;
+  recordRepeatedFollowupInflation(surface: Surface): void;
   setCircuitState(surface: Surface, state: CircuitBreakerState): void;
   recordCircuitTrip(surface: Surface, reason: CircuitBreakerTripReason): void;
 }
@@ -122,6 +134,21 @@ export function createVegaMetrics(
     "Counts context.resolve calls that returned a non-empty retrieval bundle (error bundles excluded). Per-process counter.",
     ["surface", "intent"]
   );
+  const retrievalTokenEfficiency = collector.gauge(
+    "retrieval_token_efficiency_ratio",
+    "Latest per-surface, per-intent retrieval token efficiency proxy: bundle token estimate divided by raw retrieved token estimate.",
+    ["surface", "intent"]
+  );
+  const retrievalSourceUtilization = collector.gauge(
+    "retrieval_source_utilization_ratio",
+    "Latest per-surface, per-intent source utilization ratio: used_sources divided by queried source count for the resolve attempt.",
+    ["surface", "intent"]
+  );
+  const retrievalBundleCoverage = collector.gauge(
+    "retrieval_bundle_coverage_ratio",
+    "Latest per-surface, per-intent bundle coverage proxy: budgeted record count divided by expected top_k for the resolve attempt.",
+    ["surface", "intent"]
+  );
   const usageAck = collector.counter(
     "usage_ack_total",
     "Counts first-time usage ack inserts. Per-process counter; intent is not labeled because usage_acks cannot reliably recover it.",
@@ -130,6 +157,21 @@ export function createVegaMetrics(
   const usageLoopOverride = collector.counter(
     "usage_followup_loop_override_total",
     "Triggered at usage-ack-handler when loop guard overrideSucceeded === true; per-process counter, proxy signal for sufficiency false-positive, derived from loop guard override.",
+    ["surface"]
+  );
+  const missingTrigger = collector.counter(
+    "retrieval_missing_trigger_total",
+    "Counts usage acknowledgements that arrive without a known retrieval checkpoint context; proxy signal for host-side missing retrieval trigger or broken lineage.",
+    ["surface"]
+  );
+  const skippedBundle = collector.counter(
+    "retrieval_skipped_bundle_total",
+    "Counts bundle-digest mismatches on usage acknowledgements; proxy signal that the host did not consume the expected retrieval bundle.",
+    ["surface"]
+  );
+  const repeatedFollowupInflation = collector.counter(
+    "retrieval_followup_inflation_total",
+    "Counts repeated followup resolves on an existing retrieval lineage (depth >= 1); proxy signal for repeated followup inflation.",
     ["surface"]
   );
   const circuitState = collector.gauge(
@@ -211,6 +253,15 @@ export function createVegaMetrics(
     recordRetrievalNonempty(surface, intent): void {
       incrementRetrievalMetric(retrievalNonempty, surface, intent);
     },
+    recordRetrievalObservability(surface, intent, metrics): void {
+      const labels = {
+        surface: coerceSurface(surface),
+        intent: coerceIntent(intent)
+      };
+      retrievalTokenEfficiency.set(metrics.token_efficiency, labels);
+      retrievalSourceUtilization.set(metrics.source_utilization, labels);
+      retrievalBundleCoverage.set(metrics.bundle_coverage, labels);
+    },
     recordUsageAck(surface, sufficiency, host_tier): void {
       usageAck.inc({
         surface: coerceSurface(surface),
@@ -220,6 +271,21 @@ export function createVegaMetrics(
     },
     recordLoopOverride(surface): void {
       usageLoopOverride.inc({
+        surface: coerceSurface(surface)
+      });
+    },
+    recordMissingTrigger(surface): void {
+      missingTrigger.inc({
+        surface: coerceSurface(surface)
+      });
+    },
+    recordSkippedBundle(surface): void {
+      skippedBundle.inc({
+        surface: coerceSurface(surface)
+      });
+    },
+    recordRepeatedFollowupInflation(surface): void {
+      repeatedFollowupInflation.inc({
         surface: coerceSurface(surface)
       });
     },

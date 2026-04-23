@@ -77,8 +77,14 @@ test("createVegaMetrics registers all vega metric families and scrapes raw inbox
     for (const [name, type] of [
       ["vega_retrieval_calls_total", "counter"],
       ["vega_retrieval_nonempty_total", "counter"],
+      ["vega_retrieval_token_efficiency_ratio", "gauge"],
+      ["vega_retrieval_source_utilization_ratio", "gauge"],
+      ["vega_retrieval_bundle_coverage_ratio", "gauge"],
       ["vega_usage_ack_total", "counter"],
       ["vega_usage_followup_loop_override_total", "counter"],
+      ["vega_retrieval_missing_trigger_total", "counter"],
+      ["vega_retrieval_skipped_bundle_total", "counter"],
+      ["vega_retrieval_followup_inflation_total", "counter"],
       ["vega_circuit_breaker_state", "gauge"],
       ["vega_circuit_breaker_trips_total", "counter"],
       ["vega_raw_inbox_rows", "gauge"],
@@ -144,19 +150,33 @@ test("createVegaMetrics coerces unknown metric label values to unknown instead o
     const metrics = createVegaMetrics(collector, db);
 
     metrics.recordRetrievalCall("mystery-surface" as never, "mystery-intent" as never);
+    metrics.recordRetrievalObservability("mystery-surface" as never, "mystery-intent" as never, {
+      token_efficiency: 0.5,
+      source_utilization: 0.5,
+      bundle_coverage: 0.5
+    });
     metrics.recordUsageAck("mystery-surface" as never, "mystery-sufficiency" as never, "T9" as never);
     metrics.recordLoopOverride("mystery-surface" as never);
+    metrics.recordMissingTrigger("mystery-surface" as never);
+    metrics.recordSkippedBundle("mystery-surface" as never);
+    metrics.recordRepeatedFollowupInflation("mystery-surface" as never);
     metrics.setCircuitState("mystery-surface" as never, "open");
     metrics.recordCircuitTrip("mystery-surface" as never, "mystery-reason" as never);
 
     const rendered = await collector.getMetrics();
 
     assert.match(rendered, /vega_retrieval_calls_total\{surface="unknown",intent="unknown"\} 1/);
+    assert.match(rendered, /vega_retrieval_token_efficiency_ratio\{surface="unknown",intent="unknown"\} 0.5/);
+    assert.match(rendered, /vega_retrieval_source_utilization_ratio\{surface="unknown",intent="unknown"\} 0.5/);
+    assert.match(rendered, /vega_retrieval_bundle_coverage_ratio\{surface="unknown",intent="unknown"\} 0.5/);
     assert.match(
       rendered,
       /vega_usage_ack_total\{surface="unknown",sufficiency="unknown",host_tier="unknown"\} 1/
     );
     assert.match(rendered, /vega_usage_followup_loop_override_total\{surface="unknown"\} 1/);
+    assert.match(rendered, /vega_retrieval_missing_trigger_total\{surface="unknown"\} 1/);
+    assert.match(rendered, /vega_retrieval_skipped_bundle_total\{surface="unknown"\} 1/);
+    assert.match(rendered, /vega_retrieval_followup_inflation_total\{surface="unknown"\} 1/);
     assert.match(rendered, /vega_circuit_breaker_state\{surface="unknown"\} 1/);
     assert.match(rendered, /vega_circuit_breaker_trips_total\{surface="unknown",reason="unknown"\} 1/);
   } finally {

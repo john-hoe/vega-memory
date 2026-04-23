@@ -34,7 +34,7 @@ function createBudgetedRecord(overrides: Partial<BudgetedRecord> = {}): Budgeted
 }
 
 test("empty input produces an empty bundle with a digest", () => {
-  const assembly = assembleBundle([], 0, 0);
+  const assembly = assembleBundle("checkpoint-empty", [], 0, 0);
 
   assert.equal(assembly.bundle.schema_version, "1.0");
   assert.equal(typeof assembly.bundle_digest, "string");
@@ -45,6 +45,7 @@ test("empty input produces an empty bundle with a digest", () => {
 
 test("records of the same kind share a section and remain score-sorted", () => {
   const assembly = assembleBundle(
+    "checkpoint-same-kind",
     [
       createBudgetedRecord({
         record: {
@@ -78,6 +79,7 @@ test("records of the same kind share a section and remain score-sorted", () => {
 
 test("distinct source kinds become distinct sections", () => {
   const assembly = assembleBundle(
+    "checkpoint-sections",
     [
       createBudgetedRecord({ record: { ...createBudgetedRecord().record, id: "a", source_kind: "wiki" } }),
       createBudgetedRecord({
@@ -104,8 +106,8 @@ test("identical inputs yield identical bundle digests", () => {
       record: { ...createBudgetedRecord().record, id: "stable-2", source_kind: "graph" }
     })
   ];
-  const first = assembleBundle(input, 0, 4);
-  const second = assembleBundle(input, 0, 4);
+  const first = assembleBundle("checkpoint-stable-1", input, 0, 4);
+  const second = assembleBundle("checkpoint-stable-1", input, 0, 4);
 
   assert.equal(first.bundle_digest, second.bundle_digest);
 });

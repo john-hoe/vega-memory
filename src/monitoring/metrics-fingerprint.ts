@@ -30,6 +30,24 @@ export const METRICS_FINGERPRINT = [
     helpFragment: "non-empty retrieval bundle"
   },
   {
+    name: "vega_retrieval_token_efficiency_ratio",
+    type: "gauge",
+    labelKeys: ["surface", "intent"],
+    helpFragment: "retrieval token efficiency proxy"
+  },
+  {
+    name: "vega_retrieval_source_utilization_ratio",
+    type: "gauge",
+    labelKeys: ["surface", "intent"],
+    helpFragment: "source utilization ratio"
+  },
+  {
+    name: "vega_retrieval_bundle_coverage_ratio",
+    type: "gauge",
+    labelKeys: ["surface", "intent"],
+    helpFragment: "bundle coverage proxy"
+  },
+  {
     name: "vega_usage_ack_total",
     type: "counter",
     labelKeys: ["surface", "sufficiency", "host_tier"],
@@ -40,6 +58,24 @@ export const METRICS_FINGERPRINT = [
     type: "counter",
     labelKeys: ["surface"],
     helpFragment: "loop guard override"
+  },
+  {
+    name: "vega_retrieval_missing_trigger_total",
+    type: "counter",
+    labelKeys: ["surface"],
+    helpFragment: "missing retrieval trigger"
+  },
+  {
+    name: "vega_retrieval_skipped_bundle_total",
+    type: "counter",
+    labelKeys: ["surface"],
+    helpFragment: "host did not consume the expected retrieval bundle"
+  },
+  {
+    name: "vega_retrieval_followup_inflation_total",
+    type: "counter",
+    labelKeys: ["surface"],
+    helpFragment: "repeated followup inflation"
   },
   {
     name: "vega_circuit_breaker_state",

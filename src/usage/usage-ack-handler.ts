@@ -165,6 +165,7 @@ function processUsageAck(
       const checkpoint = previousCheckpoint;
 
       if (checkpoint === undefined) {
+        metrics?.recordMissingTrigger("unknown");
         logger.warn("ack_for_unknown_checkpoint", {
           checkpoint_id: ack.checkpoint_id
         });
@@ -199,6 +200,7 @@ function processUsageAck(
   }
 
   if (digestMismatch) {
+    metrics?.recordSkippedBundle(previousCheckpoint?.surface ?? "unknown");
     return {
       ...(echoedSourceKinds === undefined ? { ack: true } : { ack: true, echoed_source_kinds: echoedSourceKinds }),
       degraded: "bundle_digest_mismatch"

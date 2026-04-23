@@ -217,12 +217,23 @@ test("ingest_event, context.resolve, usage.ack, and candidate MCP factories expo
           bundle_digest: "bundle-1",
           bundle: {
             schema_version: "1.0",
+            checkpoint_id: "checkpoint-1",
             bundle_digest: "bundle-1",
-            sections: []
+            sections: [],
+            used_sources: [],
+            fallback_used: false,
+            confidence: 0,
+            warnings: [],
+            next_retrieval_hint: "none"
           },
           sufficiency_hint: "likely_sufficient",
           profile_used: "lookup",
-          ranker_version: "v1.0"
+          ranker_version: "v1.0",
+          used_sources: [],
+          fallback_used: false,
+          confidence: 0,
+          warnings: [],
+          next_retrieval_hint: "none"
         } satisfies ContextResolveResponse;
       }
     } as never);

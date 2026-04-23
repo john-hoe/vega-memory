@@ -57,19 +57,19 @@ test("ladderApply emits the expected content shape for each ladder level", () =>
   assert.equal(ladderApply(record, "reference").content_used, "[graph:record-2]");
 });
 
-test("sufficient budget keeps every record at full fidelity", () => {
+test("sufficient lookup budget still prefers summary-first output", () => {
   const recordA = createRankedRecord({ id: "a", final_score: 0.9 });
   const recordB = createRankedRecord({ id: "b", final_score: 0.8, source_kind: "vega_memory" });
   const result = applyBudget([recordA, recordB], "L1");
 
   assert.deepEqual(
     result.budgeted.map((entry) => entry.ladder_level),
-    ["full", "full"]
+    ["summary", "summary"]
   );
-  assert.ok(result.total_tokens >= estimateTokens(recordA.content) + estimateTokens(recordB.content));
+  assert.ok(result.total_tokens < estimateTokens(recordA.content) + estimateTokens(recordB.content));
 });
 
-test("tiny budgets downgrade records to references when that is the only fit", () => {
+test("tiny lookup budgets degrade to at most one reference and count the rest as truncated", () => {
   const result = applyBudget(
     [
       createRankedRecord({ id: "a", final_score: 0.9, content: "x".repeat(400) }),
@@ -81,7 +81,7 @@ test("tiny budgets downgrade records to references when that is the only fit", (
 
   assert.deepEqual(
     result.budgeted.map((entry) => entry.ladder_level),
-    ["reference", "reference"]
+    ["reference"]
   );
   assert.equal(result.truncated_count, 2);
 });
@@ -118,4 +118,37 @@ test("manual host_memory_file reserve config still pulls back a record when expl
     result.budgeted.find((entry) => entry.record.id === "host-1")?.ladder_level,
     "reference"
   );
+});
+
+test("lookup uses summary-first even when the full record would fit", () => {
+  const record = createRankedRecord({
+    id: "lookup-summary-first",
+    content: "Lookup headline\n" + "x".repeat(260)
+  });
+
+  const result = applyBudget([record], "L1", undefined, "lookup");
+
+  assert.equal(result.budgeted[0]?.ladder_level, "summary");
+});
+
+test("followup is tighter than lookup and drops to headline-first", () => {
+  const record = createRankedRecord({
+    id: "followup-headline-first",
+    content: "Followup headline\n" + "x".repeat(260)
+  });
+
+  const result = applyBudget([record], "L1", undefined, "followup");
+
+  assert.equal(result.budgeted[0]?.ladder_level, "headline");
+});
+
+test("evidence keeps full fidelity when budget allows", () => {
+  const record = createRankedRecord({
+    id: "evidence-full",
+    content: "Evidence headline\n" + "x".repeat(260)
+  });
+
+  const result = applyBudget([record], "L1", undefined, "evidence");
+
+  assert.equal(result.budgeted[0]?.ladder_level, "full");
 });

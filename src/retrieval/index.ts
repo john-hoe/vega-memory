@@ -4,4 +4,6 @@ export * from "./budget.js";
 export * from "./bundler.js";
 export * from "./orchestrator.js";
 export * from "./orchestrator-config.js";
+export * from "./promotion-feedback.js";
+export * from "./source-plan.js";
 export * from "./sources/index.js";

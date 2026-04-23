@@ -76,7 +76,17 @@ describe("bundle schema version dispatcher", () => {
     const result = dispatcher.dispatch(input);
 
     assert.equal(result.version, "1.0");
-    assert.deepEqual(result.data, input);
+    assert.deepEqual(result.data, {
+      schema_version: "1.0",
+      checkpoint_id: "",
+      bundle_digest: "bundle-1",
+      sections: [],
+      used_sources: [],
+      fallback_used: false,
+      confidence: 0,
+      warnings: [],
+      next_retrieval_hint: "none"
+    });
   });
 
   it("throws when bundle schema_version is missing", () => {

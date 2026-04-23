@@ -78,7 +78,7 @@ export function cacheKey(request: IntentRequest): string {
     intent: request.intent,
     mode: resolveMode(request),
     project: request.project,
-    query_hash: createQueryHash(request.query),
+    query_hash: createQueryHash(request.query ?? ""),
     session_id: request.session_id,
     surface: request.surface
   });

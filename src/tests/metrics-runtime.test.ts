@@ -125,6 +125,44 @@ test("retrieval metrics count all resolve attempts and only count nonempty non-e
   }
 });
 
+test("retrieval observability gauges expose efficiency, source utilization, and bundle coverage", async () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const collector = new MetricsCollector({
+      enabled: true,
+      prefix: "vega"
+    });
+    const metrics = createVegaMetrics(collector, db);
+
+    new RetrievalOrchestrator({
+      registry: createRegistry({
+        vega_memory: [createRecord("vega_memory", "mem-1", "alpha")],
+        wiki: [createRecord("wiki", "wiki-1", "beta")],
+        fact_claim: [createRecord("fact_claim", "fact-1", "gamma")]
+      }),
+      metrics
+    }).resolve(createRequest());
+
+    const rendered = await collector.getMetrics();
+
+    assert.match(
+      rendered,
+      /vega_retrieval_token_efficiency_ratio\{surface="codex",intent="lookup"\} 1/
+    );
+    assert.match(
+      rendered,
+      /vega_retrieval_source_utilization_ratio\{surface="codex",intent="lookup"\} 0.75/
+    );
+    assert.match(
+      rendered,
+      /vega_retrieval_bundle_coverage_ratio\{surface="codex",intent="lookup"\} 1/
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test("usage ack metrics record inserted acknowledgements and loop override emissions, but skip emits without checkpoint surface context", async () => {
   const db = new SQLiteAdapter(":memory:");
   const orphanedDb = new SQLiteAdapter(":memory:");
@@ -188,6 +226,127 @@ test("usage ack metrics record inserted acknowledgements and loop override emiss
     );
   } finally {
     orphanedDb.close();
+    db.close();
+  }
+});
+
+test("usage ack observability signals record missing-trigger and skipped-bundle proxies", async () => {
+  const db = new SQLiteAdapter(":memory:");
+  let now = 1_000;
+
+  try {
+    const collector = new MetricsCollector({
+      enabled: true,
+      prefix: "vega"
+    });
+    const metrics = createVegaMetrics(collector, db);
+    const ackStore = createAckStore(db, { now: () => now });
+    const checkpointStore = createCheckpointStore(db, { now: () => now });
+    seedCheckpoint(checkpointStore, "checkpoint-1", "session-observe");
+
+    await createUsageAckMcpTool(ackStore, checkpointStore, () => now, undefined, metrics).invoke({
+      checkpoint_id: "orphaned-checkpoint",
+      bundle_digest: "bundle-orphaned-checkpoint",
+      sufficiency: "needs_followup",
+      host_tier: "T2"
+    });
+
+    await createUsageAckMcpTool(ackStore, checkpointStore, () => now, undefined, metrics).invoke({
+      checkpoint_id: "checkpoint-1",
+      bundle_digest: "bundle-mismatch",
+      sufficiency: "sufficient",
+      host_tier: "T2"
+    });
+
+    const rendered = await collector.getMetrics();
+
+    assert.match(rendered, /vega_retrieval_missing_trigger_total\{surface="unknown"\} 1/);
+    assert.match(rendered, /vega_retrieval_skipped_bundle_total\{surface="codex"\} 1/);
+  } finally {
+    db.close();
+  }
+});
+
+test("repeated followup inflation metric increments on an existing followup lineage", async () => {
+  const db = new SQLiteAdapter(":memory:");
+  let now = 1_000;
+
+  try {
+    const collector = new MetricsCollector({
+      enabled: true,
+      prefix: "vega"
+    });
+    const metrics = createVegaMetrics(collector, db);
+    const checkpointStore = createCheckpointStore(db, { now: () => now });
+
+    checkpointStore.put({
+      checkpoint_id: "prev-followup",
+      bundle_digest: "bundle-prev-followup",
+      intent: "followup",
+      surface: "codex",
+      session_id: "session-followup-metric",
+      project: "vega-memory",
+      cwd: "/Users/johnmacmini/workspace/vega-memory",
+      query_hash: "query-prev-followup",
+      mode: "L1",
+      profile_used: "followup",
+      ranker_version: "v1.0",
+      record_ids: ["wiki:repeat"],
+      prev_checkpoint_id: "root-followup",
+      lineage_root_checkpoint_id: "root-followup",
+      followup_depth: 1
+    });
+
+    const registry = new SourceRegistry();
+    registry.register({
+      kind: "vega_memory",
+      name: "vega-memory",
+      enabled: true,
+      search() {
+        return [];
+      }
+    });
+    registry.register({
+      kind: "candidate",
+      name: "candidate",
+      enabled: true,
+      search() {
+        return [];
+      }
+    });
+    registry.register({
+      kind: "wiki",
+      name: "wiki",
+      enabled: true,
+      search() {
+        return [createRecord("wiki", "fresh", "followup metric")];
+      }
+    });
+
+    new RetrievalOrchestrator({
+      registry,
+      checkpoint_store: checkpointStore,
+      metrics,
+      followup_guardrails: {
+        cooldown_ms: 0,
+        max_followups: 3
+      },
+      now: () => now
+    }).resolve({
+      intent: "followup",
+      mode: "L1",
+      query: "followup metric",
+      surface: "codex",
+      session_id: "session-followup-metric",
+      project: "vega-memory",
+      cwd: "/Users/johnmacmini/workspace/vega-memory",
+      prev_checkpoint_id: "prev-followup"
+    });
+
+    const rendered = await collector.getMetrics();
+
+    assert.match(rendered, /vega_retrieval_followup_inflation_total\{surface="codex"\} 1/);
+  } finally {
     db.close();
   }
 });

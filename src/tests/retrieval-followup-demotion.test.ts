@@ -312,6 +312,108 @@ test("followup without a checkpoint store records a checkpoint failure when the 
   assert.equal(failures[0]?.reason, "followup_requires_checkpoint_store");
 });
 
+test("followup cooldown blocks immediate repeated followups on the same lineage", () => {
+  const db = new SQLiteAdapter(":memory:");
+  let now = 1_000;
+
+  try {
+    const checkpointStore = createCheckpointStore(db, {
+      ttl_ms: 1_800_000,
+      now: () => now
+    });
+
+    checkpointStore.put({
+      checkpoint_id: "prev-checkpoint",
+      bundle_digest: "bundle-prev",
+      intent: "followup",
+      surface: "codex",
+      session_id: "session-followup",
+      project: "vega-memory",
+      cwd: "/Users/johnmacmini/workspace/vega-memory",
+      query_hash: "query-hash-prev",
+      mode: "L1",
+      profile_used: "followup",
+      ranker_version: "v1.0",
+      record_ids: [recordKey("wiki", "repeat")],
+      prev_checkpoint_id: "root-checkpoint",
+      lineage_root_checkpoint_id: "root-checkpoint",
+      followup_depth: 1
+    });
+
+    const response = new RetrievalOrchestrator({
+      registry: createFollowupRegistry({
+        wiki: [createRecord("wiki", "fresh", 0.5)]
+      }),
+      checkpoint_store: checkpointStore,
+      followup_guardrails: {
+        cooldown_ms: 10_000,
+        max_followups: 2
+      },
+      now: () => now
+    }).resolve(
+      createRequest("followup", {
+        prev_checkpoint_id: "prev-checkpoint"
+      })
+    );
+
+    assert.equal(response.bundle_digest, "error");
+    assert.match(response.warnings.join(","), /followup_cooldown_active/);
+    assert.equal(response.next_retrieval_hint, "none");
+  } finally {
+    db.close();
+  }
+});
+
+test("followup max_followups upgrades the lineage to needs_external", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const checkpointStore = createCheckpointStore(db, {
+      ttl_ms: 1_800_000,
+      now: () => 1_000
+    });
+
+    checkpointStore.put({
+      checkpoint_id: "prev-checkpoint",
+      bundle_digest: "bundle-prev",
+      intent: "followup",
+      surface: "codex",
+      session_id: "session-followup",
+      project: "vega-memory",
+      cwd: "/Users/johnmacmini/workspace/vega-memory",
+      query_hash: "query-hash-prev",
+      mode: "L1",
+      profile_used: "followup",
+      ranker_version: "v1.0",
+      record_ids: [recordKey("wiki", "repeat")],
+      prev_checkpoint_id: "root-checkpoint",
+      lineage_root_checkpoint_id: "root-checkpoint",
+      followup_depth: 2
+    });
+
+    const response = new RetrievalOrchestrator({
+      registry: createFollowupRegistry({
+        wiki: [createRecord("wiki", "fresh", 0.5)]
+      }),
+      checkpoint_store: checkpointStore,
+      followup_guardrails: {
+        cooldown_ms: 0,
+        max_followups: 2
+      }
+    }).resolve(
+      createRequest("followup", {
+        prev_checkpoint_id: "prev-checkpoint"
+      })
+    );
+
+    assert.equal(response.bundle_digest, "error");
+    assert.match(response.warnings.join(","), /followup_limit_reached/);
+    assert.equal(response.next_retrieval_hint, "needs_external");
+  } finally {
+    db.close();
+  }
+});
+
 test("error responses do not write checkpoints", () => {
   const puts: PendingCheckpointRecord[] = [];
   const checkpointStore: CheckpointStore = {

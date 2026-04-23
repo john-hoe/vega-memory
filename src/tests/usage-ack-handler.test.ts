@@ -534,6 +534,9 @@ test("conflict responses do not trigger overrideSufficiency", async () => {
         profile_used: "lookup",
         ranker_version: "v1.0",
         record_ids: ["wiki:wiki-1"],
+        prev_checkpoint_id: null,
+        lineage_root_checkpoint_id: "checkpoint-1",
+        followup_depth: 0,
         created_at: 1_000,
         ttl_expires_at: 2_000
       };

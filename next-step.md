@@ -1,1 +1,1 @@
-Next: Phase 5 audit issue closeout is complete. Continue only with newer open audit items if needed, starting from the remaining GitHub issue backlog.
+Next: publish the completed Phase 6 repo work to GitHub: verify build/tests one more time, commit only the Phase 6 code/spec/brief/status files, push to `origin/main`, and leave unrelated local residue untouched.

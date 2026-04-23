@@ -27,6 +27,9 @@ function createCheckpointRecord(
     profile_used: "lookup",
     ranker_version: "v1.0",
     record_ids: ["wiki:wiki-1", "vega_memory:mem-1"],
+    prev_checkpoint_id: null,
+    lineage_root_checkpoint_id: "checkpoint-1",
+    followup_depth: 0,
     ...overrides
   };
 }
@@ -155,6 +158,37 @@ test("applyCheckpointStoreMigration is idempotent", () => {
   try {
     assert.doesNotThrow(() => applyCheckpointStoreMigration(db));
     assert.doesNotThrow(() => applyCheckpointStoreMigration(db));
+  } finally {
+    db.close();
+  }
+});
+
+test("checkpoint lineage fields round-trip through the store", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const store = createCheckpointStore(db, { now: () => 1_000 });
+    store.put(
+      createCheckpointRecord({
+        checkpoint_id: "checkpoint-followup-1",
+        intent: "followup",
+        prev_checkpoint_id: "checkpoint-root",
+        lineage_root_checkpoint_id: "checkpoint-root",
+        followup_depth: 1
+      })
+    );
+
+    assert.deepEqual(store.get("checkpoint-followup-1"), {
+      ...createCheckpointRecord({
+        checkpoint_id: "checkpoint-followup-1",
+        intent: "followup",
+        prev_checkpoint_id: "checkpoint-root",
+        lineage_root_checkpoint_id: "checkpoint-root",
+        followup_depth: 1
+      }),
+      created_at: 1_000,
+      ttl_expires_at: 1_000 + 1_800_000
+    });
   } finally {
     db.close();
   }

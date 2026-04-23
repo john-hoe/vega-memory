@@ -20,6 +20,7 @@ const logger = createLogger({
 function toBundleRecord(entry: BudgetedRecord): BundleRecord {
   return {
     id: entry.record.id,
+    record_id: entry.record.id,
     source_kind: entry.record.source_kind,
     content: entry.content_used,
     provenance: entry.record.provenance,
@@ -39,26 +40,46 @@ function buildSections(budgeted: BudgetedRecord[]): BundleSection[] {
   return [...grouped.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([source_kind, records]) => ({
+      kind: source_kind,
+      title: source_kind,
       source_kind: source_kind as BundleSection["source_kind"],
       records: records.sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
     }));
 }
 
 export function assembleBundle(
+  checkpoint_id: string,
   budgeted: BudgetedRecord[],
   truncated_count: number,
-  total_tokens: number
+  total_tokens: number,
+  fallback_used = false,
+  confidence = 0.0,
+  warnings: string[] = [],
+  next_retrieval_hint = "none"
 ): BundleAssembly {
   const sections = buildSections(budgeted);
+  const used_sources = [...new Set(budgeted.map((entry) => entry.record.source_kind))];
   const bundle_digest = createBundleDigest({
     schema_version: "1.0",
+    checkpoint_id,
     bundle_digest: "",
-    sections
+    sections,
+    used_sources,
+    fallback_used,
+    confidence,
+    warnings,
+    next_retrieval_hint
   });
   const bundle = BUNDLE_SCHEMA.parse({
     schema_version: "1.0",
+    checkpoint_id,
     bundle_digest,
-    sections
+    sections,
+    used_sources,
+    fallback_used,
+    confidence,
+    warnings,
+    next_retrieval_hint
   });
 
   logger.debug("Assembled retrieval bundle", {

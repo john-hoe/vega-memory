@@ -377,6 +377,8 @@ export function createAPIServer(
   }
   const retrievalOrchestrator = new RetrievalOrchestrator({
     registry: retrievalRegistry,
+    candidate_repository: candidateRepository,
+    promotion_audit_store: promotionAuditStore,
     checkpoint_store: checkpointStore,
     checkpoint_failure_store: checkpointFailureStore,
     circuit_breaker: circuitBreaker,

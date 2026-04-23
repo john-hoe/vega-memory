@@ -1,10 +1,10 @@
-import type { CheckpointRecord } from "../core/contracts/checkpoint-record.js";
+import type { CheckpointRecord, CheckpointRecordInput } from "../core/contracts/checkpoint-record.js";
 import { CHECKPOINT_RECORD_SCHEMA } from "../core/contracts/checkpoint-record.js";
 import { createLogger } from "../core/logging/index.js";
 import type { DatabaseAdapter } from "../db/adapter.js";
 
 export interface CheckpointStore {
-  put(record: Omit<CheckpointRecord, "created_at" | "ttl_expires_at">): void;
+  put(record: Omit<CheckpointRecordInput, "created_at" | "ttl_expires_at">): void;
   get(checkpoint_id: string, now?: number): CheckpointRecord | undefined;
   evictExpired(now?: number): number;
   size(): number;
@@ -28,6 +28,9 @@ interface CheckpointRow {
   profile_used: string;
   ranker_version: string;
   record_ids: string;
+  prev_checkpoint_id: string | null;
+  lineage_root_checkpoint_id: string;
+  followup_depth: number;
   created_at: number;
   ttl_expires_at: number;
 }
@@ -50,6 +53,9 @@ const CHECKPOINT_STORE_DDL = `
     profile_used TEXT NOT NULL,
     ranker_version TEXT NOT NULL,
     record_ids TEXT NOT NULL,
+    prev_checkpoint_id TEXT,
+    lineage_root_checkpoint_id TEXT NOT NULL DEFAULT '',
+    followup_depth INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     ttl_expires_at INTEGER NOT NULL
   )
@@ -57,7 +63,8 @@ const CHECKPOINT_STORE_DDL = `
 
 const CHECKPOINT_STORE_INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_resolved_checkpoints_session ON ${RESOLVED_CHECKPOINTS_TABLE}(session_id, created_at DESC)`,
-  `CREATE INDEX IF NOT EXISTS idx_resolved_checkpoints_ttl_expires ON ${RESOLVED_CHECKPOINTS_TABLE}(ttl_expires_at)`
+  `CREATE INDEX IF NOT EXISTS idx_resolved_checkpoints_ttl_expires ON ${RESOLVED_CHECKPOINTS_TABLE}(ttl_expires_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_resolved_checkpoints_lineage_root ON ${RESOLVED_CHECKPOINTS_TABLE}(lineage_root_checkpoint_id, created_at DESC)`
 ] as const;
 
 function parseRecordIds(value: string): string[] {
@@ -83,6 +90,29 @@ export function resolveCheckpointStoreTtlMs(ttl_ms?: number): number {
 
 export function applyCheckpointStoreMigration(db: DatabaseAdapter): void {
   db.exec(CHECKPOINT_STORE_DDL);
+
+  const columns = new Set(
+    db
+      .prepare<[], { name: string }>(`PRAGMA table_info(${RESOLVED_CHECKPOINTS_TABLE})`)
+      .all()
+      .map((column) => column.name)
+  );
+
+  if (!columns.has("prev_checkpoint_id")) {
+    db.exec(`ALTER TABLE ${RESOLVED_CHECKPOINTS_TABLE} ADD COLUMN prev_checkpoint_id TEXT`);
+  }
+
+  if (!columns.has("lineage_root_checkpoint_id")) {
+    db.exec(
+      `ALTER TABLE ${RESOLVED_CHECKPOINTS_TABLE} ADD COLUMN lineage_root_checkpoint_id TEXT NOT NULL DEFAULT ''`
+    );
+  }
+
+  if (!columns.has("followup_depth")) {
+    db.exec(
+      `ALTER TABLE ${RESOLVED_CHECKPOINTS_TABLE} ADD COLUMN followup_depth INTEGER NOT NULL DEFAULT 0`
+    );
+  }
 
   for (const statement of CHECKPOINT_STORE_INDEXES) {
     db.exec(statement);
@@ -111,6 +141,9 @@ export function createCheckpointStore(
       string,
       string,
       string,
+      string | null,
+      string,
+      number,
       number,
       number
     ],
@@ -129,9 +162,12 @@ export function createCheckpointStore(
       profile_used,
       ranker_version,
       record_ids,
+      prev_checkpoint_id,
+      lineage_root_checkpoint_id,
+      followup_depth,
       created_at,
       ttl_expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const getStatement = db.prepare<[string], CheckpointRow>(
     `SELECT
@@ -147,6 +183,9 @@ export function createCheckpointStore(
       profile_used,
       ranker_version,
       record_ids,
+      prev_checkpoint_id,
+      lineage_root_checkpoint_id,
+      followup_depth,
       created_at,
       ttl_expires_at
     FROM ${RESOLVED_CHECKPOINTS_TABLE}
@@ -157,7 +196,7 @@ export function createCheckpointStore(
   );
 
   return {
-    put(record: Omit<CheckpointRecord, "created_at" | "ttl_expires_at">): void {
+    put(record: Omit<CheckpointRecordInput, "created_at" | "ttl_expires_at">): void {
       const created_at = now();
       const normalized = CHECKPOINT_RECORD_SCHEMA.parse({
         ...record,
@@ -178,6 +217,9 @@ export function createCheckpointStore(
         normalized.profile_used,
         normalized.ranker_version,
         JSON.stringify(normalized.record_ids),
+        normalized.prev_checkpoint_id,
+        normalized.lineage_root_checkpoint_id,
+        normalized.followup_depth,
         normalized.created_at,
         normalized.ttl_expires_at
       );

@@ -42,9 +42,11 @@ export function createCandidateMemoryAdapter(
       return options.repository
         .list({
           project: input.request.project ?? undefined,
-          limit: input.top_k,
+          limit: input.top_k * 4,
           visibility_gated: false
         })
+        .filter((record) => record.candidate_state !== "discarded")
+        .slice(0, input.top_k)
         .map((record): SourceRecord => ({
           id: record.id,
           source_kind: "candidate",
@@ -61,6 +63,7 @@ export function createCandidateMemoryAdapter(
             extraction_confidence: record.extraction_confidence,
             promotion_score: record.promotion_score,
             visibility_gated: record.visibility_gated,
+            candidate_state: record.candidate_state,
             tags: record.tags
           }
         }));

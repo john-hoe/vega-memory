@@ -224,7 +224,7 @@ test("orchestrator with open breaker includes circuit_breaker signal", () => {
 });
 
 test("open breaker applies budget reduction before bundling", () => {
-  const content = "x".repeat(20);
+  const content = "x".repeat(8);
   const records = [
     createRecord("vega_memory", "mem-1", content),
     createRecord("vega_memory", "mem-2", content),
@@ -371,11 +371,22 @@ test("ContextResolveResponse type admits circuit_breaker as optional", () => {
     bundle_digest: "bundle-1",
     bundle: {
       schema_version: "1.0",
+      checkpoint_id: "checkpoint-1",
       bundle_digest: "bundle-1",
-      sections: []
+      sections: [],
+      used_sources: [],
+      fallback_used: false,
+      confidence: 0,
+      warnings: [],
+      next_retrieval_hint: "none"
     },
     profile_used: "lookup",
     ranker_version: "v1.0",
+    used_sources: [],
+    fallback_used: false,
+    confidence: 0,
+    warnings: [],
+    next_retrieval_hint: "none",
     circuit_breaker: {
       open: true,
       tripped_at: 1,

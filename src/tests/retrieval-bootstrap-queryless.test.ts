@@ -296,7 +296,9 @@ test("bootstrap without query returns records from multiple sources", () => {
     assert.ok(response.bundle.sections.length > 1);
     assert.ok(response.bundle.sections.some((section) => section.source_kind === "wiki"));
     assert.ok(
-      response.bundle.sections.some((section) => ["graph", "vega_memory", "fact_claim", "archive"].includes(section.source_kind))
+      response.bundle.sections.some((section) =>
+        ["graph", "vega_memory", "fact_claim", "archive"].includes(section.source_kind ?? section.kind)
+      )
     );
   } finally {
     repository.close();

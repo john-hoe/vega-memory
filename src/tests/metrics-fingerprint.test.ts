@@ -134,8 +134,16 @@ test("metrics fingerprint label contracts match emitted series labels", async ()
   try {
     metrics.recordRetrievalCall("codex", "lookup");
     metrics.recordRetrievalNonempty("codex", "followup");
+    metrics.recordRetrievalObservability("codex", "lookup", {
+      token_efficiency: 0.5,
+      source_utilization: 0.75,
+      bundle_coverage: 1
+    });
     metrics.recordUsageAck("codex", "needs_followup", "T2");
     metrics.recordLoopOverride("codex");
+    metrics.recordMissingTrigger("unknown");
+    metrics.recordSkippedBundle("codex");
+    metrics.recordRepeatedFollowupInflation("codex");
     metrics.setCircuitState("codex", "open");
     metrics.recordCircuitTrip("codex", "high_followup_rate");
     insertRawInboxRow(db, {

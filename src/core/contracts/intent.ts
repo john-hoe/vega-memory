@@ -10,18 +10,22 @@ export const INTENT_REQUEST_SCHEMA = z
   .object({
     intent: z.enum(INTENTS),
     mode: z.enum(MODES).default("L1"),
-    query: z.string().default(""),
+    query: z.string().nullable().default(null),
     surface: z.enum(SURFACES),
     session_id: z.string(),
+    thread_id: z.string().nullable().default(null),
     project: z.string().nullable(),
     cwd: z.string().nullable(),
     budget_override: INTENT_BUDGET_OVERRIDE_SCHEMA.optional(),
-    prev_checkpoint_id: z.string().optional()
+    prev_checkpoint_id: z.string().nullable().default(null),
+    query_focus: z.string().nullable().default(null),
+    host_hint: z.record(z.string(), z.unknown()).nullable().default(null)
   })
-  .refine((data) => data.intent !== "followup" || typeof data.prev_checkpoint_id === "string", {
+  .refine((data) => data.intent !== "followup" || typeof data.prev_checkpoint_id === "string" && data.prev_checkpoint_id !== null, {
     message: "prev_checkpoint_id is required for followup intent",
     path: ["prev_checkpoint_id"]
   });
 
 export type IntentBudgetOverride = z.infer<typeof INTENT_BUDGET_OVERRIDE_SCHEMA>;
-export type IntentRequest = z.infer<typeof INTENT_REQUEST_SCHEMA>;
+export type IntentRequest = z.input<typeof INTENT_REQUEST_SCHEMA>;
+export type NormalizedIntentRequest = z.output<typeof INTENT_REQUEST_SCHEMA>;
