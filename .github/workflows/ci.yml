@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -26,6 +28,17 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Run contract enum PR guard
+        env:
+          VEGA_CONTRACT_GUARD_EVENT_NAME: ${{ github.event_name }}
+          VEGA_CONTRACT_GUARD_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          VEGA_CONTRACT_GUARD_HEAD: HEAD
+          VEGA_CONTRACT_GUARD_PR_BODY: ${{ github.event.pull_request.body }}
+        run: npm run guard:contract-enums
+
+      - name: Run contract import guard
+        run: npm run lint:contracts-guard
 
       - name: Build
         run: npm run build

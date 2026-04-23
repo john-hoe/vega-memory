@@ -30,6 +30,14 @@
 - [ ] Related GitHub issue or stage issue is linked
 - [ ] No render-time external fetch is required for docs or templates in this PR
 
+## Contract enum changes
+
+Reviewer dialogue:
+{{required if src/core/contracts/enums.ts changes}}
+
+Downstream compatibility report:
+{{required if src/core/contracts/enums.ts changes}}
+
 ## Known gaps
 
 - `{{gap or none}}`
