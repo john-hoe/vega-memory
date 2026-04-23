@@ -20,7 +20,8 @@ import type { UsageConsumptionCheckpointStore } from "./usage-consumption-checkp
 export type UsageFallbackDegradedReason =
   | "checkpoint_not_found"
   | "decision_state_not_external"
-  | "store_unavailable";
+  | "store_unavailable"
+  | "local_evidence_required";
 
 export interface UsageFallbackMcpTool {
   name: "usage.fallback";
@@ -124,9 +125,10 @@ function buildFallbackResponse(
 function processUsageFallback(
   request: UsageFallbackRequest,
   store: UsageConsumptionCheckpointStore | undefined,
-  _metrics?: VegaMetricsRegistry
+  metrics?: VegaMetricsRegistry
 ): UsageFallbackResponse {
   if (store === undefined) {
+    metrics?.recordUsageFallbackViolation("store_unavailable");
     logger.warn("usage_fallback_store_unavailable", {
       checkpoint_id: request.checkpoint_id
     });
@@ -143,6 +145,7 @@ function processUsageFallback(
   const checkpoint = store.get(request.checkpoint_id);
 
   if (checkpoint === undefined) {
+    metrics?.recordUsageFallbackViolation("checkpoint_not_found");
     logger.warn("usage_fallback_checkpoint_not_found", {
       checkpoint_id: request.checkpoint_id
     });
@@ -157,6 +160,7 @@ function processUsageFallback(
   }
 
   if (checkpoint.decision_state !== "needs_external") {
+    metrics?.recordUsageFallbackViolation("decision_state_not_external");
     logger.info("usage_fallback_decision_state_not_external", {
       checkpoint_id: request.checkpoint_id,
       decision_state: checkpoint.decision_state
@@ -171,9 +175,8 @@ function processUsageFallback(
     );
   }
 
-
-
   if (!request.local_exhausted) {
+    metrics?.recordUsageFallbackTarget("local_workspace");
     logger.info("usage_fallback_local_workspace", {
       checkpoint_id: request.checkpoint_id
     });
@@ -185,6 +188,24 @@ function processUsageFallback(
     );
   }
 
+  if (request.local_outcome?.stop_condition !== "gap_confirmed_external") {
+    metrics?.recordUsageFallbackTarget("local_workspace");
+    metrics?.recordUsageFallbackViolation("local_evidence_required");
+    logger.warn("usage_fallback_local_evidence_required", {
+      checkpoint_id: request.checkpoint_id,
+      local_outcome: request.local_outcome
+    });
+    return buildFallbackResponse(
+      request.checkpoint_id,
+      "local_workspace",
+      true,
+      false,
+      "local_evidence_required",
+      "Submit local_outcome with stop_condition=gap_confirmed_external before escalating to external sources."
+    );
+  }
+
+  metrics?.recordUsageFallbackTarget("external");
   logger.info("usage_fallback_external", {
     checkpoint_id: request.checkpoint_id
   });

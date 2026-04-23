@@ -115,6 +115,10 @@ const getRegisteredTools = (
 ): Record<
   string,
   {
+    inputSchema?: object;
+    config?: {
+      inputSchema?: object;
+    };
     handler: (
       args: Record<string, unknown>,
       extra: object
@@ -126,6 +130,10 @@ const getRegisteredTools = (
       _registeredTools: Record<
         string,
         {
+          inputSchema?: object;
+          config?: {
+            inputSchema?: object;
+          };
           handler: (
             args: Record<string, unknown>,
             extra: object
@@ -541,7 +549,7 @@ test("POST /usage_ack accepts P7-011 memory feedback payloads", async () => {
   }
 });
 
-test("POST /usage_checkpoint returns 200 with auth and a valid payload", async () => {
+test("POST /usage_checkpoint rejects payloads that are not tied to a retrieval bundle", async () => {
   const harness = await createApiHarness("top-secret");
 
   try {
@@ -560,11 +568,12 @@ test("POST /usage_checkpoint returns 200 with auth and a valid payload", async (
       })
     });
 
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 422);
     const body = await response.json();
-    assert.equal(body.accepted, true);
+    assert.equal(body.accepted, false);
     assert.equal(body.checkpoint_id, "checkpoint-1");
     assert.equal(body.decision_state, "sufficient");
+    assert.equal(body.degraded, "validation_error");
   } finally {
     await harness.cleanup();
   }
@@ -688,6 +697,50 @@ test("MCP server registers usage.ack", async () => {
 
   try {
     assert.equal(typeof getRegisteredTools(harness.server)["usage.ack"]?.handler, "function");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("MCP server exposes and accepts P7-011 usage.ack feedback payloads", async () => {
+  const harness = createMcpHarness();
+
+  try {
+    const tool = getRegisteredTools(harness.server)["usage.ack"];
+    const rawInputSchema = (tool.inputSchema ?? tool.config?.inputSchema) as {
+      shape?: Record<string, unknown>;
+      memory_id?: unknown;
+      ack_type?: unknown;
+      event_id?: unknown;
+      checkpoint_id?: unknown;
+    };
+    const inputSchema = rawInputSchema.shape ?? rawInputSchema;
+
+    assert.ok(inputSchema.memory_id);
+    assert.ok(inputSchema.ack_type);
+    assert.ok(inputSchema.event_id);
+    assert.ok(inputSchema.checkpoint_id);
+
+    const result = await tool.handler(
+      {
+        memory_id: "memory-1",
+        ack_type: "accepted",
+        context: {
+          query: "phase7 mcp feedback",
+          surface: "codex"
+        },
+        session_id: "session-1",
+        event_id: "44444444-4444-4444-8444-444444444444",
+        ts: "2026-04-23T08:00:00.000Z"
+      },
+      {}
+    );
+    const body = JSON.parse(result.content[0]?.text ?? "{}");
+
+    assert.equal(result.isError, undefined);
+    assert.equal(body.ack, true);
+    assert.equal(body.memory_id, "memory-1");
+    assert.equal(body.counters.accepted, 1);
   } finally {
     await harness.cleanup();
   }

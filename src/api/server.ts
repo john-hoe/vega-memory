@@ -486,7 +486,7 @@ export function createAPIServer(
   const feedbackAckStore = !db.isPostgres ? createFeedbackUsageAckStore(db) : undefined;
   app.post("/usage_ack", async (req, res) => {
     if (isFeedbackUsageAckRequest(req.body)) {
-      const feedbackHandler = createFeedbackUsageAckHttpHandler(feedbackAckStore);
+      const feedbackHandler = createFeedbackUsageAckHttpHandler(feedbackAckStore, vegaMetrics);
       await feedbackHandler(req, res);
       return;
     }
@@ -525,7 +525,11 @@ export function createAPIServer(
     );
     await handler(req, res);
   });
-  app.post("/usage_checkpoint", createUsageCheckpointHttpHandler(usageConsumptionCheckpointStore, vegaMetrics));
+  app.post("/usage_checkpoint", createUsageCheckpointHttpHandler(
+    usageConsumptionCheckpointStore,
+    vegaMetrics,
+    checkpointStore
+  ));
   app.post("/usage_fallback", createUsageFallbackHttpHandler(usageConsumptionCheckpointStore, vegaMetrics));
   app.use(
     createRouter({

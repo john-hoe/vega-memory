@@ -8,6 +8,7 @@ import {
 import { createLogger } from "../core/logging/index.js";
 import type { VegaMetricsRegistry } from "../monitoring/vega-metrics.js";
 
+import type { CheckpointStore } from "./checkpoint-store.js";
 import type { UsageConsumptionCheckpointStore } from "./usage-consumption-checkpoint-store.js";
 
 export type UsageCheckpointDegradedReason =
@@ -19,7 +20,7 @@ export type UsageCheckpointDegradedReason =
 export type UsageCheckpointDecisionState = "sufficient" | "needs_followup" | "needs_external";
 
 export interface UsageCheckpointResponse {
-  accepted: true;
+  accepted: boolean;
   checkpoint_id: string;
   decision_state: UsageCheckpointDecisionState;
   degraded?: UsageCheckpointDegradedReason;
@@ -98,7 +99,8 @@ const formatValidationDetail = (issues: { path: PropertyKey[]; message: string }
     .join("; ");
 
 function validateCheckpointSemantics(
-  checkpoint: UsageCheckpoint
+  checkpoint: UsageCheckpoint,
+  retrievalCheckpointStore?: CheckpointStore
 ): { valid: true } | { valid: false; reason: string } {
   if (checkpoint.bundle_id.trim().length === 0) {
     return { valid: false, reason: "bundle_id must not be empty" };
@@ -121,14 +123,49 @@ function validateCheckpointSemantics(
   }
 
   const allItemsAreBundleRefs = checkpoint.used_items.every((item) =>
-    typeof item === "string" && item.includes(":")
+    typeof item === "string" && /^[A-Za-z0-9_-]+:.+$/u.test(item)
   );
 
   if (!allItemsAreBundleRefs) {
     return { valid: false, reason: "used_items must contain valid bundle record references" };
   }
 
+  if (
+    checkpoint.bundle_summary !== undefined &&
+    normalizeSummary(checkpoint.working_summary) === normalizeSummary(checkpoint.bundle_summary)
+  ) {
+    return { valid: false, reason: "working_summary must describe consumption, not copy the bundle summary" };
+  }
+
+  if (retrievalCheckpointStore !== undefined) {
+    let retrievalCheckpoint;
+    try {
+      retrievalCheckpoint = retrievalCheckpointStore.get(checkpoint.checkpoint_id);
+    } catch {
+      return { valid: false, reason: "checkpoint bundle lookup failed" };
+    }
+
+    if (retrievalCheckpoint === undefined) {
+      return { valid: false, reason: "checkpoint_id must refer to an active retrieval bundle" };
+    }
+
+    const receivedDigest = checkpoint.bundle_digest ?? checkpoint.bundle_id;
+    if (receivedDigest !== retrievalCheckpoint.bundle_digest) {
+      return { valid: false, reason: "bundle_digest must match the checkpoint retrieval bundle" };
+    }
+
+    const allowedRecordIds = new Set(retrievalCheckpoint.record_ids);
+    const allUsedItemsBelongToBundle = checkpoint.used_items.every((item) => allowedRecordIds.has(item));
+    if (!allUsedItemsBelongToBundle) {
+      return { valid: false, reason: "used_items must reference records from the checkpoint retrieval bundle" };
+    }
+  }
+
   return { valid: true };
+}
+
+function normalizeSummary(value: string): string {
+  return value.trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
 function isLowConfidenceCheckpoint(checkpoint: UsageCheckpoint): boolean {
@@ -183,16 +220,30 @@ function buildDecisionResponse(
   return base;
 }
 
+function buildRejectedResponse(checkpoint: UsageCheckpoint, retryHint: string): UsageCheckpointResponse {
+  return {
+    accepted: false,
+    checkpoint_id: checkpoint.checkpoint_id,
+    decision_state: checkpoint.decision_state,
+    degraded: "validation_error",
+    retry_hint: retryHint
+  };
+}
+
 function processUsageCheckpoint(
   checkpoint: UsageCheckpoint,
   store: UsageConsumptionCheckpointStore | undefined,
-  metrics?: VegaMetricsRegistry
+  metrics?: VegaMetricsRegistry,
+  retrievalCheckpointStore?: CheckpointStore
 ): UsageCheckpointResponse {
-  const semanticValidation = validateCheckpointSemantics(checkpoint);
+  const semanticValidation = validateCheckpointSemantics(checkpoint, retrievalCheckpointStore);
 
   if (!semanticValidation.valid) {
-    return buildDecisionResponse(checkpoint, "validation_error", semanticValidation.reason);
+    metrics?.recordUsageCheckpointRejected("validation_error");
+    return buildRejectedResponse(checkpoint, semanticValidation.reason);
   }
+
+  metrics?.recordUsageCheckpointSubmitted(checkpoint.decision_state);
 
   if (store === undefined) {
     logger.warn("usage_checkpoint_unavailable", {
@@ -214,6 +265,7 @@ function processUsageCheckpoint(
   const lowConfidence = isLowConfidenceCheckpoint(checkpoint);
 
   if (lowConfidence) {
+    metrics?.recordUsageCheckpointLowConfidence(checkpoint.decision_state);
     logger.info("low_confidence_checkpoint", {
       checkpoint_id: checkpoint.checkpoint_id,
       decision_state: checkpoint.decision_state
@@ -226,7 +278,8 @@ function processUsageCheckpoint(
 
 export function createUsageCheckpointMcpTool(
   store: UsageConsumptionCheckpointStore | undefined,
-  metrics?: VegaMetricsRegistry
+  metrics?: VegaMetricsRegistry,
+  retrievalCheckpointStore?: CheckpointStore
 ): UsageCheckpointMcpTool {
   return {
     name: "usage.checkpoint",
@@ -234,14 +287,15 @@ export function createUsageCheckpointMcpTool(
     inputSchema: USAGE_CHECKPOINT_INPUT_SCHEMA,
     async invoke(request: unknown): Promise<UsageCheckpointResponse> {
       const parsed = USAGE_CHECKPOINT_SCHEMA.parse(request);
-      return processUsageCheckpoint(parsed, store, metrics);
+      return processUsageCheckpoint(parsed, store, metrics, retrievalCheckpointStore);
     }
   };
 }
 
 export function createUsageCheckpointHttpHandler(
   store: UsageConsumptionCheckpointStore | undefined,
-  metrics?: VegaMetricsRegistry
+  metrics?: VegaMetricsRegistry,
+  retrievalCheckpointStore?: CheckpointStore
 ): (req: Request, res: Response) => Promise<void> {
   return async (req: Request, res: Response): Promise<void> => {
     const parsed = USAGE_CHECKPOINT_SCHEMA.safeParse(req.body);
@@ -254,6 +308,7 @@ export function createUsageCheckpointHttpHandler(
       return;
     }
 
-    res.status(200).json(processUsageCheckpoint(parsed.data, store, metrics));
+    const result = processUsageCheckpoint(parsed.data, store, metrics, retrievalCheckpointStore);
+    res.status(result.accepted ? 200 : 422).json(result);
   };
 }

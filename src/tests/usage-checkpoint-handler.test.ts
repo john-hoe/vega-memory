@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { SQLiteAdapter } from "../db/sqlite-adapter.js";
 import {
+  createCheckpointStore,
   createUsageConsumptionCheckpointStore,
   type UsageConsumptionCheckpointStore
 } from "../usage/index.js";
@@ -38,6 +39,8 @@ const createCheckpoint = (
     decision_state: "sufficient" | "needs_followup" | "needs_external";
     used_items: string[];
     working_summary: string;
+    bundle_digest: string;
+    bundle_summary: string;
   }> = {}
 ) => ({
   bundle_id: "bundle-1",
@@ -47,6 +50,30 @@ const createCheckpoint = (
   working_summary: "Host consumed bundle and identified next steps for implementation.",
   ...overrides
 });
+
+const seedRetrievalCheckpoint = (
+  store: ReturnType<typeof createCheckpointStore>,
+  overrides: Partial<{
+    checkpoint_id: string;
+    bundle_digest: string;
+    record_ids: string[];
+  }> = {}
+): void => {
+  store.put({
+    checkpoint_id: overrides.checkpoint_id ?? "checkpoint-1",
+    bundle_digest: overrides.bundle_digest ?? "bundle-1",
+    intent: "lookup",
+    surface: "codex",
+    session_id: "session-1",
+    project: "vega-memory",
+    cwd: "/Users/johnmacmini/workspace/vega-memory",
+    query_hash: "query-1",
+    mode: "L1",
+    profile_used: "lookup",
+    ranker_version: "v1.0",
+    record_ids: overrides.record_ids ?? ["wiki:wiki-1", "vega_memory:mem-1"]
+  });
+};
 
 const createThrowingStore = (): UsageConsumptionCheckpointStore => ({
   put() {
@@ -121,9 +148,9 @@ test("HTTP handler degrades to validation_error when used_items is empty", async
       response as never
     );
 
-    assert.equal(response.statusCode, 200);
+    assert.equal(response.statusCode, 422);
     assert.deepEqual(response.body, {
-      accepted: true,
+      accepted: false,
       checkpoint_id: "checkpoint-1",
       decision_state: "sufficient",
       degraded: "validation_error",
@@ -148,9 +175,9 @@ test("HTTP handler degrades to validation_error when working_summary is empty", 
       response as never
     );
 
-    assert.equal(response.statusCode, 200);
+    assert.equal(response.statusCode, 422);
     assert.deepEqual(response.body, {
-      accepted: true,
+      accepted: false,
       checkpoint_id: "checkpoint-1",
       decision_state: "sufficient",
       degraded: "validation_error",
@@ -175,9 +202,9 @@ test("HTTP handler degrades to validation_error when working_summary is whitespa
       response as never
     );
 
-    assert.equal(response.statusCode, 200);
+    assert.equal(response.statusCode, 422);
     assert.deepEqual(response.body, {
-      accepted: true,
+      accepted: false,
       checkpoint_id: "checkpoint-1",
       decision_state: "sufficient",
       degraded: "validation_error",
@@ -202,9 +229,9 @@ test("HTTP handler degrades to validation_error when working_summary is whitespa
       response as never
     );
 
-    assert.equal(response.statusCode, 200);
+    assert.equal(response.statusCode, 422);
     assert.deepEqual(response.body, {
-      accepted: true,
+      accepted: false,
       checkpoint_id: "checkpoint-1",
       decision_state: "sufficient",
       degraded: "validation_error",
@@ -229,13 +256,103 @@ test("HTTP handler degrades to validation_error when used_items contains invalid
       response as never
     );
 
-    assert.equal(response.statusCode, 200);
+    assert.equal(response.statusCode, 422);
     assert.deepEqual(response.body, {
-      accepted: true,
+      accepted: false,
       checkpoint_id: "checkpoint-1",
       decision_state: "sufficient",
       degraded: "validation_error",
       retry_hint: "used_items must contain valid bundle record references"
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test("HTTP handler rejects fake colon refs that were not in the retrieval bundle", async () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const consumptionStore = createUsageConsumptionCheckpointStore(db);
+    const retrievalStore = createCheckpointStore(db);
+    seedRetrievalCheckpoint(retrievalStore);
+    const handler = createUsageCheckpointHttpHandler(consumptionStore, undefined, retrievalStore);
+    const response = createResponse();
+
+    await handler(
+      {
+        body: createCheckpoint({ used_items: ["wiki:wiki-1", "wiki:fake"] })
+      } as never,
+      response as never
+    );
+
+    assert.equal(response.statusCode, 422);
+    assert.deepEqual(response.body, {
+      accepted: false,
+      checkpoint_id: "checkpoint-1",
+      decision_state: "sufficient",
+      degraded: "validation_error",
+      retry_hint: "used_items must reference records from the checkpoint retrieval bundle"
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test("HTTP handler rejects copied bundle summaries", async () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const handler = createUsageCheckpointHttpHandler(createUsageConsumptionCheckpointStore(db));
+    const response = createResponse();
+
+    await handler(
+      {
+        body: createCheckpoint({
+          working_summary: "Bundle says install tests before implementation.",
+          bundle_summary: "Bundle says install tests before implementation."
+        })
+      } as never,
+      response as never
+    );
+
+    assert.equal(response.statusCode, 422);
+    assert.deepEqual(response.body, {
+      accepted: false,
+      checkpoint_id: "checkpoint-1",
+      decision_state: "sufficient",
+      degraded: "validation_error",
+      retry_hint: "working_summary must describe consumption, not copy the bundle summary"
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test("HTTP handler rejects checkpoints whose bundle digest does not match the retrieval checkpoint", async () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const consumptionStore = createUsageConsumptionCheckpointStore(db);
+    const retrievalStore = createCheckpointStore(db);
+    seedRetrievalCheckpoint(retrievalStore, { bundle_digest: "expected-digest" });
+    const handler = createUsageCheckpointHttpHandler(consumptionStore, undefined, retrievalStore);
+    const response = createResponse();
+
+    await handler(
+      {
+        body: createCheckpoint({ bundle_id: "wrong-digest" })
+      } as never,
+      response as never
+    );
+
+    assert.equal(response.statusCode, 422);
+    assert.deepEqual(response.body, {
+      accepted: false,
+      checkpoint_id: "checkpoint-1",
+      decision_state: "sufficient",
+      degraded: "validation_error",
+      retry_hint: "bundle_digest must match the checkpoint retrieval bundle"
     });
   } finally {
     db.close();
@@ -383,7 +500,7 @@ test("MCP tool invoke degrades to validation_error for empty used_items", async 
     const result = await tool.invoke(createCheckpoint({ used_items: [] }));
 
     assert.deepEqual(result, {
-      accepted: true,
+      accepted: false,
       checkpoint_id: "checkpoint-1",
       decision_state: "sufficient",
       degraded: "validation_error",

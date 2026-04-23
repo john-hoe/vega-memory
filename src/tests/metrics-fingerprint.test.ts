@@ -140,6 +140,13 @@ test("metrics fingerprint label contracts match emitted series labels", async ()
       bundle_coverage: 1
     });
     metrics.recordUsageAck("codex", "needs_followup", "T2");
+    metrics.recordUsageCheckpointSubmitted("needs_external");
+    metrics.recordUsageCheckpointRejected("validation_error");
+    metrics.recordUsageCheckpointLowConfidence("sufficient");
+    metrics.recordUsageFallbackTarget("local_workspace");
+    metrics.recordUsageFallbackViolation("local_evidence_required");
+    metrics.recordUsageFeedbackAck("accepted");
+    metrics.recordUsageFeedbackAckRejected("usage_feedback_ack_unavailable");
     metrics.recordLoopOverride("codex");
     metrics.recordMissingTrigger("unknown");
     metrics.recordSkippedBundle("codex");

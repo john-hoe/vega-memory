@@ -44,6 +44,8 @@ const UNKNOWN_LABEL = "unknown";
 
 type SufficiencyLabel = Sufficiency;
 type HostTierLabel = HostTier;
+type UsageFallbackTargetLabel = "local_workspace" | "external" | "none";
+type FeedbackUsageAckTypeLabel = "accepted" | "rejected" | "reranked";
 
 export interface VegaMetricsRegistry {
   recordRetrievalCall(surface: Surface, intent: RetrievalIntent): void;
@@ -58,6 +60,13 @@ export interface VegaMetricsRegistry {
     }
   ): void;
   recordUsageAck(surface: Surface, sufficiency: SufficiencyLabel, host_tier: HostTierLabel): void;
+  recordUsageCheckpointSubmitted(decision_state: SufficiencyLabel): void;
+  recordUsageCheckpointRejected(reason: string): void;
+  recordUsageCheckpointLowConfidence(decision_state: SufficiencyLabel): void;
+  recordUsageFallbackTarget(target: UsageFallbackTargetLabel): void;
+  recordUsageFallbackViolation(reason: string): void;
+  recordUsageFeedbackAck(ack_type: FeedbackUsageAckTypeLabel): void;
+  recordUsageFeedbackAckRejected(reason: string): void;
   recordLoopOverride(surface: Surface): void;
   recordMissingTrigger(surface: Surface | "unknown"): void;
   recordSkippedBundle(surface: Surface | "unknown"): void;
@@ -81,6 +90,8 @@ const CIRCUIT_BREAKER_STATE_VALUES: Record<(typeof CIRCUIT_BREAKER_STATES)[numbe
   open: 1,
   cooldown: 2
 };
+const USAGE_FALLBACK_TARGETS = ["local_workspace", "external", "none"] as const;
+const FEEDBACK_USAGE_ACK_TYPES = ["accepted", "rejected", "reranked"] as const;
 
 const isKnownValue = <T extends string>(value: string, allowed: readonly T[]): value is T =>
   allowed.includes(value as T);
@@ -99,6 +110,12 @@ const coerceSufficiency = (sufficiency: string): SufficiencyLabel | "unknown" =>
 
 const coerceHostTier = (host_tier: string): HostTierLabel | "unknown" =>
   coerceKnownValue(host_tier, HOST_TIERS);
+
+const coerceFallbackTarget = (target: string): UsageFallbackTargetLabel | "unknown" =>
+  coerceKnownValue(target, USAGE_FALLBACK_TARGETS);
+
+const coerceFeedbackAckType = (ack_type: string): FeedbackUsageAckTypeLabel | "unknown" =>
+  coerceKnownValue(ack_type, FEEDBACK_USAGE_ACK_TYPES);
 
 const coerceTripReason = (reason: string): CircuitBreakerTripReason | "unknown" =>
   coerceKnownValue(reason, CIRCUIT_BREAKER_TRIP_REASONS);
@@ -153,6 +170,41 @@ export function createVegaMetrics(
     "usage_ack_total",
     "Counts first-time usage ack inserts. Per-process counter; intent is not labeled because usage_acks cannot reliably recover it.",
     ["surface", "sufficiency", "host_tier"]
+  );
+  const usageCheckpointSubmitted = collector.counter(
+    "usage_checkpoint_submitted_total",
+    "Counts semantically valid Phase 7 bundle consumption checkpoints by decision state. Per-process counter.",
+    ["decision_state"]
+  );
+  const usageCheckpointRejected = collector.counter(
+    "usage_checkpoint_rejected_total",
+    "Counts rejected Phase 7 bundle consumption checkpoints by bounded rejection reason. Per-process counter.",
+    ["reason"]
+  );
+  const usageCheckpointLowConfidence = collector.counter(
+    "usage_checkpoint_low_confidence_total",
+    "Counts accepted Phase 7 bundle consumption checkpoints that require low-confidence handling. Per-process counter.",
+    ["decision_state"]
+  );
+  const usageFallbackTarget = collector.counter(
+    "usage_fallback_target_total",
+    "Counts Phase 7 fallback ladder plans by selected target. Per-process counter.",
+    ["target"]
+  );
+  const usageFallbackViolation = collector.counter(
+    "usage_fallback_violation_total",
+    "Counts Phase 7 fallback ladder guard violations and degraded outcomes by reason. Per-process counter.",
+    ["reason"]
+  );
+  const usageFeedbackAck = collector.counter(
+    "usage_feedback_ack_total",
+    "Counts first-time Phase 7 memory feedback acknowledgements by feedback type. Per-process counter.",
+    ["ack_type"]
+  );
+  const usageFeedbackAckRejected = collector.counter(
+    "usage_feedback_ack_rejected_total",
+    "Counts rejected or degraded Phase 7 memory feedback acknowledgements by reason. Per-process counter.",
+    ["reason"]
   );
   const usageLoopOverride = collector.counter(
     "usage_followup_loop_override_total",
@@ -267,6 +319,41 @@ export function createVegaMetrics(
         surface: coerceSurface(surface),
         sufficiency: coerceSufficiency(sufficiency),
         host_tier: coerceHostTier(host_tier)
+      });
+    },
+    recordUsageCheckpointSubmitted(decision_state): void {
+      usageCheckpointSubmitted.inc({
+        decision_state: coerceSufficiency(decision_state)
+      });
+    },
+    recordUsageCheckpointRejected(reason): void {
+      usageCheckpointRejected.inc({
+        reason
+      });
+    },
+    recordUsageCheckpointLowConfidence(decision_state): void {
+      usageCheckpointLowConfidence.inc({
+        decision_state: coerceSufficiency(decision_state)
+      });
+    },
+    recordUsageFallbackTarget(target): void {
+      usageFallbackTarget.inc({
+        target: coerceFallbackTarget(target)
+      });
+    },
+    recordUsageFallbackViolation(reason): void {
+      usageFallbackViolation.inc({
+        reason
+      });
+    },
+    recordUsageFeedbackAck(ack_type): void {
+      usageFeedbackAck.inc({
+        ack_type: coerceFeedbackAckType(ack_type)
+      });
+    },
+    recordUsageFeedbackAckRejected(reason): void {
+      usageFeedbackAckRejected.inc({
+        reason
       });
     },
     recordLoopOverride(surface): void {

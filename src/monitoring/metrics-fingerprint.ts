@@ -54,6 +54,48 @@ export const METRICS_FINGERPRINT = [
     helpFragment: "first-time usage ack"
   },
   {
+    name: "vega_usage_checkpoint_submitted_total",
+    type: "counter",
+    labelKeys: ["decision_state"],
+    helpFragment: "bundle consumption checkpoints"
+  },
+  {
+    name: "vega_usage_checkpoint_rejected_total",
+    type: "counter",
+    labelKeys: ["reason"],
+    helpFragment: "rejected Phase 7 bundle consumption checkpoints"
+  },
+  {
+    name: "vega_usage_checkpoint_low_confidence_total",
+    type: "counter",
+    labelKeys: ["decision_state"],
+    helpFragment: "low-confidence handling"
+  },
+  {
+    name: "vega_usage_fallback_target_total",
+    type: "counter",
+    labelKeys: ["target"],
+    helpFragment: "fallback ladder plans"
+  },
+  {
+    name: "vega_usage_fallback_violation_total",
+    type: "counter",
+    labelKeys: ["reason"],
+    helpFragment: "fallback ladder guard violations"
+  },
+  {
+    name: "vega_usage_feedback_ack_total",
+    type: "counter",
+    labelKeys: ["ack_type"],
+    helpFragment: "memory feedback acknowledgements"
+  },
+  {
+    name: "vega_usage_feedback_ack_rejected_total",
+    type: "counter",
+    labelKeys: ["reason"],
+    helpFragment: "rejected or degraded Phase 7 memory feedback acknowledgements"
+  },
+  {
     name: "vega_usage_followup_loop_override_total",
     type: "counter",
     labelKeys: ["surface"],

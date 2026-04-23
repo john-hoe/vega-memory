@@ -74,13 +74,36 @@ test("usage fallback MCP tool returns local_workspace plan when checkpoint has n
   assert.equal(result.degraded, undefined);
 });
 
-test("usage fallback MCP tool returns external plan when checkpoint has needs_external and local_exhausted is true", async () => {
+test("usage fallback MCP tool keeps hosts on local workspace when external evidence is missing", async () => {
   const store = createMockStore({ decisionState: "needs_external" });
   const tool = createUsageFallbackMcpTool(store);
 
   const result = await tool.invoke({
     checkpoint_id: "checkpoint-1",
     local_exhausted: true
+  });
+
+  assert.equal(result.checkpoint_id, "checkpoint-1");
+  assert.equal(result.ladder_active, true);
+  assert.equal(result.current_target, "local_workspace");
+  assert.deepEqual(result.allowed_sources, [...LOCAL_WORKSPACE_SOURCES]);
+  assert.deepEqual(result.stop_conditions, [...LOCAL_STOP_CONDITIONS]);
+  assert.equal(result.user_decision_required, false);
+  assert.equal(result.degraded, "local_evidence_required");
+});
+
+test("usage fallback MCP tool returns external plan after audited local gap evidence", async () => {
+  const store = createMockStore({ decisionState: "needs_external" });
+  const tool = createUsageFallbackMcpTool(store);
+
+  const result = await tool.invoke({
+    checkpoint_id: "checkpoint-1",
+    local_exhausted: true,
+    local_outcome: {
+      checked_sources: ["repo_code", "test_output"],
+      stop_condition: "gap_confirmed_external",
+      summary: "Repo and test output do not contain the missing API contract."
+    }
   });
 
   assert.equal(result.checkpoint_id, "checkpoint-1");
@@ -166,7 +189,7 @@ test("usage fallback HTTP handler returns 200 with local_workspace plan for vali
   assert.equal(body.current_target, "local_workspace");
 });
 
-test("usage fallback HTTP handler returns 200 with external plan when local_exhausted is true", async () => {
+test("usage fallback HTTP handler requires audited local outcome before external plan", async () => {
   const store = createMockStore({ decisionState: "needs_external" });
   const handler = createUsageFallbackHttpHandler(store);
   const response = createMockResponse();
@@ -179,10 +202,16 @@ test("usage fallback HTTP handler returns 200 with external plan when local_exha
   } as never, response as never);
 
   assert.equal(response.statusCode, 200);
-  const body = response.body as { ladder_active: boolean; current_target: string; user_decision_required: boolean };
+  const body = response.body as {
+    ladder_active: boolean;
+    current_target: string;
+    user_decision_required: boolean;
+    degraded?: string;
+  };
   assert.equal(body.ladder_active, true);
-  assert.equal(body.current_target, "external");
-  assert.equal(body.user_decision_required, true);
+  assert.equal(body.current_target, "local_workspace");
+  assert.equal(body.user_decision_required, false);
+  assert.equal(body.degraded, "local_evidence_required");
 });
 
 test("usage fallback with real SQLite store integration", async () => {

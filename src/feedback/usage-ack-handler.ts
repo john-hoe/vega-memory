@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 
 import type { DatabaseAdapter } from "../db/adapter.js";
+import type { VegaMetricsRegistry } from "../monitoring/vega-metrics.js";
 
 export const FEEDBACK_USAGE_ACK_TYPES = ["accepted", "rejected", "reranked"] as const;
 export type FeedbackUsageAckType = (typeof FEEDBACK_USAGE_ACK_TYPES)[number];
@@ -85,6 +86,39 @@ const BOUNDED_SURFACES: FeedbackUsageAckResponse["bounded_surfaces"] = [
   "ranking_bias",
   "value_judgment_stats"
 ];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeZodJsonSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) {
+    return schema.map((entry) => normalizeZodJsonSchema(entry));
+  }
+
+  if (!isRecord(schema)) {
+    return schema;
+  }
+
+  const normalized: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "additionalProperties" && value === false) {
+      continue;
+    }
+
+    normalized[key] = normalizeZodJsonSchema(value);
+  }
+
+  return normalized;
+}
+
+function createFeedbackUsageAckInputSchema(): object {
+  const generated = normalizeZodJsonSchema(z.toJSONSchema(FEEDBACK_USAGE_ACK_SCHEMA));
+  return isRecord(generated) ? generated : {};
+}
+
+export const FEEDBACK_USAGE_ACK_INPUT_SCHEMA = createFeedbackUsageAckInputSchema();
 
 const FEEDBACK_USAGE_ACK_DDL = `
   CREATE TABLE IF NOT EXISTS ${FEEDBACK_USAGE_ACKS_TABLE} (
@@ -226,9 +260,11 @@ function formatValidationDetail(issues: { path: PropertyKey[]; message: string }
 
 function processFeedbackUsageAck(
   ack: FeedbackUsageAck,
-  store: FeedbackUsageAckStore | undefined
+  store: FeedbackUsageAckStore | undefined,
+  metrics?: VegaMetricsRegistry
 ): FeedbackUsageAckResponse {
   if (store === undefined) {
+    metrics?.recordUsageFeedbackAckRejected("usage_feedback_ack_unavailable");
     return {
       ack: true,
       event_id: ack.event_id,
@@ -242,6 +278,9 @@ function processFeedbackUsageAck(
 
   const putResult = store.put(ack);
   const counters = store.countByMemory(putResult.record.memory_id);
+  if (putResult.status === "inserted") {
+    metrics?.recordUsageFeedbackAck(putResult.record.ack_type);
+  }
 
   return {
     ack: true,
@@ -259,25 +298,35 @@ export function isFeedbackUsageAckRequest(request: unknown): boolean {
     ("memory_id" in request || "ack_type" in request || "event_id" in request);
 }
 
-export function createFeedbackUsageAckMcpTool(store: FeedbackUsageAckStore): FeedbackUsageAckMcpTool {
+export function createFeedbackUsageAckMcpTool(
+  store: FeedbackUsageAckStore | undefined,
+  metrics?: VegaMetricsRegistry
+): FeedbackUsageAckMcpTool {
   return {
     name: "usage.ack",
     description: "Stores bounded per-memory usage feedback without allowing hosts to rewrite memory state.",
-    inputSchema: {},
+    inputSchema: FEEDBACK_USAGE_ACK_INPUT_SCHEMA,
     async invoke(request: unknown): Promise<FeedbackUsageAckResponse> {
-      const parsed = FEEDBACK_USAGE_ACK_SCHEMA.parse(request);
-      return processFeedbackUsageAck(parsed, store);
+      const parsed = FEEDBACK_USAGE_ACK_SCHEMA.safeParse(request);
+      if (!parsed.success) {
+        metrics?.recordUsageFeedbackAckRejected("validation_error");
+        throw parsed.error;
+      }
+
+      return processFeedbackUsageAck(parsed.data, store, metrics);
     }
   };
 }
 
 export function createFeedbackUsageAckHttpHandler(
-  store: FeedbackUsageAckStore | undefined
+  store: FeedbackUsageAckStore | undefined,
+  metrics?: VegaMetricsRegistry
 ): (req: Request, res: Response) => Promise<void> {
   return async (req: Request, res: Response): Promise<void> => {
     const parsed = FEEDBACK_USAGE_ACK_SCHEMA.safeParse(req.body);
 
     if (!parsed.success) {
+      metrics?.recordUsageFeedbackAckRejected("validation_error");
       res.status(400).json({
         error: "ValidationError",
         detail: formatValidationDetail(parsed.error.issues)
@@ -285,6 +334,6 @@ export function createFeedbackUsageAckHttpHandler(
       return;
     }
 
-    res.status(200).json(processFeedbackUsageAck(parsed.data, store));
+    res.status(200).json(processFeedbackUsageAck(parsed.data, store, metrics));
   };
 }

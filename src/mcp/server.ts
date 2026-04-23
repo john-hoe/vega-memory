@@ -38,6 +38,8 @@ import { INTENT_REQUEST_SCHEMA } from "../core/contracts/intent.js";
 import { USAGE_ACK_SCHEMA } from "../core/contracts/usage-ack.js";
 import { USAGE_CHECKPOINT_SCHEMA } from "../core/contracts/usage-checkpoint.js";
 import { USAGE_FALLBACK_REQUEST_SCHEMA } from "../core/contracts/usage-fallback.js";
+import { MetricsCollector } from "../monitoring/metrics.js";
+import { createVegaMetrics } from "../monitoring/vega-metrics.js";
 import { ArchiveService } from "../core/archive-service.js";
 import { ConsolidationApprovalService } from "../core/consolidation-approval.js";
 import { ConsolidationDashboardService } from "../core/consolidation-dashboard.js";
@@ -120,6 +122,7 @@ import {
   createUsageConsumptionCheckpointStore
 } from "../usage/index.js";
 import {
+  FEEDBACK_USAGE_ACK_SCHEMA,
   createFeedbackUsageAckMcpTool,
   createFeedbackUsageAckStore,
   isFeedbackUsageAckRequest
@@ -228,6 +231,10 @@ const FACT_CLAIM_STATUSES = [
 const MCP_AUDIT_CONTEXT: AuditContext = { actor: "mcp", ip: null };
 const logger = createLogger({ name: "mcp-server" });
 const USAGE_ACK_ECHO_SOURCE_KIND_FLAG_ID = "usage-ack-echo-source-kind";
+const USAGE_ACK_MCP_INPUT_SCHEMA = {
+  ...USAGE_ACK_SCHEMA.partial().shape,
+  ...FEEDBACK_USAGE_ACK_SCHEMA.partial().shape
+};
 
 function resolveFeatureFlagRegistryPath(): string {
   const override = process.env.VEGA_FEATURE_FLAG_REGISTRY_PATH?.trim();
@@ -846,9 +853,14 @@ export function createMCPServer({
   const usageConsumptionCheckpointStore = !activeRepository.db.isPostgres
     ? createUsageConsumptionCheckpointStore(activeRepository.db)
     : undefined;
+  const metrics = new MetricsCollector({
+    enabled: config.metricsEnabled ?? false,
+    prefix: "vega"
+  });
+  const vegaMetrics = createVegaMetrics(metrics, activeRepository.db);
   const circuitBreaker =
     !activeRepository.db.isPostgres && checkpointStore && ackStore
-      ? createCircuitBreaker()
+      ? createCircuitBreaker({ metrics: vegaMetrics })
       : undefined;
   const candidateRepository = !activeRepository.db.isPostgres
     ? createCandidateRepository(activeRepository.db)
@@ -973,7 +985,8 @@ export function createMCPServer({
     promotion_audit_store: promotionAuditStore,
     checkpoint_store: checkpointStore,
     checkpoint_failure_store: checkpointFailureStore,
-    circuit_breaker: circuitBreaker
+    circuit_breaker: circuitBreaker,
+    metrics: vegaMetrics
   });
   const ingestEventTool = createIngestEventMcpTool(activeRepository.db, {
     candidateRepository,
@@ -984,16 +997,19 @@ export function createMCPServer({
     ackStore,
     checkpointStore,
     undefined,
-    circuitBreaker
+    circuitBreaker,
+    vegaMetrics
   );
   const feedbackAckStore = !activeRepository.db.isPostgres
     ? createFeedbackUsageAckStore(activeRepository.db)
     : undefined;
-  const feedbackAckTool = feedbackAckStore
-    ? createFeedbackUsageAckMcpTool(feedbackAckStore)
-    : undefined;
-  const usageCheckpointTool = createUsageCheckpointMcpTool(usageConsumptionCheckpointStore);
-  const usageFallbackTool = createUsageFallbackMcpTool(usageConsumptionCheckpointStore);
+  const feedbackAckTool = createFeedbackUsageAckMcpTool(feedbackAckStore, vegaMetrics);
+  const usageCheckpointTool = createUsageCheckpointMcpTool(
+    usageConsumptionCheckpointStore,
+    vegaMetrics,
+    checkpointStore
+  );
+  const usageFallbackTool = createUsageFallbackMcpTool(usageConsumptionCheckpointStore, vegaMetrics);
   const circuitBreakerStatusTool = createCircuitBreakerStatusMcpTool(circuitBreaker);
   const circuitBreakerResetTool = createCircuitBreakerResetMcpTool(circuitBreaker);
   const flagHitMetrics = createFlagHitMetricsCollector();
@@ -2261,11 +2277,11 @@ export function createMCPServer({
     usageAckTool.name,
     {
       description: usageAckTool.description,
-      inputSchema: USAGE_ACK_SCHEMA.shape
+      inputSchema: USAGE_ACK_MCP_INPUT_SCHEMA
     },
     async (args: unknown) =>
       runTool(repository, usageAckTool.name, args, observer, async () => {
-        if (isFeedbackUsageAckRequest(args) && feedbackAckTool) {
+        if (isFeedbackUsageAckRequest(args)) {
           const result = await feedbackAckTool.invoke(args);
           return {
             result: result as unknown as Record<string, unknown>,
@@ -2300,7 +2316,7 @@ export function createMCPServer({
           checkpointStore,
           undefined,
           circuitBreaker,
-          undefined,
+          vegaMetrics,
           {
             echoed_source_kinds: variant === "on"
           }

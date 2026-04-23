@@ -81,6 +81,13 @@ test("createVegaMetrics registers all vega metric families and scrapes raw inbox
       ["vega_retrieval_source_utilization_ratio", "gauge"],
       ["vega_retrieval_bundle_coverage_ratio", "gauge"],
       ["vega_usage_ack_total", "counter"],
+      ["vega_usage_checkpoint_submitted_total", "counter"],
+      ["vega_usage_checkpoint_rejected_total", "counter"],
+      ["vega_usage_checkpoint_low_confidence_total", "counter"],
+      ["vega_usage_fallback_target_total", "counter"],
+      ["vega_usage_fallback_violation_total", "counter"],
+      ["vega_usage_feedback_ack_total", "counter"],
+      ["vega_usage_feedback_ack_rejected_total", "counter"],
       ["vega_usage_followup_loop_override_total", "counter"],
       ["vega_retrieval_missing_trigger_total", "counter"],
       ["vega_retrieval_skipped_bundle_total", "counter"],
@@ -156,6 +163,13 @@ test("createVegaMetrics coerces unknown metric label values to unknown instead o
       bundle_coverage: 0.5
     });
     metrics.recordUsageAck("mystery-surface" as never, "mystery-sufficiency" as never, "T9" as never);
+    metrics.recordUsageCheckpointSubmitted("mystery-sufficiency" as never);
+    metrics.recordUsageCheckpointRejected("validation_error");
+    metrics.recordUsageCheckpointLowConfidence("mystery-sufficiency" as never);
+    metrics.recordUsageFallbackTarget("mystery-target" as never);
+    metrics.recordUsageFallbackViolation("local_evidence_required");
+    metrics.recordUsageFeedbackAck("mystery-ack" as never);
+    metrics.recordUsageFeedbackAckRejected("usage_feedback_ack_unavailable");
     metrics.recordLoopOverride("mystery-surface" as never);
     metrics.recordMissingTrigger("mystery-surface" as never);
     metrics.recordSkippedBundle("mystery-surface" as never);
@@ -172,6 +186,16 @@ test("createVegaMetrics coerces unknown metric label values to unknown instead o
     assert.match(
       rendered,
       /vega_usage_ack_total\{surface="unknown",sufficiency="unknown",host_tier="unknown"\} 1/
+    );
+    assert.match(rendered, /vega_usage_checkpoint_submitted_total\{decision_state="unknown"\} 1/);
+    assert.match(rendered, /vega_usage_checkpoint_rejected_total\{reason="validation_error"\} 1/);
+    assert.match(rendered, /vega_usage_checkpoint_low_confidence_total\{decision_state="unknown"\} 1/);
+    assert.match(rendered, /vega_usage_fallback_target_total\{target="unknown"\} 1/);
+    assert.match(rendered, /vega_usage_fallback_violation_total\{reason="local_evidence_required"\} 1/);
+    assert.match(rendered, /vega_usage_feedback_ack_total\{ack_type="unknown"\} 1/);
+    assert.match(
+      rendered,
+      /vega_usage_feedback_ack_rejected_total\{reason="usage_feedback_ack_unavailable"\} 1/
     );
     assert.match(rendered, /vega_usage_followup_loop_override_total\{surface="unknown"\} 1/);
     assert.match(rendered, /vega_retrieval_missing_trigger_total\{surface="unknown"\} 1/);

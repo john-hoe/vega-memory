@@ -7,6 +7,8 @@ import {
   createFeedbackUsageAckMcpTool,
   createFeedbackUsageAckStore
 } from "../feedback/usage-ack-handler.js";
+import { MetricsCollector } from "../monitoring/metrics.js";
+import { createVegaMetrics } from "../monitoring/vega-metrics.js";
 
 interface StubResponse {
   statusCode: number;
@@ -77,6 +79,15 @@ test("feedback usage.ack stores memory feedback and updates bounded counters", a
   }
 });
 
+test("feedback usage.ack MCP tool exposes the P7-011 input schema", () => {
+  const tool = createFeedbackUsageAckMcpTool(undefined);
+  const schema = tool.inputSchema as { properties?: Record<string, unknown> };
+
+  assert.ok(schema.properties?.memory_id);
+  assert.ok(schema.properties?.ack_type);
+  assert.ok(schema.properties?.event_id);
+});
+
 test("feedback usage.ack dedupes repeated event_id without double-counting", async () => {
   const db = new SQLiteAdapter(":memory:");
 
@@ -95,6 +106,35 @@ test("feedback usage.ack dedupes repeated event_id without double-counting", asy
       total: 1
     });
     assert.equal(store.size(), 1);
+  } finally {
+    db.close();
+  }
+});
+
+test("feedback usage.ack metrics count inserted ack types and degraded rejects", async () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const collector = new MetricsCollector({
+      enabled: true,
+      prefix: "vega"
+    });
+    const metrics = createVegaMetrics(collector, db);
+    const store = createFeedbackUsageAckStore(db, { now: () => 2_000 });
+    const tool = createFeedbackUsageAckMcpTool(store, metrics);
+
+    await tool.invoke(createFeedbackAck({ ack_type: "reranked" }));
+    await createFeedbackUsageAckMcpTool(undefined, metrics).invoke(createFeedbackAck({
+      event_id: "22222222-2222-4222-8222-222222222222"
+    }));
+
+    const rendered = await collector.getMetrics();
+
+    assert.match(rendered, /vega_usage_feedback_ack_total\{ack_type="reranked"\} 1/);
+    assert.match(
+      rendered,
+      /vega_usage_feedback_ack_rejected_total\{reason="usage_feedback_ack_unavailable"\} 1/
+    );
   } finally {
     db.close();
   }

@@ -9,9 +9,16 @@ import { createVegaMetrics } from "../monitoring/vega-metrics.js";
 import { RetrievalOrchestrator } from "../retrieval/orchestrator.js";
 import { createCircuitBreaker } from "../retrieval/circuit-breaker.js";
 import { SourceRegistry, type SourceAdapter, type SourceRecord } from "../retrieval/index.js";
+import {
+  createFeedbackUsageAckMcpTool,
+  createFeedbackUsageAckStore
+} from "../feedback/usage-ack-handler.js";
 import { createAckStore } from "../usage/ack-store.js";
 import { createCheckpointStore } from "../usage/checkpoint-store.js";
 import { createUsageAckMcpTool } from "../usage/usage-ack-handler.js";
+import { createUsageCheckpointMcpTool } from "../usage/usage-checkpoint-handler.js";
+import { createUsageConsumptionCheckpointStore } from "../usage/usage-consumption-checkpoint-store.js";
+import { createUsageFallbackMcpTool } from "../usage/usage-fallback-handler.js";
 
 function createRequest(overrides: Partial<IntentRequest> = {}): IntentRequest {
   return {
@@ -262,6 +269,79 @@ test("usage ack observability signals record missing-trigger and skipped-bundle 
 
     assert.match(rendered, /vega_retrieval_missing_trigger_total\{surface="unknown"\} 1/);
     assert.match(rendered, /vega_retrieval_skipped_bundle_total\{surface="codex"\} 1/);
+  } finally {
+    db.close();
+  }
+});
+
+test("Phase 7 checkpoint, fallback, and feedback paths emit runtime observability signals", async () => {
+  const db = new SQLiteAdapter(":memory:");
+  let now = 1_000;
+
+  try {
+    const collector = new MetricsCollector({
+      enabled: true,
+      prefix: "vega"
+    });
+    const metrics = createVegaMetrics(collector, db);
+    const retrievalCheckpointStore = createCheckpointStore(db, { now: () => now });
+    const consumptionStore = createUsageConsumptionCheckpointStore(db, { now: () => now });
+    const feedbackStore = createFeedbackUsageAckStore(db, { now: () => now });
+
+    seedCheckpoint(retrievalCheckpointStore, "checkpoint-p7", "session-p7");
+
+    await createUsageCheckpointMcpTool(consumptionStore, metrics, retrievalCheckpointStore).invoke({
+      checkpoint_id: "checkpoint-p7",
+      bundle_id: "bundle-checkpoint-p7",
+      decision_state: "needs_external",
+      used_items: ["wiki:checkpoint-p7"],
+      working_summary: "Short."
+    });
+
+    await createUsageCheckpointMcpTool(consumptionStore, metrics, retrievalCheckpointStore).invoke({
+      checkpoint_id: "checkpoint-p7",
+      bundle_id: "bundle-checkpoint-p7",
+      decision_state: "needs_external",
+      used_items: ["wiki:not-in-bundle"],
+      working_summary: "Host consumed the records and found an external documentation gap."
+    });
+
+    await createUsageFallbackMcpTool(consumptionStore, metrics).invoke({
+      checkpoint_id: "checkpoint-p7",
+      local_exhausted: true
+    });
+
+    await createUsageFallbackMcpTool(consumptionStore, metrics).invoke({
+      checkpoint_id: "checkpoint-p7",
+      local_exhausted: true,
+      local_outcome: {
+        checked_sources: ["repo_code", "test_output"],
+        stop_condition: "gap_confirmed_external",
+        summary: "Repo and test output do not include the missing official contract."
+      }
+    });
+
+    await createFeedbackUsageAckMcpTool(feedbackStore, metrics).invoke({
+      memory_id: "memory-p7",
+      ack_type: "accepted",
+      context: {
+        query: "phase 7 observability",
+        surface: "codex"
+      },
+      session_id: "session-p7",
+      event_id: "33333333-3333-4333-8333-333333333333",
+      ts: "2026-04-23T08:00:00.000Z"
+    });
+
+    const rendered = await collector.getMetrics();
+
+    assert.match(rendered, /vega_usage_checkpoint_submitted_total\{decision_state="needs_external"\} 1/);
+    assert.match(rendered, /vega_usage_checkpoint_low_confidence_total\{decision_state="needs_external"\} 1/);
+    assert.match(rendered, /vega_usage_checkpoint_rejected_total\{reason="validation_error"\} 1/);
+    assert.match(rendered, /vega_usage_fallback_target_total\{target="local_workspace"\} 1/);
+    assert.match(rendered, /vega_usage_fallback_target_total\{target="external"\} 1/);
+    assert.match(rendered, /vega_usage_fallback_violation_total\{reason="local_evidence_required"\} 1/);
+    assert.match(rendered, /vega_usage_feedback_ack_total\{ack_type="accepted"\} 1/);
   } finally {
     db.close();
   }
