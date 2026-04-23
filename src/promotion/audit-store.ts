@@ -6,6 +6,7 @@ import type { PromotionAction, PromotionAuditState, PromotionTrigger } from "./p
 export interface PromotionAuditEntry {
   id: string;
   memory_id: string;
+  project: string | null;
   action: PromotionAction;
   trigger: PromotionTrigger;
   from_state: PromotionAuditState;
@@ -33,6 +34,7 @@ const PROMOTION_AUDIT_DDL = `
   CREATE TABLE IF NOT EXISTS ${PROMOTION_AUDIT_TABLE} (
     id TEXT PRIMARY KEY,
     memory_id TEXT NOT NULL,
+    project TEXT,
     action TEXT NOT NULL,
     trigger TEXT NOT NULL,
     from_state TEXT NOT NULL,
@@ -57,6 +59,17 @@ function resolveLimit(limit?: number): number {
 export function applyPromotionAuditMigration(db: DatabaseAdapter): void {
   db.exec(PROMOTION_AUDIT_DDL);
 
+  const columns = new Set(
+    db
+      .prepare<[], { name: string }>(`PRAGMA table_info(${PROMOTION_AUDIT_TABLE})`)
+      .all()
+      .map((column) => column.name)
+  );
+
+  if (!columns.has("project")) {
+    db.exec(`ALTER TABLE ${PROMOTION_AUDIT_TABLE} ADD COLUMN project TEXT`);
+  }
+
   for (const statement of PROMOTION_AUDIT_INDEXES) {
     db.exec(statement);
   }
@@ -71,12 +84,13 @@ export function createPromotionAuditStore(
   const now = options.now ?? (() => Date.now());
   const idFactory = options.idFactory ?? (() => uuidv4());
   const insertStatement = db.prepare<
-    [string, string, string, string, string, string, string, string, string, string | null, number],
+    [string, string, string | null, string, string, string, string, string, string, string, string | null, number],
     never
   >(
     `INSERT INTO ${PROMOTION_AUDIT_TABLE} (
       id,
       memory_id,
+      project,
       action,
       trigger,
       from_state,
@@ -86,7 +100,7 @@ export function createPromotionAuditStore(
       reason,
       actor,
       occurred_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
   return {
@@ -100,6 +114,7 @@ export function createPromotionAuditStore(
       insertStatement.run(
         stored.id,
         stored.memory_id,
+        stored.project,
         stored.action,
         stored.trigger,
         stored.from_state,
@@ -118,6 +133,7 @@ export function createPromotionAuditStore(
         `SELECT
           id,
           memory_id,
+          project,
           action,
           trigger,
           from_state,
@@ -140,6 +156,7 @@ export function createPromotionAuditStore(
         `SELECT
           id,
           memory_id,
+          project,
           action,
           trigger,
           from_state,

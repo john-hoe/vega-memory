@@ -128,6 +128,7 @@ export function createPromotionOrchestrator(
 
         return options.auditStore.put({
           memory_id: candidate.id,
+          project: candidate.project ?? null,
           action: "promote",
           trigger,
           from_state: candidate.candidate_state,
@@ -157,6 +158,7 @@ export function createPromotionOrchestrator(
       };
       const auditEntry = options.auditStore.put({
         memory_id: candidate.id,
+        project: candidate.project ?? null,
         action: "keep",
         trigger,
         from_state: candidate.candidate_state,
@@ -231,6 +233,7 @@ export function createPromotionOrchestrator(
 
         return options.auditStore.put({
           memory_id: memory.id,
+          project: memory.scope === "global" ? null : memory.project,
           action: "demote",
           trigger: "manual",
           from_state: "promoted",
@@ -283,6 +286,7 @@ export function createPromotionOrchestrator(
 
         return options.auditStore.put({
           memory_id: candidate.id,
+          project: candidate.project ?? null,
           action: decision.action,
           trigger,
           from_state: fromState,

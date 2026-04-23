@@ -108,6 +108,7 @@ test("promoteManual promotes the candidate, preserves the id, and records audit 
       {
         id: "audit-1",
         memory_id: candidate.id,
+        project: "vega-memory",
         action: "promote",
         trigger: "manual",
         from_state: "pending",
@@ -312,6 +313,7 @@ test("promoteManual keeps candidates with invalid memory types and records an au
     assert.deepEqual(harness.auditStore.listByMemory(candidate.id)[0], {
       id: "audit-1",
       memory_id: candidate.id,
+      project: "vega-memory",
       action: "keep",
       trigger: "manual",
       from_state: "pending",

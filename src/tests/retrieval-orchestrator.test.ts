@@ -531,6 +531,7 @@ test("promotion feedback boosts candidate ranking during followup when recent ho
     });
     auditStore.put({
       memory_id: "cand-1",
+      project: "vega-memory",
       action: "hold",
       trigger: "policy",
       from_state: "pending",
@@ -542,6 +543,7 @@ test("promotion feedback boosts candidate ranking during followup when recent ho
     });
     auditStore.put({
       memory_id: "cand-1",
+      project: "vega-memory",
       action: "demote",
       trigger: "manual",
       from_state: "promoted",
@@ -553,6 +555,7 @@ test("promotion feedback boosts candidate ranking during followup when recent ho
     });
     auditStore.put({
       memory_id: "cand-1",
+      project: "vega-memory",
       action: "hold",
       trigger: "policy",
       from_state: "held",
@@ -617,6 +620,7 @@ test("promotion feedback disables itself on nested followup lineages", () => {
     });
     auditStore.put({
       memory_id: "cand-1",
+      project: "vega-memory",
       action: "hold",
       trigger: "policy",
       from_state: "pending",

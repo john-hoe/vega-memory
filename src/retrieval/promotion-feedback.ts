@@ -28,7 +28,10 @@ function clampDelta(value: number): number {
   return Math.max(-MAX_SOURCE_PRIOR_DELTA, Math.min(MAX_SOURCE_PRIOR_DELTA, value));
 }
 
-function hasActiveVisibleCandidates(repository?: CandidateRepository): boolean {
+function hasActiveVisibleCandidates(
+  repository: CandidateRepository | undefined,
+  project: string | null | undefined
+): boolean {
   if (repository === undefined) {
     return false;
   }
@@ -36,7 +39,7 @@ function hasActiveVisibleCandidates(repository?: CandidateRepository): boolean {
   return repository
     .list({
       limit: 50,
-      project: undefined,
+      project: project ?? undefined,
       visibility_gated: false
     })
     .some((candidate) => candidate.candidate_state !== "discarded");
@@ -60,12 +63,17 @@ export function collectPromotionFeedback(input: {
     };
   }
 
-  const audits = input.promotionAuditStore?.listRecent(50) ?? [];
+  const audits = (input.promotionAuditStore?.listRecent(50) ?? []).filter(
+    (entry) => entry.project === (input.request.project ?? null)
+  );
   const promoteCount = audits.filter((entry) => entry.action === "promote").length;
   const holdCount = audits.filter((entry) => entry.action === "hold").length;
   const demoteCount = audits.filter((entry) => entry.action === "demote").length;
   const discardCount = audits.filter((entry) => entry.action === "discard").length;
-  const hasActiveCandidates = hasActiveVisibleCandidates(input.candidateRepository);
+  const hasActiveCandidates = hasActiveVisibleCandidates(
+    input.candidateRepository,
+    input.request.project
+  );
 
   const preferred_sources: SourceKind[] = [];
   const suppressed_sources: SourceKind[] = [];
@@ -111,13 +119,16 @@ export function applyPromotionFeedbackToSourcePlan(
       ...sources
     ]);
 
+  const primary_sources = prependPreferred(stripSuppressed(plan.primary_sources));
+  const fallback_sources = prependPreferred(stripSuppressed(plan.fallback_sources)).filter(
+    (source) => !primary_sources.includes(source)
+  );
+
   return {
     ...plan,
     preferred_sources: uniqueSources([...plan.preferred_sources, ...feedback.preferred_sources]),
-    primary_sources: prependPreferred(stripSuppressed(plan.primary_sources)),
-    fallback_sources: prependPreferred(stripSuppressed(plan.fallback_sources)).filter(
-      (source) => !plan.primary_sources.includes(source)
-    )
+    primary_sources,
+    fallback_sources
   };
 }
 

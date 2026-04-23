@@ -118,6 +118,20 @@ GitHub issue closeout completed:
   - every leaf row from `P6-001.1.1` through `P6-004.2.3`
   - implementation row `P6-008`
 - Stored value shape: absolute local brief path under `/Users/johnmacmini/workspace/vega-memory/docs/briefs/phase6/*.md`
+
+2026-04-23 Phase 6 review/audit:
+- scope: reconcile the shipped Phase 6 repo baseline (`57a58c3`, `e1b4909`, `7f31a44`, `7922e16`) against current code/tests/docs and file one GitHub issue per confirmed distinct problem
+- coverage completed:
+  - retrieval runtime / source planning / promotion feedback / guardrails / observability
+  - dashboard / auth / plugin loader / templates / team service / CI lane
+- verification run this turn:
+  - `npm run build`
+  - `node --test dist/tests/retrieval-source-plan.test.js dist/tests/promotion-feedback.test.js dist/tests/retrieval-orchestrator.test.js dist/tests/metrics-runtime.test.js dist/tests/usage-checkpoint-store.test.js`
+  - `node --test dist/tests/platform.test.js dist/tests/api.test.js dist/tests/setup.test.js`
+- confirmed findings filed as separate GitHub issues:
+  - `#67` `[audit] phase6 retrieval: promotion feedback can duplicate a source into both primary and fallback plans`
+  - `#68` `[audit] phase6 retrieval: promotion feedback is derived from global recent audits/candidates instead of request-scoped context`
+- no additional confirmed findings were identified in the Phase 6 dashboard / plugin / template / team / CI lane after code review plus targeted verification
 - Spot verification completed on:
   - `P6-001`
   - `P6-002.3.3`
@@ -287,6 +301,15 @@ GitHub issue closeout completed:
   - `现有代码落点` filled with the current real file anchors for each task line
 - `P6-008` remains aligned with the unified `context.resolve` acceptance wording and is also green now.
 
+2026-04-23 Phase 6 acceptance-criteria backfill:
+- Backfilled the `验收标准` column across the full Phase 6 Notion tracker so the database is no longer only status-synced.
+- Coverage includes:
+  - umbrellas: `P6-001`, `P6-002`, `P6-003`, `P6-004`
+  - subgroup rows such as `P6-001.1`, `P6-002.3`, `P6-004.2`
+  - leaf rows across `P6-001.1.1` through `P6-004.2.3`
+  - `P6-008`
+- Each acceptance string is now aligned to the shipped runtime, local spec, and local brief set rather than the older planning-only wording.
+
 2026-04-23 Phase 6 implementation batch 5:
 - Landed the fifth bounded Phase 6 runtime batch around `P6-002.3` bounded promotion → retrieval feedback.
 - Feedback/runtime changes:
@@ -315,3 +338,23 @@ GitHub issue closeout completed:
   - `npm test` → `1372 passed / 0 failed`
 - Scope note:
   - This batch keeps feedback bounded and source/ranker-scoped. It does not let promotion feedback decide host actions, usage sufficiency, or external tool calls.
+
+2026-04-23 Phase 6 audit issue fixes:
+- Fixed `#68` `[audit] phase6 retrieval: promotion feedback is derived from global recent audits/candidates instead of request-scoped context`.
+  - `promotion_audit` now carries `project`
+  - `collectPromotionFeedback()` filters recent audits by the current request project
+  - candidate visibility feedback is also project-scoped instead of global
+- Fixed `#67` `[audit] phase6 retrieval: promotion feedback can duplicate a source into both primary and fallback plans`.
+  - feedback-rewritten source plans now compute `fallback_sources` against the updated `primary_sources`, so the two sets remain disjoint
+- Files changed in the accepted issue-fix batch:
+  - `src/promotion/audit-store.ts`
+  - `src/promotion/orchestrator.ts`
+  - `src/retrieval/promotion-feedback.ts`
+  - `src/tests/promotion-audit-store.test.ts`
+  - `src/tests/promotion-feedback.test.ts`
+  - `src/tests/promotion-orchestrator.test.ts`
+  - `src/tests/retrieval-orchestrator.test.ts`
+- Verification completed:
+  - `npm run build` → pass
+  - `node --test dist/tests/promotion-feedback.test.js dist/tests/retrieval-orchestrator.test.js dist/tests/retrieval-candidate-visibility.test.js dist/tests/retrieval-source-plan.test.js dist/tests/promotion-audit-store.test.js dist/tests/promotion-orchestrator.test.js` → pass
+  - `npm test` → `1372 passed / 0 failed`

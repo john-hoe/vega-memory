@@ -1,1 +1,1 @@
-Next: publish the completed Phase 6 repo work to GitHub: verify build/tests one more time, commit only the Phase 6 code/spec/brief/status files, push to `origin/main`, and leave unrelated local residue untouched.
+Next: The known open Phase 6 audit issues `#67` and `#68` are fixed locally. Publish the fix batch to GitHub, then re-check the issue list and close any issue whose current description is fully covered by the shipped patch.

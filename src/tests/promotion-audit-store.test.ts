@@ -33,6 +33,7 @@ test("promotion audit store writes entries and returns newest-first queries", ()
 
     const first = store.put({
       memory_id: "memory-1",
+      project: "vega-memory",
       action: "hold",
       trigger: "policy",
       from_state: "pending",
@@ -45,6 +46,7 @@ test("promotion audit store writes entries and returns newest-first queries", ()
     now += 10;
     const second = store.put({
       memory_id: "memory-1",
+      project: "vega-memory",
       action: "promote",
       trigger: "manual",
       from_state: "ready",
@@ -57,6 +59,7 @@ test("promotion audit store writes entries and returns newest-first queries", ()
     now += 10;
     const third = store.put({
       memory_id: "memory-2",
+      project: "vega-memory",
       action: "demote",
       trigger: "manual",
       from_state: "promoted",

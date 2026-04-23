@@ -36,6 +36,7 @@ test("promote audits boost vega_memory source prior", () => {
     });
     auditStore.put({
       memory_id: "memory-1",
+      project: "vega-memory",
       action: "promote",
       trigger: "policy",
       from_state: "held",
@@ -72,6 +73,7 @@ test("hold and demote signals prefer candidate during followup", () => {
     });
     auditStore.put({
       memory_id: "memory-held",
+      project: "vega-memory",
       action: "hold",
       trigger: "policy",
       from_state: "pending",
@@ -83,6 +85,7 @@ test("hold and demote signals prefer candidate during followup", () => {
     });
     auditStore.put({
       memory_id: "memory-demoted",
+      project: "vega-memory",
       action: "demote",
       trigger: "manual",
       from_state: "promoted",
@@ -132,6 +135,7 @@ test("discard-dominated candidate lane suppresses candidate source when nothing 
     });
     auditStore.put({
       memory_id: "discarded-candidate",
+      project: "vega-memory",
       action: "discard",
       trigger: "policy",
       from_state: "held",
@@ -170,6 +174,7 @@ test("nested followup disables promotion feedback to avoid self-reinforcing loop
     });
     auditStore.put({
       memory_id: "memory-1",
+      project: "vega-memory",
       action: "promote",
       trigger: "policy",
       from_state: "held",
@@ -210,4 +215,71 @@ test("nested followup disables promotion feedback to avoid self-reinforcing loop
   } finally {
     db.close();
   }
+});
+
+test("promotion feedback ignores audits and visible candidates from other projects", () => {
+  const db = new SQLiteAdapter(":memory:");
+
+  try {
+    const candidateRepository = createCandidateRepository(db);
+    candidateRepository.create({
+      id: "other-project-candidate",
+      content: "other project candidate",
+      type: "observation",
+      project: "other-project",
+      tags: [],
+      metadata: {},
+      extraction_source: "manual",
+      visibility_gated: false,
+      candidate_state: "held"
+    });
+
+    const auditStore = createPromotionAuditStore(db, {
+      now: () => 1_000,
+      idFactory: () => "audit-other"
+    });
+    auditStore.put({
+      memory_id: "memory-other",
+      project: "other-project",
+      action: "promote",
+      trigger: "policy",
+      from_state: "held",
+      to_state: "promoted",
+      policy_name: "default",
+      policy_version: "v1",
+      reason: "other project promoted",
+      actor: null
+    });
+
+    const feedback = collectPromotionFeedback({
+      request: createRequest({
+        project: "vega-memory"
+      }),
+      candidateRepository,
+      promotionAuditStore: auditStore
+    });
+
+    assert.deepEqual(feedback.preferred_sources, []);
+    assert.deepEqual(feedback.suppressed_sources, []);
+    assert.deepEqual(feedback.source_prior_delta, {});
+  } finally {
+    db.close();
+  }
+});
+
+test("feedback-rewritten source plans keep primary and fallback disjoint", () => {
+  const rewritten = applyPromotionFeedbackToSourcePlan(
+    createSourcePlan(getProfile("lookup"), createRequest()),
+    {
+      preferred_sources: ["candidate"],
+      suppressed_sources: [],
+      source_prior_delta: {
+        candidate: 0.1
+      },
+      disabled: false
+    }
+  );
+
+  assert.equal(rewritten.primary_sources.includes("candidate"), true);
+  assert.equal(rewritten.fallback_sources.includes("candidate"), false);
 });
